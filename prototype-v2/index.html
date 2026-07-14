@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#1f2925">
+  <link rel="icon" href="data:,">
+  <title>Nestory · A memory system for your home</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./node_modules/three/build/three.module.js",
+        "three/addons/": "./node_modules/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar" data-testid="sidebar"></aside>
+    <div id="main">
+      <header id="topbar"></header>
+      <main id="view" data-testid="view"></main>
+    </div>
+  </div>
+  <div id="toast-root"></div>
+  <script type="module" src="dist/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+.DS_Store
+.playwright-cli/
+**/.playwright-cli/
+**/node_modules/
+**/dist/
+**/*.log
+**/renders/verification-report.json

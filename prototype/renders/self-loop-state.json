@@ -1,0 +1,724 @@
+{
+  "generatedAt": "2026-07-14T15:44:36.771Z",
+  "iterationId": "rr-fa4f2f256234",
+  "parentIterationId": "rr-47241ff3013b",
+  "sourceHashes": {
+    "product-requirements.md": "a26250bfe4864dc4988b7d592c1fae4aabf5d769ff7099d058f505589d2da325",
+    "requirements-discovery.md": "11d5325930a5976f29f1eb1509574036b8251aea79dd088b3eb6e0652e28cb52",
+    "self-loop-operating-system.md": "c599911b59739cd032d3ac3cad076bf9ac94397f4f6b248ed999abec878659fc",
+    "index.html": "51a2043d40bc2c0aa4f8d50ff94bec1ac8c15dae9946046a7cdadec70a28662f",
+    "verify.mjs": "0a2c76906038ead7acc606baa5735f283dfb86026f8cceaac4489f52e170b33a",
+    "self-loop.mjs": "ff0f7462972420ff39e23691f4c66eba6fb33053d3d5551c677de9ea50efe416",
+    "verification-report.json": "7707e8ffecfd94d1fc1d11dbc0bc26854dbd626bb4ad331978eab2a95c86314e"
+  },
+  "verificationGeneratedAt": "2026-07-14T15:44:13.823Z",
+  "countableChangeType": "verification",
+  "changedSources": [
+    "verification-report.json"
+  ],
+  "verification": {
+    "assertionCount": 247,
+    "assertionFailures": [],
+    "url": "http://127.0.0.1:8789/"
+  },
+  "loopScore": {
+    "passed": 47,
+    "failed": 0,
+    "total": 47,
+    "ratio": 1
+  },
+  "dominantLane": "verification",
+  "probes": [
+    {
+      "id": "killer-loop-correction-behavior",
+      "lane": "semantic",
+      "question": "Does the prototype prove locate -> Not there -> corrected placement with behavior evidence?",
+      "pass": true,
+      "evidence": "negative=negative-evidence-1, corrected source=corrected placement",
+      "next": "Keep this as a regression guard while strengthening the commit ledger.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "killer-loop-ledgered-answer",
+      "lane": "verification",
+      "question": "Does the correction become an append-only commit and improve the next locate answer?",
+      "pass": true,
+      "evidence": "commit=commit-placement-correction-1",
+      "next": "Add a commitPlacementCorrection path with a CommitLedgerEntry and assert locate('water bottle') returns the corrected source afterward.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "mutation-bundle-shape",
+      "lane": "verification",
+      "question": "Is the backend preview shaped as observation/evidence/draftOps/commit/resultingRecords?",
+      "pass": true,
+      "evidence": "{\"hasObservationRecords\":true,\"hasDraftOps\":true,\"hasResultingRecords\":true,\"placementOps\":2,\"evidenceRecords\":1}",
+      "next": "Introduce a mutationBundle preview: observationRecords, evidenceRecords, draftOps, commitPreview, resultingRecords.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "placement-invalidation",
+      "lane": "spatial",
+      "question": "Do parent furniture edits emit stale child placement review records?",
+      "pass": true,
+      "evidence": "7 affected placements; stale ops assertion=true.",
+      "next": "Promote stale placements from current-state mutation into explicit placementReviewOps with causedByGeometryOpId.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "affected-placement-visibility",
+      "lane": "interface",
+      "question": "Can the right panel name the affected items and parent containers before commit?",
+      "pass": true,
+      "evidence": "7 named affected placements visible.",
+      "next": "Render affected item names and parent furniture/container in Layout Health, then assert DOM parity with stalePlacementOps.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "backend-write-model-records",
+      "lane": "verification",
+      "question": "Does the backend preview expose first-class records and structured collision results?",
+      "pass": true,
+      "evidence": "anchors=3, geometry=5, placements=12.",
+      "next": "Add ids and causal fields to collisionResults so layout health can be committed as records.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "3d-state-driven-furniture",
+      "lane": "interface",
+      "question": "Does 3D render editable furniture and scan-created blocks from the same layout state?",
+      "pass": true,
+      "evidence": "6 furniture groups; 11 support surfaces; ids=bed, wardrobe, desk, storage-shelf, shoe-rack, bedside-block.",
+      "next": "Add hover affordance and surface-ownership tests for targetable 3D support surfaces.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "support-surface-precheck-gate",
+      "lane": "spatial",
+      "question": "Does support-surface placement run fit/collision/stale gates before confirmation?",
+      "pass": true,
+      "evidence": "{\"hoverTargetable\":true,\"hoverMutatedPrechecks\":false,\"hoverDomVisible\":true,\"allowedBeforeConfirm\":true,\"snappedReady\":true,\"snappedConfirmed\":true,\"snapReason\":\"right_of_blocker\",\"snapLocal\":{\"x\":0.3,\"z\":0},\"centerBlockerIds\":[\"earphones\"],\"saturatedBlocked\":true,\"collisionBlocked\":true,\"fitBlocked\":true,\"staleAfterParentEdit\":true}",
+      "next": "Use direct drag preview evidence to add editable patch handles and object-volume resize controls.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "support-drag-preview-gate",
+      "lane": "spatial",
+      "question": "Does direct drag preview expose fit/collision/snapped/stale support checks before drop without mutating placement?",
+      "pass": true,
+      "evidence": "{\"ready\":\"ready\",\"snapped\":\"snapped\",\"blocked\":\"surface_occupied\",\"stale\":\"stale\",\"placementUnchanged\":true,\"gateMatches\":true,\"planPreview\":\"ready\"}",
+      "next": "Turn preview patches into editable 2D/3D handles with user-controlled local placement instead of auto-nearest packing.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "support-manual-patch-preview",
+      "lane": "spatial",
+      "question": "Can the user choose a support-local patch coordinate and get clear or blocked feedback before drop?",
+      "pass": true,
+      "evidence": "{\"clear\":\"manual\",\"local\":{\"x\":-0.45,\"z\":0},\"blocked\":\"manual_patch_occupied\",\"blockers\":[\"earphones\"],\"plan\":\"manual\",\"placementUnchanged\":true}",
+      "next": "Expose manual patch movement as visible 2D/3D handles instead of script-only local coordinates.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "support-manual-patch-commit",
+      "lane": "verification",
+      "question": "Does a committed manual support-local patch preserve the same coordinate across backend precheck, placement, occupancy, and latest-surface readback?",
+      "pass": true,
+      "evidence": "{\"itemId\":\"custom-1784043841836\",\"status\":\"confirmed\",\"local\":{\"x\":-0.55,\"z\":0.28},\"precheckId\":\"precheck-4\",\"commitId\":\"commit-support-placement-7\",\"finalPreviewCleared\":true,\"survivesGeometryInvalidation\":true}",
+      "next": "Make the 2D plan patch handle pointer-draggable while reusing this commit-readback contract.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "plan-patch-handle-layers",
+      "lane": "interface",
+      "question": "Does the 2D plan expose separate patch, volume, and handle layers that match the 3D drag preview geometry?",
+      "pass": true,
+      "evidence": "{\"hasPatch\":true,\"hasVolume\":true,\"hasHandle\":true,\"patchMatches3d\":true,\"volumeMatches3d\":true}",
+      "next": "Make the 2D handle pointer-draggable and add volume resize handles with min/max collision checks.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "plan-patch-handle-drag",
+      "lane": "interface",
+      "question": "Can the 2D plan patch handle change the support-local preview without committing placement or precheck state?",
+      "pass": true,
+      "evidence": "{\"before\":{\"x\":-0.45,\"z\":0},\"after\":{\"x\":-0.62,\"z\":0.24},\"phase\":\"preview_retained\",\"placementUnchanged\":true,\"precheckCountUnchanged\":true}",
+      "next": "Add preview-only volume resize handles that reuse the same fit/collision and commit-readback contracts.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "plan-volume-resize-preview",
+      "lane": "interface",
+      "question": "Can the 2D plan volume handle resize candidate dimensions while keeping placement, precheck, and item footprint unchanged before commit?",
+      "pass": true,
+      "evidence": "{\"candidate\":{\"width\":0.18,\"depth\":0.18},\"duringPhase\":\"resize_drag_preview\",\"retainedPhase\":\"resize_confirm_pending\",\"placementUnchanged\":true,\"itemFootprintUnchanged\":true}",
+      "next": "Add explicit confirmation for resized dimensions as separate geometry plus placement commit records.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "plan-volume-resize-commit",
+      "lane": "verification",
+      "question": "Does a released resize draft require explicit confirmation and then append separate geometry plus placement commit records?",
+      "pass": true,
+      "evidence": "{\"itemId\":\"custom-1784043839318\",\"status\":\"confirmed\",\"commitId\":\"commit-support-placement-5\",\"geometryOpId\":\"op-commit-item-geometry-custom-1784043839318-5\",\"previewPhase\":\"resize_confirm_pending\",\"afterFootprint\":{\"width\":0.16,\"depth\":0.16,\"height\":0.04},\"renderedFootprint\":{\"width\":0.16,\"depth\":0.16},\"finalPreviewCleared\":true}",
+      "next": "Move the same explicit producer-review-commit boundary into scan identity observations and match/create/merge proposals.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "support-check-causal-ids",
+      "lane": "verification",
+      "question": "Do support-surface checks round-trip concrete causal ids, support patches, and backend-visible copy snapshots?",
+      "pass": true,
+      "evidence": "{\"collision\":\"check-precheck-5-support-collision\",\"snappedCheck\":\"check-precheck-3-support-collision\",\"snappedPatch\":{\"x\":0.3,\"z\":0,\"width\":0.26,\"depth\":0.26},\"centerBlockers\":[\"earphones\"],\"saturatedCheck\":\"check-precheck-5-support-collision\",\"fit\":[\"check-precheck-6-surface-fit\",\"check-precheck-6-opening-clearance\"],\"staleOps\":6,\"manualGeometryOps\":[\"op-manual-geometry-desk-1\"],\"supportPoseRecorded\":true,\"snappedSupportPoseRecorded\":true}",
+      "next": "Make support-local patches editable with visible handles, labels, and object volume outlines.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "support-pose-snapping",
+      "lane": "spatial",
+      "question": "Can one support surface hold multiple local occupied patches instead of acting as one centered slot?",
+      "pass": true,
+      "evidence": "{\"snapped\":true,\"centerBlockerIds\":[\"earphones\"],\"sharedDeskPatchCount\":4,\"occupancyVisualCount\":10,\"saturatedReason\":\"surface_occupied\"}",
+      "next": "Promote support-local patch snapping into draggable 2D/3D handles and translucent object volume outlines.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "support-surface-hover-affordance",
+      "lane": "interface",
+      "question": "Can 3D hover reveal a targetable support surface, owner, candidate, and readiness before selection?",
+      "pass": true,
+      "evidence": "{\"surfaceId\":\"surface-desk-top\",\"status\":\"allowed\",\"owner\":\"furniture:desk\",\"domVisible\":true,\"mutatedPrechecks\":false}",
+      "next": "Wire pointermove screenshots into a non-flaky smoke check while keeping the API hover probe as the main gate.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "2d-semantic-overlays",
+      "lane": "interface",
+      "question": "Does the 2D plan label interaction envelopes and scan proposals semantically?",
+      "pass": true,
+      "evidence": "envelopes=bedside access, drawer pull-out, chair pull-back, drawer pull-out, drawer pull-out; proposals=Desk footprint\n              84%, Wardrobe  back wall\n              76%, Bedside  block\n              63%.",
+      "next": "Collapse secondary labels until selected/hovered so dense plan zones stay readable.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "right-panel-scope",
+      "lane": "interface",
+      "question": "Is the right panel split into stable product scopes from the actual DOM?",
+      "pass": true,
+      "evidence": "sections=Selection -> Retrieval Plan -> Spatial Frame -> Layout Health -> Scan Diff -> Contract -> Objects -> Product Intake.",
+      "next": "Add ownership checks so each section proves it owns the right controls and data.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "scan-proposal-loop",
+      "lane": "spatial",
+      "question": "Does scan review move through proposal selection, accept/reject, and commit?",
+      "pass": true,
+      "evidence": "3 proposals, 3 committed.",
+      "next": "Add a scan identity producer that emits item/container observations before match, create, or merge review.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "scan-identity-producer",
+      "lane": "semantic",
+      "question": "Does the scan pipeline emit typed item/container identity observations before match/create/merge truth writes?",
+      "pass": true,
+      "evidence": "{\"summary\":{\"id\":\"scan-identity-producer-v1\",\"stage\":\"observations\",\"writePolicy\":\"observation_only\",\"status\":\"partial reviewable\",\"observationCount\":5,\"observationTypes\":[\"item_candidate_seen\",\"container_contents_seen\",\"container_seen_empty\",\"container_region_unknown\",\"privacy_redacted_region\"],\"candidateItemCount\":1,\"coverageStateCount\":3,\"pendingIdentityResolutionCount\":5},\"dom\":{\"producerId\":\"scan-identity-producer-v1\",\"observationCount\":5,\"observationTypes\":[\"item_candidate_seen\",\"container_contents_seen\",\"container_seen_empty\",\"container_region_unknown\",\"privacy_redacted_region\"],\"text\":\"5\\n              identity observations\"},\"observationTypes\":[\"item_candidate_seen\",\"container_contents_seen\",\"container_seen_empty\",\"container_region_unknown\",\"privacy_redacted_region\"],\"productPriorIds\":[\"water-bottle\",\"earphones\",\"gym-card\",\"charger\",\"custom-1784043839318\",\"custom-1784043841836\",\"custom-1784043842450\",\"custom-1784043846972\"]}",
+      "next": "Promote these identity observations into match/create/merge proposals with required resolution fields.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "scan-identity-proposal-contract",
+      "lane": "semantic",
+      "question": "Do identity observations derive read-only match/create/merge and coverage proposal contracts without adding commit actions?",
+      "pass": true,
+      "evidence": "{\"count\":5,\"types\":[\"item_identity_match\",\"item_identity_merge\",\"container_seen_empty\",\"container_contents_unknown\",\"privacy_hold\"],\"domRows\":5,\"commitOps\":0}",
+      "next": "Turn read-only identity proposal rows into a shared review surface with selected observation focus and match/create/merge decisions.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "scan-identity-review-loop",
+      "lane": "interface",
+      "question": "Can identity proposal rows focus a selected observation and capture a local resolution decision without writing canonical commits?",
+      "pass": true,
+      "evidence": "{\"selected\":\"identity-proposal-identity-obs-desk-lamp-candidate\",\"action\":\"match_existing\",\"draftCount\":1,\"identityCommitOps\":0,\"geometryStatusesStable\":true}",
+      "next": "Promote reviewed identity resolution drafts into an atomic scan identity commit ledger with undo/source lineage.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "scan-identity-commit-ledger",
+      "lane": "verification",
+      "question": "Can a reviewed identity resolution draft become an atomic commit ledger entry without geometry or placement writes?",
+      "pass": true,
+      "evidence": "{\"commitId\":\"commit-scan-identity-2\",\"opTypes\":[\"commit_identity_resolution\"],\"draftStatus\":\"committed\",\"geometryOps\":0,\"placementOps\":2}",
+      "next": "Use the committed identity resolution as answer evidence, then add undo/lineage inspection for identity commits.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "scan-identity-answer-lineage",
+      "lane": "semantic",
+      "question": "Does a committed identity resolution become locate answer evidence with inspectable append-only lineage?",
+      "pass": true,
+      "evidence": "{\"answerItem\":\"custom-1784043846972\",\"source\":\"scan_identity_commit\",\"commitId\":\"commit-scan-identity-8\",\"rowStatus\":\"active\",\"rollbackType\":\"scan_identity_reversal\"}",
+      "next": "Use answer lineage as the retrieval-agent explanation surface, including confidence and stale/reverted identity handling.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "retrieval-agent-explanation-surface",
+      "lane": "semantic",
+      "question": "Does the retrieval read model explain answered, needs-review, and not-found outcomes without falling back to stale identity evidence?",
+      "pass": true,
+      "evidence": "{\"answered\":\"answered\",\"needsReview\":\"latest_identity_commit_reverted\",\"blockedOlder\":1,\"notFound\":\"not_found\"}",
+      "next": "Carry retrieval explanation into 2D/3D overlays so answer confidence, holds, and suppressed evidence are visible in spatial context.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "retrieval-spatial-overlay-surface",
+      "lane": "interface",
+      "question": "Do retrieval answer states project into 2D and 3D spatial overlays instead of living only in the side panel?",
+      "pass": true,
+      "evidence": "{\"answeredPlan\":\"answered\",\"answered3d\":\"item_answer\",\"needsReviewPlan\":\"needs_review\",\"notFound3d\":\"not_found\"}",
+      "next": "Use the spatial retrieval overlay to reduce dense 2D labels and reveal answer evidence on hover/selection.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "plan-density-answer-reveal",
+      "lane": "interface",
+      "question": "Does the 2D plan collapse secondary labels while preserving answer and hold evidence?",
+      "pass": true,
+      "evidence": "{\"answeredDensity\":\"collapsed\",\"needsReviewDensity\":\"collapsed\",\"notFoundDensity\":\"collapsed\"}",
+      "next": "Promote 3D object refinement: dimension-scaled archetypes and clearer object silhouettes.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "3d-object-archetype-refinement",
+      "lane": "interface",
+      "question": "Do 3D item meshes resolve specialized archetypes and scale their real silhouette to item dimensions?",
+      "pass": true,
+      "evidence": "{\"productItemId\":\"custom-1784043846972\",\"archetypes\":[]}",
+      "next": "Add selected-object 3D volume outlines and container occupancy silhouettes for dense storage surfaces.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "3d-volume-and-occupancy-silhouettes",
+      "lane": "interface",
+      "question": "Do selected/retrieval objects show 3D volume outlines and do dense support surfaces expose occupancy silhouettes?",
+      "pass": true,
+      "evidence": "{\"answerOutline\":\"answer_target\",\"holdOutline\":\"identity_hold\",\"occupancySilhouettes\":0}",
+      "next": "Add selected-object local axes, rotation handles, and container fit readouts for 3D manipulation.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "3d-manipulation-affordance-readouts",
+      "lane": "interface",
+      "question": "Does a selected 3D object expose local axes, rotation affordance, volume outline, and container fit readout without writes?",
+      "pass": true,
+      "evidence": "{\"itemId\":\"gym-card\",\"fit\":\"fits\",\"axes\":[\"x\",\"y\",\"z\"],\"rotationVisible\":true}",
+      "next": "Add layout-planning scenario compare: current vs proposed furniture placement and storage gain/loss.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "layout-scenario-compare",
+      "lane": "spatial",
+      "question": "Can the layout planner compare current vs proposed furniture scenarios without mutating canonical layout or write ops?",
+      "pass": true,
+      "evidence": "{\"scenarios\":3,\"ghosts\":1,\"unchanged\":true,\"backendRecords\":3}",
+      "next": "Promote layout scenarios into explicit geometry-diff ids and predicted placement impact records.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "layout-scenario-geometry-impact",
+      "lane": "verification",
+      "question": "Do layout scenarios expose stable geometry diff ids and predicted placement impacts before any commit?",
+      "pass": true,
+      "evidence": "{\"geometryDiffs\":3,\"impacts\":9,\"placementsUnchanged\":true}",
+      "next": "Carry scenario impact into support-surface impacts and recommendation reason codes.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "layout-scenario-support-reasons",
+      "lane": "semantic",
+      "question": "Do layout scenarios explain support-surface impacts and recommendation tradeoffs with evidence refs?",
+      "pass": true,
+      "evidence": "{\"supportImpacts\":7,\"reasonCodes\":\"reduces_conflicts,requires_child_placement_review,requires_support_surface_recheck,scan_quality_capture_needed\",\"domReasons\":true}",
+      "next": "Connect scenario recommendation reasons to scan quality, certainty, and guided capture prompts.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "layout-scenario-scan-certainty",
+      "lane": "semantic",
+      "question": "Do scenario recommendations expose scan certainty checks and guided capture prompts before commit?",
+      "pass": true,
+      "evidence": "{\"statuses\":\"needs_capture_before_commit\",\"prompts\":12,\"promptReasons\":3}",
+      "next": "Turn scan certainty into editable anchors, keyframe coverage, and reconstruction job contracts.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "scan-reconstruction-job-contract",
+      "lane": "semantic",
+      "question": "Does scanning expose keyframe coverage and a proposal-only reconstruction job contract?",
+      "pass": true,
+      "evidence": "{\"job\":\"recon-job-scan-bedroom-001\",\"route\":\"feed-forward-3d\",\"frames\":5,\"coverage\":\"6/7\",\"outputPolicy\":\"proposal_only\"}",
+      "next": "Make anchors editable and turn anchor changes into stale scan-derived geometry.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "anchor-edit-stale-geometry",
+      "lane": "verification",
+      "question": "Can an anchor edit preview mark scan-derived geometry stale without mutating canonical anchors or furniture?",
+      "pass": true,
+      "evidence": "{\"draft\":\"anchor-draft-anchor-desk-edge\",\"staleGeometry\":2,\"anchorsUnchanged\":true,\"dom\":\"anchor-draft-anchor-desk-edge\"}",
+      "next": "Promote anchor edits into explicit commit/reject boundaries with reconstruction refresh proposals.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "anchor-edit-resolution-boundary",
+      "lane": "verification",
+      "question": "Can anchor edits be committed or rejected with append-only lineage and reconstruction refresh proposals?",
+      "pass": true,
+      "evidence": "{\"commit\":\"commit-anchor-edit-10\",\"refresh\":\"recon-refresh-anchor-draft-anchor-desk-edge\",\"rejected\":\"anchor-draft-anchor-entry-wall\",\"history\":2}",
+      "next": "Carry committed anchor changes into scenario certainty and locate/layout readbacks.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "anchor-commit-readback",
+      "lane": "verification",
+      "question": "Do committed anchor edits propagate into backend anchor records, scenario certainty, and locate answers?",
+      "pass": true,
+      "evidence": "{\"commit\":\"commit-anchor-edit-10\",\"backendAnchor\":\"commit-anchor-edit-10\",\"locateAnchor\":\"commit-anchor-edit-10\"}",
+      "next": "Add scenario commit gate that merges anchor, reconstruction, support, identity, and placement blockers.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "layout-scenario-commit-gate",
+      "lane": "verification",
+      "question": "Does each layout scenario expose a unified commit gate with all blocking domains?",
+      "pass": true,
+      "evidence": "{\"gates\":[{\"id\":\"scenario-desk-wall-align\",\"status\":\"blocked\",\"blockers\":17,\"types\":[\"placement\",\"support_surface\",\"scan_quality\",\"reconstruction\",\"identity_or_coverage\",\"privacy\"]},{\"id\":\"scenario-entry-rack-flush\",\"status\":\"blocked\",\"blockers\":12,\"types\":[\"support_surface\",\"scan_quality\",\"reconstruction\",\"identity_or_coverage\",\"privacy\"]},{\"id\":\"scenario-shelf-vertical-storage\",\"status\":\"blocked\",\"blockers\":16,\"types\":[\"placement\",\"support_surface\",\"scan_quality\",\"reconstruction\",\"identity_or_coverage\",\"privacy\"]}]}",
+      "next": "Add scenario apply/reject drafts that can consume the commit gate when blockers are cleared.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "layout-scenario-decision-drafts",
+      "lane": "verification",
+      "question": "Do layout scenario apply/reject decisions have explicit draft and history boundaries without writes?",
+      "pass": true,
+      "evidence": "{\"apply\":\"layout-scenario-apply-scenario-desk-wall-align\",\"applyStatus\":\"blocked\",\"rejected\":\"layout-scenario-reject-scenario-entry-rack-flush-1\",\"furnitureUnchanged\":true}",
+      "next": "Add scenario focus/readback parity across panel, 2D plan, backend, and locate context.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "layout-scenario-focus-parity",
+      "lane": "interface",
+      "question": "Does scenario focus stay consistent across panel, 2D plan, backend, layout snapshot, and locate context?",
+      "pass": true,
+      "evidence": "{\"focus\":\"scenario-shelf-vertical-storage\",\"backend\":\"scenario-shelf-vertical-storage\",\"ghosts\":\"scenario-shelf-vertical-storage\",\"locate\":\"scenario-shelf-vertical-storage\"}",
+      "next": "Freeze deterministic scenario fixtures and add replay verification.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "layout-scenario-fixture-replay",
+      "lane": "verification",
+      "question": "Can scenario recommendations be frozen as deterministic fixtures and replayed without drift?",
+      "pass": true,
+      "evidence": "{\"fixtures\":3,\"replay\":\"matched\",\"scenario\":\"scenario-shelf-vertical-storage\",\"backendReplay\":\"matched\",\"readOnly\":true}",
+      "next": "Add an end-to-end demo trace from scan capture through reconstruction, scenario gate, human decision, anchor commit, and locate readback.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "roomrecall-end-to-end-demo",
+      "lane": "verification",
+      "question": "Does the prototype expose one auditable chain from scan capture to locate readback?",
+      "pass": true,
+      "evidence": "{\"stages\":[\"scan_capture\",\"reconstruction_job\",\"scenario_compare\",\"scenario_gate\",\"anchor_commit\",\"scenario_decision\",\"locate_readback\"],\"policy\":\"proposal_first_no_auto_truth_writes\",\"writes\":[\"commit_anchor_edit\",\"commit_identity_resolution\",\"commit_support_surface_placement\",\"commit_item_geometry_update\",\"commit_scan_geometry_update\",\"commit_scan_geometry_create\",\"contradict_placement\",\"create_placement\"],\"anchor\":\"commit-anchor-edit-10\",\"reviewBoundaries\":true}",
+      "next": "Promote the strongest prototype paths into a product PRD and decide which V1 surface should become real.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "product-intake-fit",
+      "lane": "spatial",
+      "question": "Does product intake create dimensional objects without losing default home?",
+      "pass": true,
+      "evidence": "created=true, movedDefaultPreserved=true, width=0.18m.",
+      "next": "Run target-container fit precheck before committing a product-created item to a container.",
+      "delta": "unchanged"
+    },
+    {
+      "id": "privacy-and-unknown-regions",
+      "lane": "semantic",
+      "question": "Does scanning distinguish unknown/private geometry from empty space?",
+      "pass": true,
+      "evidence": "scanCoverage=0.78; unknown/redacted DOM assertion=true.",
+      "next": "Connect unknown, empty, occluded, and private scan regions to reviewable coverage records instead of silent emptiness.",
+      "delta": "unchanged"
+    }
+  ],
+  "probeDelta": [
+    {
+      "id": "killer-loop-correction-behavior",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "killer-loop-ledgered-answer",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "mutation-bundle-shape",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "placement-invalidation",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "affected-placement-visibility",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "backend-write-model-records",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "3d-state-driven-furniture",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "support-surface-precheck-gate",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "support-drag-preview-gate",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "support-manual-patch-preview",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "support-manual-patch-commit",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "plan-patch-handle-layers",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "plan-patch-handle-drag",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "plan-volume-resize-preview",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "plan-volume-resize-commit",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "support-check-causal-ids",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "support-pose-snapping",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "support-surface-hover-affordance",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "2d-semantic-overlays",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "right-panel-scope",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "scan-proposal-loop",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "scan-identity-producer",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "scan-identity-proposal-contract",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "scan-identity-review-loop",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "scan-identity-commit-ledger",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "scan-identity-answer-lineage",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "retrieval-agent-explanation-surface",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "retrieval-spatial-overlay-surface",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "plan-density-answer-reveal",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "3d-object-archetype-refinement",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "3d-volume-and-occupancy-silhouettes",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "3d-manipulation-affordance-readouts",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "layout-scenario-compare",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "layout-scenario-geometry-impact",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "layout-scenario-support-reasons",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "layout-scenario-scan-certainty",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "scan-reconstruction-job-contract",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "anchor-edit-stale-geometry",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "anchor-edit-resolution-boundary",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "anchor-commit-readback",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "layout-scenario-commit-gate",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "layout-scenario-decision-drafts",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "layout-scenario-focus-parity",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "layout-scenario-fixture-replay",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "roomrecall-end-to-end-demo",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "product-intake-fit",
+      "delta": "unchanged",
+      "pass": true
+    },
+    {
+      "id": "privacy-and-unknown-regions",
+      "delta": "unchanged",
+      "pass": true
+    }
+  ],
+  "nextQueue": [
+    {
+      "order": 1,
+      "id": "roomrecall-end-to-end-demo",
+      "lane": "verification",
+      "question": "Does the prototype expose one auditable chain from scan capture to locate readback?",
+      "next": "Promote the strongest prototype paths into a product PRD and decide which V1 surface should become real."
+    },
+    {
+      "order": 2,
+      "id": "layout-scenario-fixture-replay",
+      "lane": "verification",
+      "question": "Can scenario recommendations be frozen as deterministic fixtures and replayed without drift?",
+      "next": "Add an end-to-end demo trace from scan capture through reconstruction, scenario gate, human decision, anchor commit, and locate readback."
+    },
+    {
+      "order": 3,
+      "id": "layout-scenario-focus-parity",
+      "lane": "interface",
+      "question": "Does scenario focus stay consistent across panel, 2D plan, backend, layout snapshot, and locate context?",
+      "next": "Freeze deterministic scenario fixtures and add replay verification."
+    },
+    {
+      "order": 4,
+      "id": "layout-scenario-decision-drafts",
+      "lane": "verification",
+      "question": "Do layout scenario apply/reject decisions have explicit draft and history boundaries without writes?",
+      "next": "Add scenario focus/readback parity across panel, 2D plan, backend, and locate context."
+    }
+  ],
+  "recommendedNextPatch": "Promote the strongest prototype paths into a product PRD and decide which V1 surface should become real."
+}

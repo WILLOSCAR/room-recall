@@ -1,0 +1,222 @@
+# Nestory V2 Verification Report
+Generated: 2026-07-14T15:51:03.904Z
+Runtime: node v25.8.0 · typescript strict
+- Assertions: 191
+- Passed: 191
+- Failed: 0
+- Browser smoke: ran
+- Screenshots: nestory-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png
+## typescript gate
+- ✓ `tsc-typecheck-and-emit`
+- ✓ `dist-app-emitted`
+## P0.1 home setup
+- ✓ `rooms>=2`
+- ✓ `containers>=5-with-kinds`
+- ✓ `belongings>=15-with-default-home`
+- ✓ `create-belonging-one-action`
+- ✓ `create-belonging-ledgered`
+- ✓ `product-dimensions-normalized`
+- ✓ `state-change-applies`
+- ✓ `state-change-ledgered`
+- ✓ `state-answer-sentence`
+## P0.2 container memory
+- ✓ `contents-from-placements`
+- ✓ `contents-freshness-exposed`
+- ✓ `stale-container-flagged`
+- ✓ `stale-list-has-top-drawer`
+- ✓ `which-container-has`
+- ✓ `snapshot-creates-proposal`
+- ✓ `snapshot-never-direct-write`
+- ✓ `snapshot-observation-linked`
+- ✓ `snapshot-accept-moves-item`
+- ✓ `snapshot-accept-confirms-container`
+## P0.3 find and correct
+- ✓ `locate-chain`
+- ✓ `locate-contract-fields`
+- ✓ `locate-default-home-distinct`
+- ✓ `stale-answer-admits-uncertainty`
+- ✓ `not-there-creates-observation`
+- ✓ `not-there-opens-correction`
+- ✓ `not-there-drops-confidence`
+- ✓ `correction-requires-place`
+- ✓ `correction-single-commit-ops`
+- ✓ `old-record-kept-contradicted`
+- ✓ `corrected-answer`
+- ✓ `corrected-evidence-cites-correction`
+- ✓ `commit-lineage-to-proposal`
+## P0.4 operations and kits
+- ✓ `kit-rows-resolved`
+- ✓ `duplicate-reqs-merge`
+- ✓ `no-duplicate-item-rows`
+- ✓ `substitute-group-resolves`
+- ✓ `shared-items-flagged`
+- ✓ `initial-readiness-needs-review`
+- ✓ `readiness-ready-after-found`
+- ✓ `readiness-missing-items`
+- ✓ `row-statuses-ledgered`
+- ✓ `unavailable-item-uncertain-with-note`
+## P0.5 moving flow
+- ✓ `seed-move-op-active`
+- ✓ `create-box`
+- ✓ `assign-sets-placement-and-state`
+- ✓ `assign-bumps-box-status`
+- ✓ `search-across-boxes`
+- ✓ `unpack-priority-essentials-first`
+- ✓ `box-status-transitions-ledgered`
+- ✓ `unpack-returns-to-default-home`
+- ✓ `empty-box-auto-unpacked`
+- ✓ `unpack-history-preserved`
+## P0.6 capture proposal and review
+- ✓ `seed-inbox-pending`
+- ✓ `seed-snapshot-proposal`
+- ✓ `reject-no-mutation`
+- ✓ `reject-ledgered`
+- ✓ `reject-status-tracked`
+- ✓ `merge-marks-item`
+- ✓ `merge-hides-from-search`
+- ✓ `merge-contradicts-placement`
+- ✓ `merge-query-redirects`
+- ✓ `inbox-empty-after-decisions`
+## P0.7 spatial recall
+- ✓ `plan-pin-resolves`
+- ✓ `plan-pin-for-box`
+- ✓ `rooms-have-plan-rects`
+## P0.8 persistence and history
+- ✓ `state-survives-reload`
+- ✓ `export-shape`
+- ✓ `import-round-trip`
+- ✓ `ledger-newest-first`
+- ✓ `ledger-ops-summaries`
+- ✓ `reset-ledgered`
+- ✓ `reset-back-to-seed`
+## agent answer contract
+- ✓ `packed-answer-names-box-and-destination`
+- ✓ `laundry-answer-names-default-home`
+- ✓ `unknown-admits-no-memory`
+- ✓ `answer-offers-next-action`
+## P0.9 onboarding (own home)
+- ✓ `own-boots-empty`
+- ✓ `own-activation-incomplete`
+- ✓ `box-requires-room`
+- ✓ `create-room-ledgered`
+- ✓ `room-plan-auto-assigned`
+- ✓ `room-id-uniqueness`
+- ✓ `room-plan-slots-do-not-overlap`
+- ✓ `container-under-room-chain`
+- ✓ `container-requires-room`
+- ✓ `activation-counts`
+- ✓ `box-before-full-home`
+- ✓ `activation-complete`
+- ✓ `onboarding-all-ledgered`
+- ✓ `own-locate-works`
+## photo snapshot evidence
+- ✓ `snapshot-observation-carries-photo`
+- ✓ `photo-evidence-record`
+- ✓ `suggested-placement-cites-snapshot`
+- ✓ `photo-never-auto-writes`
+- ✓ `accepted-placement-cites-photo`
+- ✓ `text-snapshot-still-works`
+## retrieval plan
+- ✓ `plan-has-groups`
+- ✓ `wardrobe-stop-groups-clothing`
+- ✓ `bathroom-stop-has-towel`
+- ✓ `resolved-kit-has-no-review-group`
+- ✓ `plan-covers-every-row`
+- ✓ `unresolved-groups-under-needs-review`
+- ✓ `needs-review-sorts-last`
+- ✓ `move-op-has-no-retrieval-plan`
+## agent toolkit
+- ✓ `toolkit-descriptors`
+- ✓ `tool-locate`
+- ✓ `tool-snapshot-proposal-only`
+- ✓ `tool-not-there-opens-proposal`
+- ✓ `tool-unknown-rejected`
+- ✓ `tool-missing-arg-rejected`
+- ✓ `tool-accept-with-place`
+- ✓ `tool-retrieval-plan`
+## agent runtime
+- ✓ `runtime-executes-tool`
+- ✓ `runtime-final-text`
+- ✓ `runtime-history-shape`
+- ✓ `runtime-rounds-counted`
+- ✓ `runtime-blocks-decision-tools`
+- ✓ `runtime-decision-not-applied`
+- ✓ `runtime-decision-allowed-explicitly`
+- ✓ `runtime-round-budget`
+- ✓ `runtime-surfaces-tool-errors`
+## ask router
+- ✓ `ask-locate-intent`
+- ✓ `ask-which-box`
+- ✓ `ask-container-contents`
+- ✓ `ask-kit-starts-operation`
+- ✓ `ask-unpack-priority`
+- ✓ `ask-attention`
+- ✓ `ask-unknown-admits`
+- ✓ `ask-help-fallback`
+## P0.10 sync service
+- ✓ `srv-health`
+- ✓ `srv-locate-view`
+- ✓ `srv-container-contents`
+- ✓ `srv-unknown-container-404`
+- ✓ `srv-ask`
+- ✓ `srv-tool-write`
+- ✓ `srv-proposals-grow`
+- ✓ `srv-decision-403-without-confirm`
+- ✓ `srv-decision-confirmed-applies`
+- ✓ `srv-unknown-tool-404`
+- ✓ `srv-unknown-route-404`
+- ✓ `srv-export-schema`
+- ✓ `srv-restart-durable`
+- ✓ `srv-restart-proposals-intact`
+## agent eval harness (offline)
+- ✓ `eval-jobs-cover-prd`
+- ✓ `eval-ideal-model-passes`
+- ✓ `eval-decision-job-guards`
+- ✓ `eval-report-formats`
+## browser smoke
+- ✓ `app-boots`
+- ✓ `welcome-first-run`
+- ✓ `demo-mode-boots`
+- ✓ `view-renders-home`
+- ✓ `view-renders-spaces`
+- ✓ `view-renders-belongings`
+- ✓ `view-renders-operations`
+- ✓ `view-renders-review`
+- ✓ `view-renders-plan`
+- ✓ `view-renders-ledger`
+- ✓ `dom-locate-answer`
+- ✓ `dom-review-badge`
+- ✓ `dom-proposal-cards`
+- ✓ `dom-move-detail`
+- ✓ `dom-box-cards`
+- ✓ `dom-unpack-priority`
+- ✓ `dom-kit-rows`
+- ✓ `dom-plan-3d-canvas`
+- ✓ `dom-plan-3d-pixels`
+- ✓ `dom-plan-pin`
+- ✓ `dom-capture-room`
+- ✓ `dom-scan-proposals`
+- ✓ `dom-scan-3d-canvas`
+- ✓ `dom-container-cards`
+- ✓ `dom-container-modal`
+- ✓ `dom-proposal-photo`
+- ✓ `dom-retrieval-plan`
+- ✓ `dom-ask-view`
+- ✓ `dom-ask-answer`
+- ✓ `dom-ask-shows-tool-call`
+- ✓ `mobile-no-overflow-home`
+- ✓ `mobile-no-overflow-capture`
+- ✓ `mobile-no-overflow-plan`
+- ✓ `mobile-no-overflow-operations`
+- ✓ `mobile-no-overflow-spaces`
+- ✓ `mobile-no-overflow-setup`
+- ✓ `mobile-no-overflow-ask`
+- ✓ `own-mode-boots-empty`
+- ✓ `own-mode-opens-setup`
+- ✓ `own-activation-checklist`
+- ✓ `own-activation-completes-in-dom`
+- ✓ `own-plan-renders`
+## Loop command
+```bash
+cd prototype-v2 && node src/verify.ts
+```
