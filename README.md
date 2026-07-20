@@ -21,12 +21,12 @@ The stronger product is not a perfect 3D room model and not just "find my water 
 
 The current V2 product framework lives in `docs/nestory-product-framework.md`.
 
-## Current Status (2026-07-14)
+## Current Status (2026-07-21)
 
 - **V1 scope is decided**: moving/unpacking + kits, delivered as a Home Memory Operations Console. See `docs/nestory-v1-prd.md` (canonical V1 PRD).
 - **`prototype-v2/` implements that shape**: strict-TypeScript console (Home / Ask / Capture / Setup / Spaces / Belongings / Operations / Review / Plan / Ledger) over an event-sourced Place Graph store. `src/types.ts` is the typed domain contract. First-run welcome offers a seeded **demo home** or an empty **own home** with guided setup; container snapshots take photo evidence; kits compile into pickup-stop retrieval plans; the agent contract ships as an Ask surface + tool-calling runtime + Claude CLI (`npm run cli`) + eval harness (`npm run eval`); persistence goes beyond localStorage via the file-backed sync service (`npm run serve-api`). The July 13 spatial pass adds a redesigned consumer-facing Home, a unified Capture surface (room draft / container snapshot / product intake), normalized product dimensions, and a Three.js 2D/3D Plan driven by the same room coordinates. Verify with `cd prototype-v2 && npm install && npm run verify` (**191 assertions**, including strict TypeScript, mock-LLM runtime, live HTTP service, product dimensions, 3D canvas pixel checks, scan proposals, and desktop/mobile browser smoke).
 - **`prototype/` (V40) is a frozen proof archive** for the 3D/scan/layout contracts (247 assertions, 47/47 self-loop probes). Do not extend it; import its patterns.
-- **The repository now follows the current Matt Pocock engineering flow**: `ask-matt` routes the work; the multi-session V1.x effort starts at `.scratch/room-recall-v1x/map.md`; resolved decisions flow through `to-spec -> to-tickets -> implement(TDD) -> code-review -> commit`. `docs/agents/` is the tracker and domain configuration source of truth. No V1.x `spec.md` is published until the map is clear.
+- **The repository follows the Matt-style decision-to-build flow**: the multi-session V1.x effort starts at `.scratch/room-recall-v1x/map.md`; resolved decisions flow through `to-spec -> to-tickets -> implement(TDD) -> code-review -> commit`. On July 21 the map was corrected so real scanning and 2D/3D are conditional on a durable user job, a five-minute activation prototype, and target-user evidence. The repo-local protocol remains executable even when orchestration skills are not exposed by the current client. No V1.x `spec.md` is published until the map is clear.
 
 ## Why This Name
 
@@ -143,7 +143,7 @@ The deeper product is a memory system for everyday life: a way to connect physic
 
 ## Current Requirement Docs
 
-- `.scratch/room-recall-v1x/map.md`: active `wayfinder` map for durable product value, five-minute activation, and the first honest real-capture loop.
+- `.scratch/room-recall-v1x/map.md`: active `wayfinder` map for durable product value, five-minute activation, target-user evidence, and only then the smallest justified capture route.
 - `docs/agents/`: current local tracker, triage, domain-doc, and agent workflow configuration.
 - `docs/nestory-roomrecall-handoff.md`: 10-minute handoff for a new product/design/engineering agent to understand the current state, run the prototypes, and continue the work.
 - `docs/nestory-v1-prd.md`: **canonical V1 PRD** — decision record, tightened P0 scope, acceptance criteria, release gates.

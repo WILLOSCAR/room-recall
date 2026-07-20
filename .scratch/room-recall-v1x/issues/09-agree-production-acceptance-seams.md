@@ -1,8 +1,8 @@
-# 08 — Agree The Production Acceptance Seams
+# 09 — Agree The Production Acceptance Seams
 
 Type: grilling
 Status: open
-Blocked by: 05 — Set The Sensitive Evidence Boundary; 06 — Define The Reconstruction Job And Proposal Contract; 07 — Prototype The Spatial Correction Boundary
+Blocked by: 03 — Collect Target-User Activation Evidence; 06 — Set The Sensitive Evidence Boundary; 07 — Define The Reconstruction Job And Proposal Contract; 08 — Prototype The Spatial Correction Boundary
 
 ## Question
 

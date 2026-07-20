@@ -1,8 +1,8 @@
-# 05 — Set The Sensitive Evidence Boundary
+# 06 — Set The Sensitive Evidence Boundary
 
 Type: grilling
 Status: open
-Blocked by: 01 — Choose The Durable Product Promise; 02 — Define The Five-Minute Activation Path
+Blocked by: 02 — Define The Five-Minute Activation Path; 03 — Collect Target-User Activation Evidence
 
 ## Question
 

@@ -1,8 +1,8 @@
-# 07 — Prototype The Spatial Correction Boundary
+# 08 — Prototype The Spatial Correction Boundary
 
 Type: prototype
 Status: open
-Blocked by: 04 — Prototype Mobile Capture And Coverage Guidance; 06 — Define The Reconstruction Job And Proposal Contract
+Blocked by: 05 — Prototype Mobile Capture And Coverage Guidance; 07 — Define The Reconstruction Job And Proposal Contract
 
 ## Question
 

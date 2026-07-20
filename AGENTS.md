@@ -24,3 +24,9 @@ This is a single-context project. Read `CONTEXT.md` first, then ADRs in `docs/ad
 - Work only the current frontier. Start each `implement` ticket in a fresh context; drive it through agreed public seams with `tdd`, run the full verification suite, then use `code-review` against a fixed Git baseline before committing.
 - Use `triage` only for raw incoming bugs or requests. Tickets produced by `to-tickets` are already `ready-for-agent`.
 - Keep visual scanning proposal-first and keep 2D/3D as capture, correction, planning, and trust layers over the Place Graph rather than independent sources of truth.
+
+## Runtime compatibility
+
+- Treat this file, `docs/agents/`, and `.scratch/` as the durable workflow contract. A client may not expose every orchestration skill named above even when its local skill file still exists.
+- When `ask-matt`, `wayfinder`, `grill-with-docs`, `to-spec`, `to-tickets`, or `implement` is unavailable, continue the same protocol directly from the tracker: choose and claim the frontier, use `grilling`, `prototype`, or `research` according to ticket type, publish the agreed spec/tickets in the configured shapes, then use `tdd` and `code-review` for implementation.
+- Never pretend an unavailable skill was invoked, and never let skill-registry drift block work that the repo-local protocol makes unambiguous.

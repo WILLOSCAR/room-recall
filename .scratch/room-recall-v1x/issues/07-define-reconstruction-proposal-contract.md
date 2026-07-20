@@ -1,8 +1,8 @@
-# 06 — Define The Reconstruction Job And Proposal Contract
+# 07 — Define The Reconstruction Job And Proposal Contract
 
 Type: grilling
 Status: open
-Blocked by: 03 — Select The Bounded Visual Reconstruction Route; 02 — Define The Five-Minute Activation Path; 05 — Set The Sensitive Evidence Boundary
+Blocked by: 04 — Select The Bounded Visual Reconstruction Route; 06 — Set The Sensitive Evidence Boundary
 
 ## Question
 

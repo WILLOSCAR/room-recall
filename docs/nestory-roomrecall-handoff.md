@@ -1,6 +1,6 @@
 # Nestory / RoomRecall Handoff
 
-Created: 2026-07-06 · Updated: 2026-07-14 (current Matt workflow + V1.x wayfinder map)
+Created: 2026-07-06 · Updated: 2026-07-21 (product-evidence gate before scan/3D)
 
 Audience: a new product / design / engineering agent or human who needs to understand the current work in about 10 minutes and continue it without re-discovering the whole thread.
 
@@ -12,6 +12,8 @@ Audience: a new product / design / engineering agent or human who needs to under
 > `prototype/` (V40) is now a **frozen proof archive**. New product work continues in `prototype-v2/` against the V1 PRD. Section 19 lists the new next steps.
 >
 > **2026-07-14 workflow update:** repo-level agent configuration now follows the current Matt Pocock flow. The active V1.x planning artifact is `.scratch/room-recall-v1x/map.md`; the first frontier decision is the durable product promise. Do not publish a new `spec.md` or implementation tickets until that decision map is clear.
+>
+> **2026-07-21 correction:** real scanning and 2D/3D are no longer precommitted by the map destination. The route is now durable job -> five-minute activation prototype -> evidence from at least five representative users -> smallest justified capture mode. If the evidence favors Container Snapshot or operation-first entry, close the room-reconstruction branch instead of forcing it into V1.x.
 
 Primary workspace:
 

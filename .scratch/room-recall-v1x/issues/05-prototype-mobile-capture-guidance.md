@@ -1,8 +1,8 @@
-# 04 — Prototype Mobile Capture And Coverage Guidance
+# 05 — Prototype Mobile Capture And Coverage Guidance
 
 Type: prototype
 Status: open
-Blocked by: 02 — Define The Five-Minute Activation Path; 03 — Select The Bounded Visual Reconstruction Route
+Blocked by: 03 — Collect Target-User Activation Evidence; 04 — Select The Bounded Visual Reconstruction Route
 
 ## Question
 
