@@ -30,3 +30,25 @@ This segment has an acute reason to capture Home Memory, a bounded event in whic
 - Across every stage: trust uncertainty, undo wrong proposals, protect Sensitive Evidence, and avoid maintenance that costs more than the memory saves.
 
 Perfect 3D reconstruction, tracking every cheap Item, and operating an interior-design tool are not assumed needs.
+
+### New hypothesis: long-term Ownership Recall
+
+The moving wedge may be an acquisition and activation event rather than the durable product promise. After a user has lived in one home for a long time, belongings become invisible inside deep drawers, cabinets, boxes, and rarely visited storage. The user may remember neither the Current Place nor that the Belonging exists.
+
+This creates three related jobs:
+
+1. **Location recall** — "I know I own this; where is it?"
+2. **Ownership recall** — "Do I already own something in this category?"
+3. **Pre-purchase recall** — "Before I buy this, do I already have the same thing or a usable substitute?"
+
+The consumption failure is not simply overspending. It is purchasing under incomplete household memory: low visibility makes dormant inventory feel absent, causing duplicate purchases, unused substitutes, clutter, and later disposal.
+
+Potential recurring outcomes:
+
+- answer category-level questions such as "Do I have spare batteries, tape, an adapter, or a repair tool?"
+- surface substitutes when the exact requested Item is absent;
+- show quantity, condition, expiry or freshness only for categories where those facts affect the decision;
+- rediscover dormant belongings during seasonal reset or decluttering;
+- reduce duplicate purchases without requiring a manually maintained exhaustive inventory.
+
+This hypothesis is not yet confirmed as the durable promise. Its main risk is behavioral: the value disappears if capture and correction cost more than occasional duplicate purchases.
