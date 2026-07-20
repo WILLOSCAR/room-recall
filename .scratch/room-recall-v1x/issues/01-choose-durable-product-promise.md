@@ -52,3 +52,24 @@ Potential recurring outcomes:
 - reduce duplicate purchases without requiring a manually maintained exhaustive inventory.
 
 This hypothesis is not yet confirmed as the durable promise. Its main risk is behavioral: the value disappears if capture and correction cost more than occasional duplicate purchases.
+
+### New hypothesis: Declutter Review
+
+Home Memory can support letting go by making dormant inventory visible. The product can surface duplicate, long-hidden, low-use, expired, broken, or space-expensive belongings and place them into a user-controlled review flow.
+
+The goal is not to maximize the number of discarded Items. It is to help the user reclaim useful space and make a deliberate decision:
+
+- keep in the current Place;
+- move to a more appropriate Default Home;
+- use up or rotate into active use;
+- sell or donate;
+- recycle or discard;
+- defer because evidence is insufficient or the Item has emotional value.
+
+Moving, seasonal reset, an overloaded Container, a duplicate purchase, and a failed retrieval are natural triggers for a Declutter Review. Each resolved decision also improves the Place Graph, creating a recurring maintenance loop:
+
+`remember -> find -> use or avoid buying -> review -> release or re-home -> remember better`
+
+This should remain decision support rather than moral pressure. The system must expose why an Item was surfaced, avoid inferring low value from weak usage evidence, and never auto-dispose or shame the user.
+
+Current recommendation: treat decluttering as a recurring Operation and retention loop built on Home Memory, not as the first acquisition promise.
