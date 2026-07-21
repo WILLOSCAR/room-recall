@@ -51,7 +51,7 @@ Potential recurring outcomes:
 - rediscover dormant belongings during seasonal reset or decluttering;
 - reduce duplicate purchases without requiring a manually maintained exhaustive inventory.
 
-This hypothesis is not yet confirmed as the durable promise. Its main risk is behavioral: the value disappears if capture and correction cost more than occasional duplicate purchases.
+Ownership Recall and pre-purchase recall are confirmed as the first long-term retention loop after the moving wedge. Their main risk remains behavioral: the value disappears if capture and correction cost more than occasional duplicate purchases.
 
 ### New hypothesis: Declutter Review
 
@@ -72,11 +72,12 @@ Moving, seasonal reset, an overloaded Container, a duplicate purchase, and a fai
 
 This should remain decision support rather than moral pressure. The system must expose why an Item was surfaced, avoid inferring low value from weak usage evidence, and never auto-dispose or shame the user.
 
-Current recommendation: treat decluttering as a recurring Operation and retention loop built on Home Memory, not as the first acquisition promise.
+Confirmed hierarchy: treat decluttering as a secondary recurring Operation built on Home Memory, not as the first acquisition promise or the first retention loop.
 
 ### Confirmed product hierarchy
 
 - Moving and forgotten-item recovery are the first high-motivation entry points.
-- Long-term value comes from Location Recall, Ownership Recall, pre-purchase recall, and Home Capability.
-- Declutter Review is a core recurring Operation that helps users deliberately re-home, use, sell, donate, recycle, or release belongings.
+- Remember and Retrieve are the foundation; Ownership Recall and pre-purchase recall are the confirmed first long-term retention loop.
+- Intent Kits and Declutter Review are secondary Operations built on trusted Home Memory.
+- Home Capability remains the longer-term expansion of Intent Kits, not a separate product promise.
 - The shared product vision is drafted in `docs/nestory-product-vision.zh-CN.md`; it remains directional until payer, willingness, and falsification evidence are resolved.
