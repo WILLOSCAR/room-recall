@@ -145,6 +145,7 @@ The deeper product is a memory system for everyday life: a way to connect physic
 
 - `.scratch/room-recall-v1x/map.md`: active `wayfinder` map for durable product value, five-minute activation, target-user evidence, and only then the smallest justified capture route.
 - `docs/agents/`: current local tracker, triage, domain-doc, and agent workflow configuration.
+- `docs/nestory-product-vision.zh-CN.md`: detailed Chinese product vision covering Home Memory, Ownership Recall, Home Capability, pre-purchase recall, and Declutter Review.
 - `docs/nestory-roomrecall-handoff.md`: 10-minute handoff for a new product/design/engineering agent to understand the current state, run the prototypes, and continue the work.
 - `docs/nestory-v1-prd.md`: **canonical V1 PRD** — decision record, tightened P0 scope, acceptance criteria, release gates.
 - `docs/nestory-product-framework.md`: strategic framing around "A memory system for your home", moving, kits, containers, and home operations.

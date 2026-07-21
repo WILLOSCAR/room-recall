@@ -4,6 +4,8 @@ Created: 2026-07-06 · Updated: 2026-07-21 (product-evidence gate before scan/3D
 
 Audience: a new product / design / engineering agent or human who needs to understand the current work in about 10 minutes and continue it without re-discovering the whole thread.
 
+Product vision draft: `docs/nestory-product-vision.zh-CN.md` now unifies moving as the acquisition event, long-term Ownership Recall and pre-purchase recall, Home Capability, and Declutter Review. It is directional context, not a replacement for the canonical V1 PRD or a future V1.x build spec.
+
 > **2026-07-13 update — read this box first.**
 > The three top recommendations of this handoff have been executed:
 > 1. **V1 surface decided**: moving/unpacking + kits. Decision record in `docs/nestory-v1-prd.md` (canonical V1 PRD).

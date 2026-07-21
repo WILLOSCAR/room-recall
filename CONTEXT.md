@@ -171,6 +171,7 @@ _Avoid_: making transparent 3D a prerequisite for the first usable version.
 ## Product Map
 
 - `README.md`: idea seed and product framing.
+- `docs/nestory-product-vision.zh-CN.md`: current product vision draft; use it for long-term value and experience principles, not as a build spec.
 - `docs/nestory-roomrecall-handoff.md`: 10-minute handoff for the next person or agent taking over the project.
 - `docs/nestory-v1-prd.md`: canonical V1 PRD — decided wedge (moving/unpacking + kits), P0 acceptance criteria, release gates.
 - `docs/nestory-product-framework.md`: strategic product framework around home memory, moving, kits, containers, and operations.
