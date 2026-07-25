@@ -175,12 +175,11 @@ _Avoid_: making transparent 3D a prerequisite for the first usable version.
 - `docs/nestory-roomrecall-handoff.md`: 10-minute handoff for the next person or agent taking over the project.
 - `docs/nestory-v1-prd.md`: canonical V1 PRD — decided wedge (moving/unpacking + kits), P0 acceptance criteria, release gates.
 - `docs/nestory-product-framework.md`: strategic product framework around home memory, moving, kits, containers, and operations.
-- `docs/product-requirements.md`: detailed contract archive (superseded for V1 scope by `nestory-v1-prd.md`).
 - `prototype-v2/`: current runnable V1 console (TypeScript: `src/types.ts` contract + store + UI + `src/verify.ts`).
 - `prototype/`: frozen V40 proof archive for 3D/scan/layout contracts.
 - `docs/vision-scan-and-layout-layer.md`: visual scan, typed mapping, and furniture layout planning requirements.
 - `docs/scan-algorithm-options.md`: scan pipeline route options and current prototype decision.
-- `.scratch/room-recall/PRD.md`: superseded PRD seed retained only for provenance.
+- `docs/archive/`: retired documents, provenance only — superseded requirement contracts plus the pre-Matt "self-loop" iteration process. Nothing there is current; never follow its instructions.
 - `.scratch/room-recall-v1x/map.md`: current `wayfinder` map for durable product value, five-minute activation, and the first honest visual capture -> review -> commit loop.
 - `.scratch/room-recall-v1x/issues/`: decision tickets on the map frontier; these are not implementation tickets.
 - `.scratch/<feature>/spec.md`: future ready-for-agent build contract produced by `to-spec` after its decision map is clear.

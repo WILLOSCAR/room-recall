@@ -1,6 +1,6 @@
 # Nestory / RoomRecall Handoff
 
-Created: 2026-07-06 · Updated: 2026-07-21 (product-evidence gate before scan/3D)
+Created: 2026-07-06 · Updated: 2026-07-25 (docs consolidated to one process)
 
 Audience: a new product / design / engineering agent or human who needs to understand the current work in about 10 minutes and continue it without re-discovering the whole thread.
 
@@ -9,13 +9,15 @@ Product vision draft: `docs/nestory-product-vision.zh-CN.md` now unifies moving 
 > **2026-07-13 update — read this box first.**
 > The three top recommendations of this handoff have been executed:
 > 1. **V1 surface decided**: moving/unpacking + kits. Decision record in `docs/nestory-v1-prd.md` (canonical V1 PRD).
-> 2. **PRD tightened**: `docs/nestory-v1-prd.md` supersedes `docs/product-requirements.md` for V1 scope.
+> 2. **PRD tightened**: `docs/nestory-v1-prd.md` supersedes the long-form requirements contract (now `docs/archive/product-requirements.md`) for V1 scope.
 > 3. **V2 prototype built (strict TypeScript, now v2.5)**: `prototype-v2/` is the Home Memory Operations Console (Home / Ask / Capture / Setup / Spaces / Belongings / Operations / Review / Plan / Ledger) over an event-sourced Place Graph store. The July 13 pass redesigns Home, adds one Capture entry for room proposals / container snapshots / product dimensions, and restores 3D as an orbitable Three.js review projection over the same coordinates as 2D. The room scan is an explicitly labeled deterministic interaction prototype; only accepted item observations can enter the existing Review pipeline. Verified by `npm run verify` — **191/191 assertions**, including product-dimension normalization, 3D canvas pixel checks, scan-proposal rendering, live HTTP service checks, and desktop/mobile browser smoke.
 > `prototype/` (V40) is now a **frozen proof archive**. New product work continues in `prototype-v2/` against the V1 PRD. Section 19 lists the new next steps.
 >
 > **2026-07-14 workflow update:** repo-level agent configuration now follows the current Matt Pocock flow. The active V1.x planning artifact is `.scratch/room-recall-v1x/map.md`; the first frontier decision is the durable product promise. Do not publish a new `spec.md` or implementation tickets until that decision map is clear.
 >
 > **2026-07-21 correction:** real scanning and 2D/3D are no longer precommitted by the map destination. The route is now durable job -> five-minute activation prototype -> evidence from at least five representative users -> smallest justified capture mode. If the evidence favors Container Snapshot or operation-first entry, close the room-reconstruction branch instead of forcing it into V1.x.
+>
+> **2026-07-25 docs consolidation:** the repo carried two eras of process. The pre-Matt "self-loop" iteration OS and five superseded requirement documents moved to `docs/archive/` — **nothing there is current, and its instructions must not be followed**. `docs/` now holds six live documents; `.scratch/` holds only live tracker state. Workflow vocabulary is aligned to `mattpocock/skills` v1.2, most visibly the wayfinder map's **Fog** section (previously "Not yet specified"). `prototype/self-loop.mjs` still runs so the V40 archive stays intact, but carries a retirement banner. Current workflow: `AGENTS.md` + `docs/agents/`.
 
 Primary workspace:
 
@@ -67,7 +69,7 @@ V40 verification, rerun on 2026-07-06:
 
 Important nuance:
 
-- `docs/iteration-40-ledger.md` records V40 as `rr-8d44dc547269` from the earlier 40-iteration push.
+- `docs/archive/iteration-40-ledger.md` records V40 as `rr-8d44dc547269` from the earlier 40-iteration push.
 - The latest rerun of the same prototype/report chain is now `rr-47241ff3013b`.
 - Treat V40 as the completed milestone; treat `rr-47241ff3013b` as the latest local verification state.
 
@@ -91,13 +93,15 @@ Read these in order:
 5. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/renders/verification-report.md`
    - Latest V2 verification state, mapped to the PRD.
 
-6. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/product-requirements.md`
-   - Detailed contract archive (superseded for V1 scope, still the best scan/3D/privacy detail).
+6. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/AGENTS.md`
+   - The workflow contract: which skill to run, in what order, and how tickets are tracked.
 
-7. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/iteration-40-ledger.md`
-   - How the V40 prototype earned its proofs.
+7. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/.scratch/room-recall-v1x/map.md`
+   - The live planning frontier: what is decided, what is still fog, and what is out of scope.
 
 Only after that, open the prototype code (`prototype-v2/` first).
+
+Optional background, only if you need scan/3D/privacy depth or project history: `docs/archive/product-requirements.md` and `docs/archive/iteration-40-ledger.md`. Both are retired — read them for detail, never for current scope.
 
 ## 3. Product Narrative
 
@@ -276,13 +280,14 @@ Then open:
 http://127.0.0.1:8789/
 ```
 
-Terminal 2:
+Terminal 2 — replay the archive's own verification:
 
 ```bash
 cd /Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype
 node verify.mjs
-node self-loop.mjs
 ```
+
+`node self-loop.mjs` also still runs, but it drives the **retired** pre-Matt iteration process. Run it only to reproduce a historical report, never to decide what to build next — that is `AGENTS.md`'s job.
 
 Outputs:
 
@@ -592,25 +597,21 @@ It checks:
 - anchor edits;
 - end-to-end trace.
 
-Self-loop script:
+Self-loop script (**retired process — historical only**):
 
 ```text
 /Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/self-loop.mjs
 ```
 
-It compresses detailed assertions into product/engineering probes across lanes:
+It compressed detailed assertions into product/engineering probes across `semantic`, `spatial`, `interface`, and `verification` lanes. It belongs to the pre-Matt iteration OS (`docs/archive/self-loop-operating-system.md`) and is kept only so the frozen V40 archive stays runnable. **Do not use it to plan or drive new work.**
 
-- `semantic`
-- `spatial`
-- `interface`
-- `verification`
+Definition of done for current work — set by `AGENTS.md`, not by the self-loop:
 
-Definition of done for future iterations:
-
-- changed behavior is visible in prototype or PRD;
-- `node verify.mjs` passes;
-- `node self-loop.mjs` writes a fresh report;
-- next queue contains at least one concrete item.
+- the change is driven by a claimed ticket on the current frontier;
+- behavior is agreed at public seams and built with `tdd`;
+- `cd prototype-v2 && npm run verify` passes (strict `tsc` gate + PRD-mapped assertions + browser smoke);
+- `code-review` runs against a fixed Git baseline before committing;
+- docs that describe the changed behavior are updated in the same pass.
 
 ## 12. Document Map
 
@@ -630,8 +631,8 @@ Core:
 - `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/nestory-product-framework.md`
   - Strategic frame behind the PRD.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/product-requirements.md`
-  - Detailed contract archive (superseded for V1 scope).
+- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/AGENTS.md` + `docs/agents/`
+  - The workflow contract: canonical skill flow, local issue tracker, triage labels, domain-doc rules.
 
 V2 console and verification (current, strict TypeScript):
 
@@ -688,16 +689,7 @@ V40 archive prototype and verification:
 - `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/self-loop-report.md`
   - Latest human-readable self-loop report.
 
-Discovery and design notes:
-
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/requirements-discovery.md`
-  - Larger pool of ideas and open questions.
-
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/requirements-agent-synthesis.md`
-  - Multi-agent requirement synthesis.
-
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/coordinate-prototype-synthesis.md`
-  - Coordinate-frame and scan-calibration synthesis.
+Live design notes:
 
 - `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/vision-scan-and-layout-layer.md`
   - Scan, 3D review, product intake, layout planning behavior.
@@ -705,11 +697,20 @@ Discovery and design notes:
 - `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/scan-algorithm-options.md`
   - Algorithm route notes and links.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/self-loop-operating-system.md`
-  - How to iterate this prototype.
+Planning frontier:
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/iteration-40-ledger.md`
-  - 40-iteration evidence ledger.
+- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/.scratch/room-recall-v1x/map.md`
+  - The live `wayfinder` map: destination, decisions so far, fog, out of scope.
+
+- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/.scratch/room-recall-v1x/issues/`
+  - Decision tickets. These are not implementation tickets.
+
+Retired — `docs/archive/` (provenance only, never current):
+
+- `product-requirements.md` — the long-form requirements contract; still the deepest scan/3D/privacy discussion.
+- `requirements-discovery.md`, `requirements-agent-synthesis.md`, `coordinate-prototype-synthesis.md` — discovery and synthesis notes from the pre-decision era.
+- `roomrecall-legacy-prd-seed.md` — the original PRD seed.
+- `self-loop-operating-system.md`, `iteration-40-ledger.md` — the **pre-Matt self-loop iteration process** and its V40 evidence ledger. How this repo iterates today is defined in `AGENTS.md`, not there.
 
 ## 13. Current Product Requirements Summary
 
@@ -979,7 +980,10 @@ Route through `ask-matt`, then follow the configured workflow in `AGENTS.md` and
 - `to-spec`: run only when the decision map is clear; publish `.scratch/<feature>/spec.md`.
 - `to-tickets`: split an approved spec into dependency-ordered tracer bullets with one local file per ticket.
 - `implement` + `tdd` + `code-review`: execute one frontier ticket in a fresh context, at agreed public seams, then review Standards and Spec axes against a fixed Git point before commit.
-- `frontend-design`, `ui-design`, `design-an-interface`, and `playwright`: supporting skills when a claimed prototype or implementation ticket calls for them.
+- `domain-modeling` + `codebase-design`: model-invoked references for sharpening domain language and designing deep modules; reached through the skills above rather than called directly.
+- `diagnosing-bugs`: on-ramp for a hard bug or performance regression, rather than folding it into an implementation ticket.
+
+Note: `design-an-interface` was retired in `mattpocock/skills` v1.2 and is no longer part of this flow; UI work belongs inside a claimed `prototype` or `implement` ticket. Browser automation is a plain tool (Playwright via the local harness), not a workflow skill.
 
 Do not blindly use skills if the user explicitly says "先别用 skills" and asks for direct prototype implementation. In that case, implement locally and verify.
 

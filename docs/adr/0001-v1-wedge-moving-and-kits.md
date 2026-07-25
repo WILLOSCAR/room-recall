@@ -19,6 +19,6 @@ Canonical scope and acceptance criteria: `docs/nestory-v1-prd.md`.
 ## Consequences
 
 - New product work happens in `prototype-v2/` against the V1 PRD; `prototype/` is not extended.
-- `docs/product-requirements.md` is superseded for V1 scope but kept as the scan/3D/privacy contract archive.
+- `docs/archive/product-requirements.md` is superseded for V1 scope but retained as the scan/3D/privacy contract archive.
 - The verification gate for V1 changes is `node prototype-v2/src/verify.ts` (strict tsc gate + PRD-mapped assertions + browser smoke).
 - Small-space layout planning and real reconstruction need a new ADR before re-entering scope.

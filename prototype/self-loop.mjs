@@ -1,3 +1,11 @@
+// RETIRED PROCESS — kept only so the frozen V40 proof archive stays runnable.
+//
+// This script implements the pre-Matt "self-loop" iteration OS, described in
+// docs/archive/self-loop-operating-system.md. That process is no longer how this
+// repo iterates. The current workflow is defined in AGENTS.md and docs/agents/.
+//
+// Do not use this to plan or drive new work.
+
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
@@ -7,9 +15,9 @@ const stateUrl = new URL("./renders/self-loop-state.json", import.meta.url);
 const markdownUrl = new URL("./renders/self-loop-report.md", import.meta.url);
 
 const sources = [
-  ["product-requirements.md", new URL("../docs/product-requirements.md", import.meta.url)],
-  ["requirements-discovery.md", new URL("../docs/requirements-discovery.md", import.meta.url)],
-  ["self-loop-operating-system.md", new URL("../docs/self-loop-operating-system.md", import.meta.url)],
+  ["product-requirements.md", new URL("../docs/archive/product-requirements.md", import.meta.url)],
+  ["requirements-discovery.md", new URL("../docs/archive/requirements-discovery.md", import.meta.url)],
+  ["self-loop-operating-system.md", new URL("../docs/archive/self-loop-operating-system.md", import.meta.url)],
   ["index.html", new URL("./index.html", import.meta.url)],
   ["verify.mjs", new URL("./verify.mjs", import.meta.url)],
   ["self-loop.mjs", new URL("./self-loop.mjs", import.meta.url)]

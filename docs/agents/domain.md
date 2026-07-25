@@ -1,22 +1,49 @@
 # Domain Docs
 
-RoomRecall is a single-context project. These rules tell engineering skills how to consume its domain documentation.
+How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
-## Before exploring
+RoomRecall / Nestory is a **single-context** project.
 
-- Read root `CONTEXT.md` before product, architecture, bug, test, ticket, or prototype work.
-- Read relevant ADRs under `docs/adr/` before changing product scope, the Place Graph, privacy posture, visual scanning, coordinates, or Agent behavior.
-- If either source is absent, continue silently; `domain-modeling` creates or sharpens it only when a real decision requires it.
+## Before exploring, read these
+
+- **`CONTEXT.md`** at the repo root — the glossary and product rules. Read it before product, architecture, bug, test, ticket, or prototype work.
+- **`docs/adr/`** — read ADRs that touch the area you are about to work in, especially before changing product scope, the Place Graph, privacy posture, visual scanning, coordinates, or Agent behavior.
+
+If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
+
+## File structure
+
+Single-context repo (this repo):
+
+```
+/
+├── CONTEXT.md              ← glossary and product rules
+├── AGENTS.md               ← workflow contract
+├── docs/
+│   ├── adr/                ← durable decisions
+│   │   └── 0001-v1-wedge-moving-and-kits.md
+│   ├── agents/             ← this configuration
+│   └── archive/            ← retired documents, provenance only
+├── .scratch/               ← live issue tracker and wayfinder maps
+└── prototype-v2/           ← the runnable V1 console
+```
 
 ## Sources of truth
 
 - `CONTEXT.md` is the domain-language source of truth. Use its exact terms in specs, ticket titles, tests, interfaces, and review findings.
 - `docs/adr/` stores durable and hard-to-reverse decisions.
-- A resolved `wayfinder` ticket owns the detail for its decision; the map only links to it.
-- `.scratch/<feature>/spec.md` becomes the build contract after the relevant decision map is clear and `to-spec` publishes it as `ready-for-agent`.
-- Legacy PRDs and prototype notes preserve provenance but do not silently override the current spec, glossary, or ADRs.
+- A resolved `/wayfinder` ticket owns the detail for its decision; the map only links to it.
+- `.scratch/<feature>/spec.md` becomes the build contract after the relevant decision map is clear and `/to-spec` publishes it as `ready-for-agent`.
+- Documents under `docs/archive/` preserve provenance but never override the current spec, glossary, or ADRs.
 
-## Conflicts and gaps
+## Use the glossary's vocabulary
 
-- If a term conflicts with `CONTEXT.md`, use the canonical term or explicitly propose a `domain-modeling` update.
-- If a planned change contradicts an ADR, name that ADR and explain why it may need reopening before implementation.
+When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
+
+If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
+
+## Flag ADR conflicts
+
+If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
+
+> _Contradicts ADR-0001 (V1 wedge is moving/unpacking + kits) — but worth reopening because…_

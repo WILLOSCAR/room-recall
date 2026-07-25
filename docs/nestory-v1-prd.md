@@ -10,7 +10,7 @@ v1.3 changes: added P0.10 (**local sync service** — file-backed HTTP API over 
 
 v1.4 prototype note: added a unified **Capture** surface, normalized product dimensions, and a shared-coordinate Three.js 3D review view alongside the 2D Plan. These are acquisition, capture, and trust-layer experiments; they do not change the V1 wedge or make automatic reconstruction a release requirement. The scan demo is explicitly deterministic and proposal-first.
 
-Supersedes for V1 scope: `docs/product-requirements.md` (kept as the detailed contract archive) and the P0 list in `docs/nestory-product-framework.md` (kept as the strategic frame).
+Supersedes for V1 scope: `docs/archive/product-requirements.md` (retained as the detailed contract archive) and the P0 list in `docs/nestory-product-framework.md` (kept as the strategic frame).
 
 One-liner:
 

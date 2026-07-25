@@ -22,7 +22,9 @@ A decision-complete foundation for `to-spec` to publish one ready-for-agent V1.x
 
 <!-- Append one gist and relative link per resolved child ticket. The full decision belongs in the child ticket. -->
 
-## Not yet specified
+## Fog
+
+Decisions we can tell are coming but cannot yet state as a precise question. An item graduates from fog into an issue ticket when the question can be stated exactly — not when it can be answered.
 
 - Pricing and packaging details beyond identifying the first credible payer or high-stakes beneficiary and the outcome they value.
 - The implementation tracer bullets and their public test seams; these become precise after the durable promise, activation path, reconstruction job, correction flow, and acceptance boundary are settled.

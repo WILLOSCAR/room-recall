@@ -16,6 +16,15 @@ This is a single-context project. Read `CONTEXT.md` first, then ADRs in `docs/ad
 
 ## Development workflow
 
+The canonical flow is:
+
+```text
+ask-matt -> grill-with-docs -> (handoff -> prototype -> handoff, if a question needs a runnable answer)
+         -> to-spec -> to-tickets -> implement (drives tdd, closes with code-review) -> commit
+```
+
+`wayfinder` is the on-ramp when the effort is too large and foggy to spec in one sitting; it merges back onto the flow at `to-spec`.
+
 - Start by routing through `ask-matt`.
 - Use `wayfinder` when the destination spans more than one focused session and the route is still unclear. Its local map lives at `.scratch/<effort>/map.md`; resolve decision tickets before synthesizing a build spec.
 - For a bounded idea in this codebase, use `grill-with-docs` so settled language and durable decisions update `CONTEXT.md` and `docs/adr/`.

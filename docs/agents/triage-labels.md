@@ -1,6 +1,6 @@
 # Triage Labels
 
-The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this project's local markdown issue tracker.
+The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this repo's issue tracker (local markdown under `.scratch/`).
 
 | Label in mattpocock/skills | Label in our tracker | Meaning                                  |
 | -------------------------- | -------------------- | ---------------------------------------- |
@@ -10,4 +10,6 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 | `ready-for-human`          | `ready-for-human`    | Requires human implementation            |
 | `wontfix`                  | `wontfix`            | Will not be actioned                     |
 
-When an issue is local markdown, put the mapped label in a `Status:` line near the top of the issue file.
+When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table. Because issues here are local markdown, put the mapped label in a `Status:` line near the top of the issue file.
+
+Wayfinder decision tickets are not triage subjects: they use their own `Status:` values (`open` / `claimed` / `resolved`) as described in `issue-tracker.md`.

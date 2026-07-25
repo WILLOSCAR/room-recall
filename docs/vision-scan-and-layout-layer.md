@@ -2,7 +2,7 @@
 
 Status: discovery
 
-Canonical product behavior lives in `docs/product-requirements.md`. Algorithm route tradeoffs live in `docs/scan-algorithm-options.md`; this file focuses on how scan and layout should feel in the product.
+Canonical product behavior lives in `docs/nestory-v1-prd.md`. Algorithm route tradeoffs live in `docs/scan-algorithm-options.md`; this file focuses on how scan and layout should feel in the product.
 
 ## Core Position
 

@@ -2,7 +2,9 @@
 
 Status: superseded
 
-This file preserves the first product framing for provenance. It is not the current build contract. The decided V1 wedge lives in `docs/nestory-v1-prd.md`; the next planning effort is indexed by `../room-recall-v1x/map.md` and will produce a current `spec.md` only after its decision frontier is clear.
+This file preserves the first product framing for provenance. It is not the current build contract. The decided V1 wedge lives in `docs/nestory-v1-prd.md`; the next planning effort is indexed by `.scratch/room-recall-v1x/map.md` and will produce a current `spec.md` only after its decision frontier is clear.
+
+Moved from `.scratch/room-recall/PRD.md` on 2026-07-25: `.scratch/` now holds only live issue-tracker and wayfinder state.
 
 ## Summary
 
