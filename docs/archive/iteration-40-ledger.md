@@ -64,7 +64,7 @@ This ledger keeps the prototype loop honest: an iteration counts only when it ch
 ## Current Command
 
 ```bash
-cd /Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype
+cd /Users/renjunbin/Documents/codebase/try/products/room-recall/prototype
 node verify.mjs
 node self-loop.mjs
 ```

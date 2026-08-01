@@ -19,11 +19,13 @@ Product vision draft: `docs/nestory-product-vision.zh-CN.md` now unifies moving 
 >
 > **2026-07-25 docs consolidation:** the repo carried two eras of process. The pre-Matt "self-loop" iteration OS and five superseded requirement documents moved to `docs/archive/` — **nothing there is current, and its instructions must not be followed**. `docs/` now holds six live documents; `.scratch/` holds only live tracker state. Workflow vocabulary is aligned to `mattpocock/skills` v1.2, most visibly the wayfinder map's **Fog** section (previously "Not yet specified"). `prototype/self-loop.mjs` still runs so the V40 archive stays intact, but carries a retirement banner. Current workflow: `AGENTS.md` + `docs/agents/`.
 
-Primary workspace:
+Primary workspace (as of 2026-07-25 — this directory has been renamed before, so treat it as a hint, not a constant):
 
 ```text
-/Users/renjunbin/Documents/codebase/try/trello/room-recall
+/Users/renjunbin/Documents/codebase/try/products/room-recall
 ```
+
+**Every other path in this document is relative to the repo root**, including the `cd` commands. That keeps the handoff correct if the repo is moved or cloned elsewhere.
 
 ## 0. Read This First
 
@@ -77,26 +79,26 @@ Important nuance:
 
 Read these in order:
 
-1. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/README.md`
+1. `README.md`
    - Fast context: original idea, product naming, current thesis, current status.
 
-2. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/nestory-v1-prd.md`
+2. `docs/nestory-v1-prd.md`
    - **Canonical V1 PRD**: the decided wedge, P0 acceptance criteria, agent answer contract, release gates.
 
-3. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/nestory-product-framework.md`
+3. `docs/nestory-product-framework.md`
    - Strategic frame behind the PRD: Nestory, Home Memory, wedges, P0/P1/P2 superset, anti-requirements.
 
-4. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/CONTEXT.md`
+4. `CONTEXT.md`
    - Glossary and domain language.
    - Use it to avoid inconsistent names.
 
-5. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/renders/verification-report.md`
+5. `prototype-v2/renders/verification-report.md`
    - Latest V2 verification state, mapped to the PRD.
 
-6. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/AGENTS.md`
+6. `AGENTS.md`
    - The workflow contract: which skill to run, in what order, and how tickets are tracked.
 
-7. `/Users/renjunbin/Documents/codebase/try/trello/room-recall/.scratch/room-recall-v1x/map.md`
+7. `.scratch/room-recall-v1x/map.md`
    - The live planning frontier: what is decided, what is still fog, and what is out of scope.
 
 Only after that, open the prototype code (`prototype-v2/` first).
@@ -182,25 +184,25 @@ Core product layers:
 Prototype path:
 
 ```text
-/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype
+prototype
 ```
 
 Main files:
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/index.html`
+- `prototype/index.html`
   - Single-file static app, about 10.7k lines.
   - Contains HTML, CSS, Three.js scene, state, prototype data, interaction logic, and `window.roomRecallDemo`.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/verify.mjs`
+- `prototype/verify.mjs`
   - Browser verification harness, about 4.3k lines.
   - Uses headless Chrome/CDP and calls `window.roomRecallDemo`.
   - `rootUrl` is hard-coded to `http://127.0.0.1:8789/`.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/self-loop.mjs`
+- `prototype/self-loop.mjs`
   - Product/engineering self-loop analyzer, about 1k lines.
   - Reads verification output and writes next-iteration critique.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/`
+- `prototype/renders/`
   - Screenshots and JSON/Markdown verification reports.
 
 The prototype currently shows:
@@ -236,7 +238,7 @@ The prototype is not a production app:
 One-time setup (installs TypeScript, Three.js, Lucide, and their local type dependencies):
 
 ```bash
-cd /Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2
+cd prototype-v2
 npm install
 ```
 
@@ -270,7 +272,7 @@ Use two terminals.
 Terminal 1:
 
 ```bash
-cd /Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype
+cd prototype
 python3 -m http.server 8789
 ```
 
@@ -283,7 +285,7 @@ http://127.0.0.1:8789/
 Terminal 2 — replay the archive's own verification:
 
 ```bash
-cd /Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype
+cd prototype
 node verify.mjs
 ```
 
@@ -291,10 +293,10 @@ node verify.mjs
 
 Outputs:
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/verification-report.json`
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/self-loop-state.json`
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/self-loop-report.md`
-- PNG screenshots under `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/`
+- `prototype/renders/verification-report.json`
+- `prototype/renders/self-loop-state.json`
+- `prototype/renders/self-loop-report.md`
+- PNG screenshots under `prototype/renders/`
 
 If port `8789` is occupied:
 
@@ -305,13 +307,13 @@ If port `8789` is occupied:
 
 Useful visual outputs:
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/room-recall-desktop.png`
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/room-recall-plan-2d.png`
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/room-recall-scan-3d.png`
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/room-recall-layout-planner.png`
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/room-recall-fitness-kit.png`
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/room-recall-search-water-bottle.png`
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/room-recall-mobile.png`
+- `prototype/renders/room-recall-desktop.png`
+- `prototype/renders/room-recall-plan-2d.png`
+- `prototype/renders/room-recall-scan-3d.png`
+- `prototype/renders/room-recall-layout-planner.png`
+- `prototype/renders/room-recall-fitness-kit.png`
+- `prototype/renders/room-recall-search-water-bottle.png`
+- `prototype/renders/room-recall-mobile.png`
 
 These are especially useful for quickly seeing what "the prototype" looks like without running it.
 
@@ -436,7 +438,7 @@ Algorithm routes documented:
 Important file:
 
 ```text
-/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/scan-algorithm-options.md
+docs/scan-algorithm-options.md
 ```
 
 ### 8.6 Layout Planning
@@ -573,7 +575,7 @@ When writing tests, prefer these hooks over brittle DOM scraping.
 Verification script:
 
 ```text
-/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/verify.mjs
+prototype/verify.mjs
 ```
 
 It checks:
@@ -600,7 +602,7 @@ It checks:
 Self-loop script (**retired process — historical only**):
 
 ```text
-/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/self-loop.mjs
+prototype/self-loop.mjs
 ```
 
 It compressed detailed assertions into product/engineering probes across `semantic`, `spatial`, `interface`, and `verification` lanes. It belongs to the pre-Matt iteration OS (`docs/archive/self-loop-operating-system.md`) and is kept only so the frozen V40 archive stays runnable. **Do not use it to plan or drive new work.**
@@ -619,90 +621,90 @@ Use these paths as the source of truth.
 
 Core:
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/README.md`
+- `README.md`
   - Product seed, naming, current status.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/CONTEXT.md`
+- `CONTEXT.md`
   - Glossary and product rules.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/nestory-v1-prd.md`
+- `docs/nestory-v1-prd.md`
   - **Canonical V1 PRD.** Start here for scope and acceptance.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/nestory-product-framework.md`
+- `docs/nestory-product-framework.md`
   - Strategic frame behind the PRD.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/AGENTS.md` + `docs/agents/`
+- `AGENTS.md` + `docs/agents/`
   - The workflow contract: canonical skill flow, local issue tracker, triage labels, domain-doc rules.
 
 V2 console and verification (current, strict TypeScript):
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/types.ts`
+- `prototype-v2/src/types.ts`
   - **The typed domain contract**: catalog entities, append-only records, commit ops (write model), derived views (read model), and the `Store` interface. A future backend implements exactly these shapes.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/store.ts`
+- `prototype-v2/src/store.ts`
   - Event-sourced Place Graph store (catalog + append-only records -> derived state). Node-importable.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/data.ts`
+- `prototype-v2/src/data.ts`
   - Seed catalog and seed records.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/app.ts` + `index.html` + `style.css`
+- `prototype-v2/src/app.ts` + `index.html` + `style.css`
   - The Home Memory Operations Console UI (browser loads the `tsc` output in `dist/`).
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/agent.ts`
+- `prototype-v2/src/agent.ts`
   - The typed agent toolkit: 14 tool descriptors (JSON-schema parameters) + dispatcher over the store, proposal-first rules enforced.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/agent-runtime.ts`
+- `prototype-v2/src/agent-runtime.ts`
   - Provider-agnostic tool-calling loop: injected LLM function, decision-tool guard, bounded tool rounds, capped result serialization. Tested with scripted mock LLMs.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/ask.ts`
+- `prototype-v2/src/ask.ts`
   - Deterministic intent router behind the Ask view — answers only through toolkit calls.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/agent-cli.ts`
+- `prototype-v2/src/agent-cli.ts`
   - `node src/agent-cli.ts [export.json]`: binds the toolkit to a real Claude model when `ANTHROPIC_API_KEY` is set; falls back to the router without one.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/server.ts`
+- `prototype-v2/src/server.ts`
   - The local sync service (P0.10): file-backed `StorageLike` adapter + zero-dependency HTTP API. Read views mirror the UI; `POST /tools/:name` is the only write path; decision tools 403 without `{ "confirmed": true }`; export/import schema-compatible with the app.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/agent-eval.ts`
+- `prototype-v2/src/agent-eval.ts`
   - The agent evaluation harness: seven PRD §6 jobs scored against demo-home ground truth (correct place, staleness admitted, no invented placements, decisions deferred). Real-model runs write `renders/agent-eval-report.{json,md}`.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/src/verify.ts`
+- `prototype-v2/src/verify.ts`
   - Self-contained verification: strict tsc gate + PRD-mapped Node assertions (incl. mock-LLM runtime) + headless browser smoke + screenshots. Runs directly on Node >= 23.6 (type stripping).
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype-v2/renders/verification-report.md`
+- `prototype-v2/renders/verification-report.md`
   - Latest V2 verification report.
 
 V40 archive prototype and verification:
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/index.html`
+- `prototype/index.html`
   - Current runnable prototype.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/verify.mjs`
+- `prototype/verify.mjs`
   - Browser verification.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/self-loop.mjs`
+- `prototype/self-loop.mjs`
   - Iteration critique loop.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/verification-report.json`
+- `prototype/renders/verification-report.json`
   - Latest assertion-level report.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/prototype/renders/self-loop-report.md`
+- `prototype/renders/self-loop-report.md`
   - Latest human-readable self-loop report.
 
 Live design notes:
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/vision-scan-and-layout-layer.md`
+- `docs/vision-scan-and-layout-layer.md`
   - Scan, 3D review, product intake, layout planning behavior.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/docs/scan-algorithm-options.md`
+- `docs/scan-algorithm-options.md`
   - Algorithm route notes and links.
 
 Planning frontier:
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/.scratch/room-recall-v1x/map.md`
+- `.scratch/room-recall-v1x/map.md`
   - The live `wayfinder` map: destination, decisions so far, fog, out of scope.
 
-- `/Users/renjunbin/Documents/codebase/try/trello/room-recall/.scratch/room-recall-v1x/issues/`
+- `.scratch/room-recall-v1x/issues/`
   - Decision tickets. These are not implementation tickets.
 
 Retired — `docs/archive/` (provenance only, never current):
