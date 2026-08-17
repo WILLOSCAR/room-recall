@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-17T12:09:57.971Z
+Generated: 2026-08-17T13:40:14.866Z
 Runtime: node v26.3.1 · typescript strict
-- Assertions: 459
-- Passed: 459
+- Assertions: 464
+- Passed: 464
 - Failed: 0
 - Browser smoke: ran
 - UI DOM-commit p95: 2.300 ms
-- Household UI DOM-commit p95: 6.900 ms
+- Household UI DOM-commit p95: 5.900 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -366,6 +366,11 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `spatial-labels-render-only-in-accessible-html-inspector`
 - ✓ `unrelated-update-preserves-spatial-canvas`
 - ✓ `settled-spatial-scene-has-zero-continuous-raf`
+- ✓ `spatial-selection-from-scene-updates-inspector`
+- ✓ `spatial-selection-does-not-remount-canvas`
+- ✓ `plan-2d-furniture-is-interactive`
+- ✓ `plan-2d-selection-works-without-live-3d`
+- ✓ `plan-2d-selection-shows-outline`
 - ✓ `reduced-motion-disables-orbit-damping`
 - ✓ `reduced-motion-keyboard-orbit-has-no-settle-raf`
 - ✓ `dom-plan-pin`

@@ -2042,6 +2042,58 @@ async function runBrowserSmoke(): Promise<void> {
     assert("settled-spatial-scene-has-zero-continuous-raf", settledRafCallbacks === 0, settledRafCallbacks);
     await shot("nestory-plan-3d.png");
 
+    // Selecting from the 3D canvas reflects into the shared inspector + anchor list
+    // (state-first selection), and the selection stays out of the scene signature so
+    // the WebGL context is never remounted by a pick.
+    const sceneSelectionParity = await evalPage<{ mountsBefore: number; mountsAfter: number; anchorPressed: boolean; title: string }>(`new Promise((resolve) => {
+      const canvasBefore = document.querySelector('[data-testid="plan-3d"] canvas');
+      const mountsBefore = canvasBefore ? Number(canvasBefore.getAttribute('data-spatial-rendered-frames') ?? 0) >= 0 ? 1 : 0 : 0;
+      window.nestory.ui.spatialSelectedId = null;
+      // Drive a selection through the same command the DOM uses.
+      const surface = document.querySelector('[data-testid="plan-3d"][data-spatial-scene]');
+      surface && surface.dispatchEvent(new CustomEvent('spatial-command', { detail: { type: 'select', id: 'desk' } }));
+      setTimeout(() => {
+        const canvasAfter = document.querySelector('[data-testid="plan-3d"] canvas');
+        const anchor = document.querySelector('[data-action="spatial-select"][data-id="desk"]');
+        resolve({
+          mountsBefore,
+          mountsAfter: canvasBefore === canvasAfter ? 1 : 2,
+          anchorPressed: anchor ? anchor.getAttribute('aria-pressed') === 'true' : false,
+          title: document.querySelector('[data-spatial-selection-title]')?.textContent ?? ''
+        });
+      }, 160);
+    })`);
+    assert("spatial-selection-from-scene-updates-inspector", sceneSelectionParity.anchorPressed && sceneSelectionParity.title.includes("Desk"), JSON.stringify(sceneSelectionParity));
+    assert("spatial-selection-does-not-remount-canvas", sceneSelectionParity.mountsAfter === 1, JSON.stringify(sceneSelectionParity));
+
+    // Switch to the 2D plan: furniture must be selectable and drive the SAME shared
+    // selection (bidirectional parity), and work without a live 3D surface.
+    await evalPage(`window.nestory.ui.planMode = "2d"; window.nestory.render()`);
+    await sleep(120);
+    const plan2dInteractive = await evalPage<{ hasAction: boolean; focusable: boolean; selectedAfterClick: boolean; outlineVisible: boolean; anchorlessOk: boolean }>(`new Promise((resolve) => {
+      const group = document.querySelector('.plan-object[data-id="desk"]');
+      const hasAction = group?.getAttribute('data-action') === 'spatial-select' && group?.getAttribute('role') === 'button';
+      const focusable = group?.getAttribute('tabindex') === '0';
+      // No live 3D surface exists in 2D mode; selection must still work (state-first).
+      const noLiveScene = !document.querySelector('[data-testid="plan-3d"][data-spatial-scene]');
+      if (group instanceof SVGElement) group.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      setTimeout(() => {
+        const selectedGroup = document.querySelector('.plan-object[data-id="desk"]');
+        resolve({
+          hasAction,
+          focusable,
+          selectedAfterClick: window.nestory.ui.spatialSelectedId === 'desk',
+          outlineVisible: selectedGroup?.classList.contains('selected') === true,
+          anchorlessOk: noLiveScene
+        });
+      }, 120);
+    })`);
+    assert("plan-2d-furniture-is-interactive", plan2dInteractive.hasAction && plan2dInteractive.focusable, JSON.stringify(plan2dInteractive));
+    assert("plan-2d-selection-works-without-live-3d", plan2dInteractive.anchorlessOk && plan2dInteractive.selectedAfterClick, JSON.stringify(plan2dInteractive));
+    assert("plan-2d-selection-shows-outline", plan2dInteractive.outlineVisible, JSON.stringify(plan2dInteractive));
+    await evalPage(`window.nestory.ui.planMode = "3d"; window.nestory.render()`);
+    await sleep(120);
+
     // Reduced-motion is a runtime contract, not only a CSS preference: the
     // 3D camera must disable inertial damping and render a keyboard move once
     // without starting a settle loop.

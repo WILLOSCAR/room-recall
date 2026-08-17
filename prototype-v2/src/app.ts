@@ -240,6 +240,34 @@ function dispatchSpatialCommand(detail: { type: "preset"; preset: UIState["spati
   surface?.dispatchEvent(new CustomEvent("spatial-command", { detail }));
 }
 
+// Selection is state-first: `ui.spatialSelectedId` is authoritative and the DOM
+// (aria-pressed across every spatial-select control, the inspector title/detail,
+// and the 2D plan outline) is patched directly. This works in 2D mode and after a
+// lost/failed 3D mount, where no live scene exists to echo a `spatial-selection`
+// event back. Selection state stays out of `spatialSceneData()` so the scene
+// signature is stable and the WebGL context is never disposed/remounted (ADR 0002).
+function applySpatialSelection(id: string | null, opts: { dispatchToScene?: boolean } = {}): void {
+  ui.spatialSelectedId = id;
+  const object = id ? store.catalog.furniture.find((f) => f.id === id) ?? null : null;
+  const roomId = object?.room ?? null;
+  const roomName = roomId ? store.state.rooms.get(roomId)?.name ?? "Home" : null;
+  for (const button of document.querySelectorAll<HTMLElement>('[data-action="spatial-select"]')) {
+    button.setAttribute("aria-pressed", String(button.dataset.id === id));
+  }
+  for (const group of document.querySelectorAll<SVGElement>('.plan-object[data-id]')) {
+    const selected = group.getAttribute("data-id") === id;
+    group.classList.toggle("selected", selected);
+    if (selected) group.setAttribute("aria-pressed", "true");
+    else group.setAttribute("aria-pressed", "false");
+  }
+  const title = document.querySelector<HTMLElement>("[data-spatial-selection-title]");
+  const detail = document.querySelector<HTMLElement>("[data-spatial-selection-detail]");
+  if (title) title.textContent = object?.name ?? "Choose an anchor";
+  if (detail) detail.textContent = object ? (roomName ?? "Home") : "Select a furniture anchor to inspect it.";
+  if (object) announce(`${object.name}, ${roomName ?? "home"}.`);
+  if (opts.dispatchToScene && id) dispatchSpatialCommand({ type: "select", id });
+}
+
 document.addEventListener("spatial-preset-change", (event) => {
   const preset = (event as CustomEvent<UIState["spatialPreset"]>).detail;
   if (preset !== "home" && preset !== "study" && preset !== "top") return;
@@ -251,15 +279,9 @@ document.addEventListener("spatial-preset-change", (event) => {
 
 document.addEventListener("spatial-selection", (event) => {
   const selection = (event as CustomEvent<{ id: string; name: string; roomId?: string } | null>).detail;
-  ui.spatialSelectedId = selection?.id ?? null;
-  for (const button of document.querySelectorAll<HTMLElement>('[data-action="spatial-select"]')) {
-    button.setAttribute("aria-pressed", String(button.dataset.id === ui.spatialSelectedId));
-  }
-  const title = document.querySelector<HTMLElement>("[data-spatial-selection-title]");
-  const detail = document.querySelector<HTMLElement>("[data-spatial-selection-detail]");
-  if (title) title.textContent = selection?.name ?? "Choose an anchor";
-  if (detail) detail.textContent = selection ? (store.state.rooms.get(selection.roomId ?? "")?.name ?? "Home") : "Select a furniture anchor to inspect it.";
-  if (selection) announce(`${selection.name}, ${store.state.rooms.get(selection.roomId ?? "")?.name ?? "home"}.`);
+  // The scene raised this (a canvas click), so reflect it into state/DOM but do
+  // not dispatch back to the scene — it already knows.
+  applySpatialSelection(selection?.id ?? null);
 });
 
 interface ModalReturnFocus {
@@ -1767,7 +1789,9 @@ function planFurnitureSymbol(
   } else if (archetype === "nightstand") {
     detail = `<line x1="${(sx + 4).toFixed(1)}" y1="${cy.toFixed(1)}" x2="${(sx + sw - 4).toFixed(1)}" y2="${cy.toFixed(1)}"/>`;
   }
-  return `<g class="plan-object plan-${archetype}" data-plan-archetype="${archetype}" data-id="${esc(id)}"><title>${esc(name)}</title>${frame}<g class="plan-object-detail">${detail}</g>${label}</g>`;
+  const selected = ui.spatialSelectedId === id;
+  const roomLabel = esc(name);
+  return `<g class="plan-object plan-${archetype}${selected ? " selected" : ""}" data-plan-archetype="${archetype}" data-id="${esc(id)}" data-action="spatial-select" role="button" tabindex="0" aria-pressed="${selected}" aria-label="Inspect ${roomLabel}"><title>${roomLabel}</title>${frame}<g class="plan-object-detail">${detail}</g>${label}<rect class="plan-object-outline" x="${sx.toFixed(1)}" y="${sy.toFixed(1)}" width="${sw.toFixed(1)}" height="${sh.toFixed(1)}" rx="6"/></g>`;
 }
 
 function renderPlan(): string {
@@ -2159,7 +2183,9 @@ document.addEventListener("click", (e) => {
     }
     case "spatial-select": {
       const id = t.dataset.id;
-      if (id) dispatchSpatialCommand({ type: "select", id });
+      // State-first: update selection + DOM directly so it works in 2D mode and
+      // when no live 3D surface exists; also drive the scene when it is mounted.
+      if (id) applySpatialSelection(id, { dispatchToScene: true });
       break;
     }
     case "run-room-scan": {
@@ -2640,6 +2666,19 @@ document.addEventListener("keydown", (e) => {
     const search = document.getElementById("top-search-input");
     if (search instanceof HTMLInputElement) search.focus();
     return;
+  }
+  // SVG plan-object groups are role=button/tabindex=0 but not native buttons, so
+  // Enter/Space won't synthesize a click. Activate the focused spatial-select group.
+  if ((e.key === "Enter" || e.key === " ") && !typingTarget) {
+    const active = document.activeElement;
+    if (active instanceof SVGElement && active.getAttribute("data-action") === "spatial-select") {
+      const id = active.getAttribute("data-id");
+      if (id) {
+        e.preventDefault();
+        applySpatialSelection(id, { dispatchToScene: true });
+        return;
+      }
+    }
   }
   if (e.key !== "Enter") return;
   const target = e.target instanceof HTMLInputElement ? e.target : null;

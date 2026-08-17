@@ -237,6 +237,14 @@ label > span { display: block; margin-bottom: 4px; color: var(--ink-soft); font-
 .plan-object-label { fill: #25372f; stroke: rgba(248,242,233,.95); stroke-width: 4px; font-size: 10px; font-weight: 800; paint-order: stroke; }
 .plan-bookcase .plan-object-body, .plan-rack .plan-object-body { fill: #b88a62; }
 .plan-wardrobe .plan-object-body { fill: #c59b72; }
+/* Interactive 2D plan objects (read-only selection parity with 3D). */
+.plan-object { cursor: pointer; transition: opacity .18s ease; }
+.plan-object:focus { outline: none; }
+.plan-object-outline { fill: none; stroke: var(--accent); stroke-width: 2.4; opacity: 0; transition: opacity .18s ease; pointer-events: none; }
+.plan-object:hover .plan-object-outline { opacity: .5; }
+.plan-object:focus-visible .plan-object-outline { opacity: .75; stroke-dasharray: 5 3; }
+.plan-object.selected .plan-object-outline { opacity: 1; }
+.plan-object.selected .plan-object-body { stroke: var(--accent); stroke-width: 2.2; }
 .plan-box { fill: var(--accent-soft); stroke: var(--accent); }
 .plan-box-number { fill: var(--accent-ink); font-size: 12px; font-weight: 800; }
 .plan-pin { fill: var(--accent); }
