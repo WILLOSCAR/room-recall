@@ -168,6 +168,8 @@ interface UIState {
   planMode: PlanMode;
   spatialPreset: "home" | "study" | "top";
   spatialSelectedId: string | null;
+  spatialLayers: { furniture: boolean; boxes: boolean; proposals: boolean; pin: boolean };
+  spatialXray: boolean;
   scanDraft: ScanDraft | null;
   captureMedia: { room: PhotoMedia | null; container: PhotoMedia | null };
   captureDrafts: CaptureDrafts;
@@ -194,6 +196,8 @@ const ui: UIState = {
   planMode: "3d",
   spatialPreset: "home",
   spatialSelectedId: null,
+  spatialLayers: { furniture: true, boxes: true, proposals: true, pin: true },
+  spatialXray: false,
   scanDraft: null,
   captureMedia: { room: null, container: null },
   captureDrafts: {
@@ -235,7 +239,12 @@ let scanMediaReadToken = 0;
 let focusModalOnRender = false;
 let focusViewOnRender = false;
 
-function dispatchSpatialCommand(detail: { type: "preset"; preset: UIState["spatialPreset"] } | { type: "select"; id: string }): void {
+function dispatchSpatialCommand(detail:
+  | { type: "preset"; preset: UIState["spatialPreset"] }
+  | { type: "select"; id: string }
+  | { type: "layer"; layer: "furniture" | "boxes" | "proposals" | "pin"; visible: boolean }
+  | { type: "xray"; on: boolean }
+): void {
   const surface = document.querySelector<HTMLElement>('[data-testid="plan-3d"][data-spatial-scene]');
   surface?.dispatchEvent(new CustomEvent("spatial-command", { detail }));
 }
@@ -1858,9 +1867,10 @@ function renderPlan(): string {
           <div class="scene-label"><span class="live-dot"></span> Live spatial projection</div>
           <div class="spatial-preset-bar" role="group" aria-label="Camera view">
             ${(["home", "study", "top"] as const).map((preset) => `<button type="button" data-action="spatial-preset" data-preset="${preset}" aria-pressed="${ui.spatialPreset === preset}">${preset === "home" ? "Whole home" : preset === "study" ? "Study corner" : "Top view"}</button>`).join("")}
+            <button type="button" class="xray-toggle" data-action="spatial-xray" aria-pressed="${ui.spatialXray}" title="See through walls"><i data-lucide="scan-search"></i>X-ray</button>
           </div>
         </div>
-        <div class="spatial-hint"><span>Drag to orbit</span><span>Scroll to zoom</span><span>Click furniture to inspect</span></div>
+        <div class="spatial-hint"><span>Drag to orbit</span><span>Scroll to zoom</span><span>Click to inspect · double-click to focus</span></div>
       </div>
       <aside class="spatial-inspector">
         <div class="step-kicker">Inspect the room</div>
@@ -1875,7 +1885,10 @@ function renderPlan(): string {
         </div>
         <div class="metric-stack"><div><strong>${roomArea.toFixed(1)} m²</strong><span>mapped footprint</span></div><div><strong>${store.containersView().length}</strong><span>containers</span></div><div><strong>${store.searchBelongings("").length}</strong><span>belongings</span></div></div>
         ${a?.ok ? `<div class="located-summary"><i data-lucide="map-pin"></i><span><strong>${esc(a.item)}</strong><small>${esc(a.chainText)} · confidence ${a.confidence.toFixed(2)}</small></span></div>` : a ? `<div class="located-summary uncertain"><i data-lucide="circle-help"></i><span><strong>No trusted match</strong><small>${esc(a.sentence)}</small></span></div>` : `<div class="located-summary muted"><i data-lucide="search"></i><span>Locate an item to reveal its confidence halo.</span></div>`}
-        <div class="layer-list"><span><i class="layer furniture"></i>Confirmed furniture</span><span><i class="layer box"></i>Moving boxes</span><span><i class="layer memory"></i>Located memory</span></div>
+        <div class="layer-list" role="group" aria-label="Scene layers">
+          ${([["furniture", "Confirmed furniture"], ["boxes", "Moving boxes"], ["proposals", "Proposals"], ["pin", "Located memory"]] as const).map(([key, label]) =>
+            `<button type="button" class="layer-toggle" data-action="spatial-layer" data-layer="${key}" aria-pressed="${ui.spatialLayers[key]}"><i class="layer ${key === "boxes" ? "box" : key === "pin" ? "memory" : key}"></i>${label}</button>`).join("")}
+        </div>
         <button data-action="nav" data-view="capture"><i data-lucide="scan-line"></i> Start a visual scan</button>
       </aside>
     </div>` : `<div class="plan-wrap">
@@ -2186,6 +2199,21 @@ document.addEventListener("click", (e) => {
       // State-first: update selection + DOM directly so it works in 2D mode and
       // when no live 3D surface exists; also drive the scene when it is mounted.
       if (id) applySpatialSelection(id, { dispatchToScene: true });
+      break;
+    }
+    case "spatial-layer": {
+      const layer = t.dataset.layer;
+      if (layer === "furniture" || layer === "boxes" || layer === "proposals" || layer === "pin") {
+        ui.spatialLayers[layer] = !ui.spatialLayers[layer];
+        t.setAttribute("aria-pressed", String(ui.spatialLayers[layer]));
+        dispatchSpatialCommand({ type: "layer", layer, visible: ui.spatialLayers[layer] });
+      }
+      break;
+    }
+    case "spatial-xray": {
+      ui.spatialXray = !ui.spatialXray;
+      t.setAttribute("aria-pressed", String(ui.spatialXray));
+      dispatchSpatialCommand({ type: "xray", on: ui.spatialXray });
       break;
     }
     case "run-room-scan": {

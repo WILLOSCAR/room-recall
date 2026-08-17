@@ -2102,6 +2102,36 @@ async function runBrowserSmoke(): Promise<void> {
     })`);
     assert("spatial-hover-sets-cursor-and-outline", hoverAffordance.cursor === "pointer" && hoverAffordance.hovered.length > 0, JSON.stringify(hoverAffordance));
 
+    // Layer toggles flip a whole group's visibility via a view-local command, and
+    // X-ray drops wall/furniture opacity — both without remounting or writing state.
+    const layerToggle = await evalPage<{ before: string; after: string; restored: string }>(`new Promise((resolve) => {
+      const canvas = document.querySelector('[data-testid="plan-3d"] canvas');
+      const btn = document.querySelector('[data-action="spatial-layer"][data-layer="boxes"]');
+      if (!canvas || !(btn instanceof HTMLElement)) { resolve({ before: "missing", after: "missing", restored: "missing" }); return; }
+      const read = () => canvas.getAttribute('data-spatial-layer-boxes') ?? '';
+      const before = read();
+      btn.click();
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const after = read();
+        btn.click();
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve({ before, after, restored: read() })));
+      }));
+    })`);
+    assert("spatial-layer-toggle-hides-group", layerToggle.before === "true" && layerToggle.after === "false" && layerToggle.restored === "true", JSON.stringify(layerToggle));
+
+    const xrayToggle = await evalPage<{ before: string; after: string }>(`new Promise((resolve) => {
+      const canvas = document.querySelector('[data-testid="plan-3d"] canvas');
+      const btn = document.querySelector('[data-action="spatial-xray"]');
+      if (!canvas || !(btn instanceof HTMLElement)) { resolve({ before: "missing", after: "missing" }); return; }
+      const before = canvas.getAttribute('data-spatial-xray') ?? '';
+      btn.click();
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve({ before, after: canvas.getAttribute('data-spatial-xray') ?? '' })));
+    })`);
+    assert("spatial-xray-toggle-changes-transparency", xrayToggle.before === "false" && xrayToggle.after === "true", JSON.stringify(xrayToggle));
+    // Reset x-ray so the screenshot + later tests see the default opaque scene.
+    await evalPage(`document.querySelector('[data-action="spatial-xray"][aria-pressed="true"]')?.click()`);
+    await sleep(80);
+
     // Switch to the 2D plan: furniture must be selectable and drive the SAME shared
     // selection (bidirectional parity), and work without a live 3D surface.
     await evalPage(`window.nestory.ui.planMode = "2d"; window.nestory.render()`);

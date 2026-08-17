@@ -200,7 +200,16 @@ label > span { display: block; margin-bottom: 4px; color: var(--ink-soft); font-
 .layer-list span { align-items: center; gap: 8px; }
 .layer { display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: var(--blue); }
 .layer.box { background: var(--accent); }
+.layer.proposals { background: var(--amber); }
 .layer.memory { border-radius: 50%; background: var(--sage); }
+.layer-toggle { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--ink-soft); font-size: 11px; text-align: left; transition: background .18s ease, border-color .18s ease, opacity .18s ease; }
+.layer-toggle:hover { background: var(--paper-2); }
+.layer-toggle[aria-pressed="false"] { opacity: .5; }
+.layer-toggle[aria-pressed="false"] .layer { background: var(--line-strong); }
+.layer-toggle[aria-pressed="true"] { color: var(--ink); border-color: var(--line); }
+.xray-toggle { display: inline-flex; align-items: center; gap: 5px; }
+.xray-toggle[aria-pressed="true"] { background: var(--sidebar); color: #f6fbf8; box-shadow: 0 4px 12px rgba(20,37,29,.16); }
+.xray-toggle svg { width: 14px; height: 14px; }
 .trust-note { display: flex; align-items: center; gap: 10px; }
 .answer-card.uncertain { border-left-color: var(--amber); }
 .answer-meta { display: flex; flex-wrap: wrap; }

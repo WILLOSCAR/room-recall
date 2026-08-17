@@ -818,19 +818,29 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   const { solid: solidObjects, proposals: proposalObjects } = sceneObjects(data);
   renderer.domElement.dataset.spatialLabelSize = proposalObjects.length ? `${LABEL_TEXTURE_WIDTH}x${LABEL_TEXTURE_HEIGHT}` : "0x0";
 
+  // Parented layer groups so the inspector legend can toggle whole layers on/off.
+  // View-local visibility only — never Place Graph truth, never in the scene payload.
+  const furnitureLayer = new Group(); furnitureLayer.name = "layer:furniture";
+  const boxLayer = new Group(); boxLayer.name = "layer:boxes";
+  const proposalLayer = new Group(); proposalLayer.name = "layer:proposals";
+  const pinLayer = new Group(); pinLayer.name = "layer:pin";
+  content.add(furnitureLayer, boxLayer, proposalLayer, pinLayer);
+  const layerGroups: Record<string, Group> = { furniture: furnitureLayer, boxes: boxLayer, proposals: proposalLayer, pin: pinLayer };
+
   const furnitureMaterials = createFurnitureMaterials();
   const interactiveMeshes: Mesh[] = [];
   const objectRoots = new Map<string, Group>();
   const objectData = new Map(solidObjects.map((object) => [object.id, object]));
   const archetypes = new Set<SpatialArchetype>();
   for (const object of solidObjects) {
-    const built = addSpatialObject(content, object, furnitureMaterials);
+    const layer = object.kind === "box" ? boxLayer : furnitureLayer;
+    const built = addSpatialObject(layer, object, furnitureMaterials);
     interactiveMeshes.push(...built.interactiveMeshes);
     objectRoots.set(object.id, built.root);
     archetypes.add(object.archetype ?? (object.kind === "box" ? "box" : "block"));
   }
-  for (const proposal of proposalObjects) addProposalObject(content, proposal);
-  if (data.pin) addPin(content, data.pin);
+  for (const proposal of proposalObjects) addProposalObject(proposalLayer, proposal);
+  if (data.pin) addPin(pinLayer, data.pin);
   renderer.domElement.dataset.spatialArchetypes = [...archetypes].sort().join(",");
 
   const gridSize = Math.max(4, Math.ceil(Math.max(size.x, size.z) + 2));
@@ -1174,16 +1184,63 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     container.dispatchEvent(new CustomEvent<SpatialViewPreset>("spatial-preset-change", { bubbles: true, detail: preset }));
   };
 
+  // X-ray: drop wall + furniture/box opacity so the user can see through the
+  // dollhouse to boxes/items behind near walls. Pure render-state, one flag.
+  let xrayOn = false;
+  const setXray = (on: boolean): void => {
+    if (on === xrayOn) return;
+    xrayOn = on;
+    const apply = (root: Object3D, opacity: number, matchWallsOnly: boolean): void => {
+      root.traverse((node: Object3D) => {
+        const mesh = node as Mesh;
+        if (!mesh.isMesh || !mesh.material) return;
+        if (matchWallsOnly && !mesh.name.includes(":wall:")) return;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const material of materials) {
+          const std = material as MeshStandardMaterial;
+          if (std.userData["baseOpacity"] === undefined) std.userData["baseOpacity"] = std.opacity;
+          const base = std.userData["baseOpacity"] as number;
+          std.transparent = on ? true : base < 1;
+          std.opacity = on ? Math.min(base, opacity) : base;
+          std.needsUpdate = true;
+        }
+      });
+    };
+    apply(content, 0.16, true);      // walls
+    apply(furnitureLayer, 0.34, false);
+    apply(boxLayer, 0.4, false);
+    renderer.domElement.dataset.spatialXray = String(on);
+    scheduleRender();
+  };
+
+  const layerDatasetKey = (layer: string): string => `spatialLayer${layer.charAt(0).toUpperCase()}${layer.slice(1)}`;
+
   const onSurfaceCommand = (event: Event): void => {
-    const command = event as CustomEvent<{ type?: string; preset?: SpatialViewPreset; id?: string }>;
+    const command = event as CustomEvent<{ type?: string; preset?: SpatialViewPreset; id?: string; layer?: string; visible?: boolean; on?: boolean }>;
     if (command.detail?.type === "preset" && (command.detail.preset === "home" || command.detail.preset === "study" || command.detail.preset === "top")) {
       applyPreset(command.detail.preset);
     } else if (command.detail?.type === "select") {
       setSelected(command.detail.id ?? null, { focus: true });
+    } else if (command.detail?.type === "layer" && command.detail.layer) {
+      const layer = command.detail.layer;
+      const group = layerGroups[layer];
+      if (group) {
+        group.visible = command.detail.visible ?? !group.visible;
+        renderer.domElement.dataset[layerDatasetKey(layer)] = String(group.visible);
+        scheduleRender();
+      }
+    } else if (command.detail?.type === "xray") {
+      setXray(command.detail.on ?? !xrayOn);
     }
   };
   container.addEventListener("spatial-command", onSurfaceCommand);
   cleanupStack.push(() => container.removeEventListener("spatial-command", onSurfaceCommand));
+
+  // Publish initial layer/xray telemetry so the DOM can reflect current state.
+  for (const [name, group] of Object.entries(layerGroups)) {
+    renderer.domElement.dataset[layerDatasetKey(name)] = String(group.visible);
+  }
+  renderer.domElement.dataset.spatialXray = "false";
 
   const pickObjectId = (event: MouseEvent): string | null => {
     const rect = renderer.domElement.getBoundingClientRect();

@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-17T13:47:43.305Z
+Generated: 2026-08-17T13:57:08.872Z
 Runtime: node v26.3.1 · typescript strict
-- Assertions: 466
-- Passed: 466
+- Assertions: 468
+- Passed: 468
 - Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 2.300 ms
-- Household UI DOM-commit p95: 6.000 ms
+- UI DOM-commit p95: 2.400 ms
+- Household UI DOM-commit p95: 5.800 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -370,6 +370,8 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `spatial-selection-does-not-remount-canvas`
 - ✓ `spatial-selection-uses-fitted-outline`
 - ✓ `spatial-hover-sets-cursor-and-outline`
+- ✓ `spatial-layer-toggle-hides-group`
+- ✓ `spatial-xray-toggle-changes-transparency`
 - ✓ `plan-2d-furniture-is-interactive`
 - ✓ `plan-2d-selection-works-without-live-3d`
 - ✓ `plan-2d-selection-shows-outline`

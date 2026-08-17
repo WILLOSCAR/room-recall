@@ -1,7 +1,7 @@
 # 05 - Layer visibility toggles + X-ray transparency
 
 Type: implementation
-Status: ready-for-agent
+Status: done
 Blocked by: 02
 
 Parent scene content into Groups (furniture / boxes / proposals / pin) and wire the decorative inspector legend to a `spatial-command {type:"layer"}` handler that flips `group.visible` and fires exactly one render. Add a `{type:"xray"}` handler that drops wall + furniture material opacity for a see-through review model. Keep both states view-local (like `ui.spatialSelectedId`); never persist them into Store/Place Graph or the scene payload.
