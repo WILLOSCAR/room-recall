@@ -2166,6 +2166,18 @@ async function runBrowserSmoke(): Promise<void> {
     assert("spatial-keyboard-cycles-selection", keyboardSelect.after.length > 0 && keyboardSelect.after !== keyboardSelect.before, JSON.stringify(keyboardSelect));
     assert("spatial-inspector-has-single-live-region", keyboardSelect.inspectorLive === "none", JSON.stringify(keyboardSelect));
 
+    // A moving box is a selectable scene object too: selecting it must name the box
+    // in the inspector (not fall back to "Choose an anchor" like furniture-only lookup).
+    const boxSelection = await evalPage<{ title: string; pressed: boolean }>(`new Promise((resolve) => {
+      const surface = document.querySelector('[data-testid="plan-3d"][data-spatial-scene]');
+      surface && surface.dispatchEvent(new CustomEvent('spatial-command', { detail: { type: 'select', id: 'box-essentials' } }));
+      setTimeout(() => resolve({
+        title: document.querySelector('[data-spatial-selection-title]')?.textContent ?? '',
+        pressed: window.nestory.ui.spatialSelectedId === 'box-essentials'
+      }), 160);
+    })`);
+    assert("spatial-box-selection-names-the-box", boxSelection.pressed && boxSelection.title.includes("Essentials"), JSON.stringify(boxSelection));
+
     // Switch to the 2D plan: furniture must be selectable and drive the SAME shared
     // selection (bidirectional parity), and work without a live 3D surface.
     await evalPage(`window.nestory.ui.planMode = "2d"; window.nestory.render()`);

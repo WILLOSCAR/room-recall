@@ -256,10 +256,12 @@ function dispatchSpatialCommand(detail:
 // event back. Selection state stays out of `spatialSceneData()` so the scene
 // signature is stable and the WebGL context is never disposed/remounted (ADR 0002).
 function applySpatialSelection(id: string | null, opts: { dispatchToScene?: boolean } = {}): void {
+  const changed = ui.spatialSelectedId !== id;
   ui.spatialSelectedId = id;
-  const object = id ? store.catalog.furniture.find((f) => f.id === id) ?? null : null;
-  const roomId = object?.room ?? null;
-  const roomName = roomId ? store.state.rooms.get(roomId)?.name ?? "Home" : null;
+  // A selection id can be furniture OR a moving box (locate-pairing, dbl-click,
+  // or the scene's own pick all emit either), so resolve across both.
+  const object = id ? resolveSpatialObject(id) : null;
+  const roomName = object?.roomId ? store.state.rooms.get(object.roomId)?.name ?? "Home" : null;
   for (const button of document.querySelectorAll<HTMLElement>('[data-action="spatial-select"]')) {
     button.setAttribute("aria-pressed", String(button.dataset.id === id));
   }
@@ -273,7 +275,10 @@ function applySpatialSelection(id: string | null, opts: { dispatchToScene?: bool
   const detail = document.querySelector<HTMLElement>("[data-spatial-selection-detail]");
   if (title) title.textContent = object?.name ?? "Choose an anchor";
   if (detail) detail.textContent = object ? (roomName ?? "Home") : "Select a furniture anchor to inspect it.";
-  if (object) announce(`${object.name}, ${roomName ?? "home"}.`);
+  // Announce only on a real change: a DOM click dispatches to the scene, which
+  // echoes spatial-selection back into this same function — announcing twice into
+  // the one live region otherwise.
+  if (object && changed) announce(`${object.name}, ${roomName ?? "home"}.`);
   if (opts.dispatchToScene && id) dispatchSpatialCommand({ type: "select", id });
 }
 
@@ -388,15 +393,30 @@ function buildScanDraft(anchorCm: number): ScanDraft {
   };
 }
 
+// Scene objects = confirmed furniture + moving boxes (the ids that exist in the
+// 3D scene and the 2D plan). One source of truth so 2D outline (ui.spatialSelectedId)
+// and the scene's pin pairing (data.pin.objectId) can never disagree.
+function sceneObjectIds(): Set<string> {
+  const ids = new Set(store.catalog.furniture.map((f) => f.id));
+  for (const c of store.containersView()) if (c.kind === "box") ids.add(c.id);
+  return ids;
+}
+
+function resolveSpatialObject(id: string): { name: string; roomId: string | null } | null {
+  const furniture = store.catalog.furniture.find((f) => f.id === id);
+  if (furniture) return { name: furniture.name, roomId: furniture.room };
+  const box = store.containersView().find((c) => c.kind === "box" && c.id === id);
+  if (box) return { name: box.box?.label ?? box.name, roomId: box.parent.id };
+  return null;
+}
+
 // The scene object a located item rests on/in: the nearest furniture or box in
 // the answer's place chain. Used to pair the pin with a selection outline.
 function spatialObjectIdForAnswer(answer: DeepReadonly<LocateAnswer> | null): string | null {
   if (!answer?.ok || !answer.planPin) return null;
-  const furnitureIds = new Set(store.catalog.furniture.map((f) => f.id));
-  const boxIds = new Set(store.containersView().filter((c) => c.kind === "box").map((c) => c.id));
+  const sceneIds = sceneObjectIds();
   for (const node of answer.chain) {
-    if (node.type === "furniture" && furnitureIds.has(node.id)) return node.id;
-    if (node.type === "container" && boxIds.has(node.id)) return node.id;
+    if ((node.type === "furniture" || node.type === "container") && sceneIds.has(node.id)) return node.id;
   }
   return null;
 }
@@ -436,20 +456,10 @@ function spatialSceneData(includeScanDraft: boolean): SpatialSceneData {
   // it independent from lastAnswer preserves the mounted WebGL context across
   // the core Locate interaction. The full Plan owns the inspectable pin.
   const answer = ui.view === "plan" ? ui.lastAnswer : null;
-  // Pair the pin with the spatial object the located item rests on/in: the nearest
-  // furniture (or box) node in the answer's place chain that exists as a scene
-  // object. This lets the scene auto-select it so the pin and selection outline
-  // reinforce each other. Derived from the answer only — no store write.
-  const spatialObjectIds = new Set(objects.map((o) => o.id));
-  let pinObjectId: string | undefined;
-  if (answer?.ok && answer.planPin) {
-    for (const node of answer.chain) {
-      if ((node.type === "furniture" || node.type === "container") && spatialObjectIds.has(node.id)) {
-        pinObjectId = node.id;
-        break;
-      }
-    }
-  }
+  // Pair the pin with the scene object the located item rests on/in. Uses the
+  // same resolver as ui.spatialSelectedId so 2D outline and the scene's pin
+  // pairing can never disagree. Derived from the answer only — no store write.
+  const pinObjectId = spatialObjectIdForAnswer(answer) ?? undefined;
   return {
     rooms,
     objects,

@@ -1164,6 +1164,9 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
       selectionOutline = buildOutline(object.id, SELECTION_OUTLINE_COLOR, 0.95, 42);
       // A newly selected object should not keep a stale hover ghost on it.
       if (hoverId === object.id) { disposeOutline(hoverOutline); hoverOutline = null; hoverId = null; }
+      // Selecting the located object re-arms the pin pulse so pin and outline
+      // read as one gesture. Time-boxed to ~800ms in renderFrame, so it quiesces.
+      if (!reduceMotion && data.pin?.objectId === object.id) pinAnimationStartedAt = null;
       if (focus) focusObject(object, true);
     }
     // Observable marker: 'fitted' when a fitted EdgesGeometry outline is mounted,
@@ -1279,17 +1282,25 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   }
   renderer.domElement.dataset.spatialXray = "false";
 
-  const pickObjectId = (event: MouseEvent): string | null => {
+  const pickObject = (event: MouseEvent): { id: string | null; isPin: boolean } => {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.set((event.clientX - rect.left) / Math.max(1, rect.width) * 2 - 1, -((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1);
     raycaster.setFromCamera(pointer, camera);
     const hit = raycaster.intersectObjects(interactiveMeshes, false)[0]?.object;
     const id = hit?.userData["spatialObjectId"];
-    return typeof id === "string" ? id : null;
+    return { id: typeof id === "string" ? id : null, isPin: hit?.name === "pin-core" };
   };
+  const pickObjectId = (event: MouseEvent): string | null => pickObject(event).id;
 
   const onCanvasClick = (event: MouseEvent): void => {
-    setSelected(pickObjectId(event));
+    const { id, isPin } = pickObject(event);
+    setSelected(id);
+    // Clicking the confidence pin re-focuses the located item (read-only camera
+    // move). Plain furniture clicks stay a select; double-click frames them.
+    if (isPin && id) {
+      const object = objectData.get(id) ?? null;
+      if (object) focusObject(object, true);
+    }
   };
   renderer.domElement.addEventListener("click", onCanvasClick);
   cleanupStack.push(() => renderer.domElement.removeEventListener("click", onCanvasClick));
