@@ -1,7 +1,7 @@
 # 03 - Interactive 2D plan + selection outline
 
 Type: implementation
-Status: ready-for-agent
+Status: done
 Blocked by: 02
 
 Give `planFurnitureSymbol` groups `data-action="spatial-select"`, `data-id`, `role`, and `tabindex`, and render a selection outline in the SVG driven by `ui.spatialSelectedId`. Extend the `spatial-selection` listener to also outline the matching plan-object. Add hover/selected CSS transitions (reduced-motion safe). Keep the 2D plan fitting its container with no horizontal overflow and all furniture labels readable.
