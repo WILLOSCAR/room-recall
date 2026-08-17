@@ -20,7 +20,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  PCFShadowMap,
+  PCFSoftShadowMap,
   PerspectiveCamera,
   PlaneGeometry,
   PMREMGenerator,
@@ -730,9 +730,9 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.setClearColor(OFF_WHITE, 0.9);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = PCFShadowMap;
+  renderer.shadowMap.type = PCFSoftShadowMap;
   renderer.toneMapping = ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMappingExposure = 1.02;
   renderer.domElement.setAttribute("role", "img");
   renderer.domElement.setAttribute(
     "aria-label",
@@ -800,10 +800,16 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   sun.shadow.camera.bottom = -shadowExtent;
   sun.shadow.camera.updateProjectionMatrix();
   sun.shadow.bias = -0.0008;
+  sun.shadow.radius = 4;
   scene.add(sun, sun.target);
   const fill = new DirectionalLight(0xcce9dc, 0.72);
   fill.position.set(center.x - 7, center.y + 5, center.z - 5);
   scene.add(fill);
+  // Cool rim/back light separates furniture silhouettes from the off-white walls.
+  // castShadow stays false so it costs no extra shadow pass (GPU budget safe).
+  const rim = new DirectionalLight(0xdfecff, 0.55);
+  rim.position.set(center.x - 4, center.y + 7, center.z - 9);
+  scene.add(rim);
 
   const content = new Group();
   scene.add(content);
@@ -853,7 +859,7 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   const gridSize = Math.max(4, Math.ceil(Math.max(size.x, size.z) + 2));
   const shadowPlane = new Mesh(
     new PlaneGeometry(gridSize + 3, gridSize + 3),
-    new ShadowMaterial({ color: 0x17251f, opacity: 0.15 })
+    new ShadowMaterial({ color: 0x17251f, opacity: 0.18 })
   );
   shadowPlane.rotation.x = -Math.PI / 2;
   shadowPlane.position.set(center.x, -0.018, center.z);

@@ -1,7 +1,7 @@
 # 07 - Visual polish: lighting, shadows, tokens, palette cohesion
 
 Type: implementation
-Status: ready-for-agent
+Status: done
 Blocked by: none
 
 Elegance pass, all presentational. 3D: PCFSoftShadowMap + `sun.shadow.radius` + slightly higher ShadowMaterial opacity for soft contact shadows; a low-intensity non-shadow cool rim light for silhouette separation; small ACESFilmic exposure / white-balance tune. CSS: tokenize spatial/plan chrome onto `--line`/`--line-strong`, `--shadow-lift`, and the `--radius*` scale; unify the sage selection + hairlines onto `--sage*` tokens; add an inspector depth seam; bump spatial micro-copy toward the 11px floor and raise overlay contrast; unify the preset bar onto the shared `.segmented` active treatment; cohere the 2D plan and 3D canvas base gradients and pull plan box/pin/label overlays onto accent/ink/sage tokens.
