@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-17T11:34:43.888Z
+Generated: 2026-08-17T12:09:57.971Z
 Runtime: node v26.3.1 · typescript strict
 - Assertions: 459
 - Passed: 459
 - Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 2.500 ms
-- Household UI DOM-commit p95: 8.400 ms
+- UI DOM-commit p95: 2.300 ms
+- Household UI DOM-commit p95: 6.900 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png

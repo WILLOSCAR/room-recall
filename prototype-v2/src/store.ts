@@ -6,7 +6,7 @@
 
 import type {
   ActivationSummary, AnyRecord, AttentionSummary, BelongingEntity, BelongingSearchPage, BelongingView, BoxStatus, Catalog,
-  CommitOp, CommitRecord, ContainerContentsView, ContainerEntity, ContainerView,
+  CommitOp, CommitRecord, ContainerContentsView, ContainerEntity, ContainerKind, ContainerView,
   ContainerWithContentsView, CreateBelongingInput, CreateBoxInput, CreateContainerInput,
   CreateRoomInput, DerivedState, ReadonlyDerivedState,
   EvidenceKind, EvidenceRecord, ExportDump, Kit, KitReadiness, KitRow, KitRowView,
@@ -17,7 +17,7 @@ import type {
   ScoredBelongingView, StorageLike, Store, StoreOptions, UnpackPriorityEntry,
   WhichContainerHit
 } from "./types.ts";
-import { BOX_STATUSES, IMPORTANCE_SCORE, LIFECYCLE_STATES, ROW_STATUSES } from "./types.ts";
+import { BOX_STATUSES, CONTAINER_KINDS, IMPORTANCE_SCORE, LIFECYCLE_STATES, OPERATION_STATUSES as OPERATION_STATUS_VALUES, ROW_STATUSES } from "./types.ts";
 import { validateLedgerSemantics, validatedLedgerRecords } from "./ledger-validation.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -27,7 +27,7 @@ const RELATION_PHRASE: Record<Relation, string> = {
 };
 
 const UNAVAILABLE_STATES: readonly LifecycleState[] = ["laundry", "drying", "lent_out", "missing", "in_transit"];
-const OPERATION_STATUSES = new Set<OperationStatus>(["active", "done", "abandoned"]);
+const OPERATION_STATUSES = new Set<OperationStatus>(OPERATION_STATUS_VALUES);
 const SEARCH_CACHE_LIMIT = 32;
 const SEARCH_MATCH_CACHE_LIMIT = 8;
 const LOCATE_CACHE_LIMIT = 256;
@@ -36,7 +36,7 @@ export class StoreConflictError extends Error {}
 export class ReentrantStoreCommandError extends Error {}
 export class DomainInputError extends Error {}
 
-const CONTAINER_KIND_VALUES = new Set(["drawer", "shelf", "surface", "basket", "bag", "suitcase", "tray", "box"]);
+const CONTAINER_KIND_VALUES = new Set<ContainerKind>(CONTAINER_KINDS);
 
 function boundedInput(value: string | null | undefined, label: string, maxLength: number): string {
   const normalized = value?.trim() ?? "";
@@ -269,11 +269,6 @@ export function createStore(options: StoreOptions): Store {
     storage.setItem(persistKey, JSON.stringify({ version: 2, records, baselineRecords }));
   }
 
-  function persist(): void {
-    if (staging) return;
-    persistNow();
-  }
-
   function publish(nextState: DerivedState): void {
     state = nextState;
     exposedState = readonlyState(nextState);
@@ -296,11 +291,6 @@ export function createStore(options: StoreOptions): Store {
     } finally {
       publishing = false;
     }
-  }
-
-  function notify(): void {
-    if (staging) return;
-    publish(derive());
   }
 
   function transact<T>(command: () => T): T {
@@ -399,8 +389,6 @@ export function createStore(options: StoreOptions): Store {
       sourceProposalId: input.sourceProposalId ?? null,
       sourceObservationIds: input.sourceObservationIds ?? []
     });
-    persist();
-    notify();
     return commit;
   }
 
@@ -1361,8 +1349,6 @@ export function createStore(options: StoreOptions): Store {
         { type: "create_placement", itemId, placeRef: null, relation: "inside", confidence: 0.85 }
       ]
     });
-    persist();
-    notify();
     return { observationId: obs.id, proposalId: proposal.id };
   }
 
@@ -1407,8 +1393,6 @@ export function createStore(options: StoreOptions): Store {
         : `Snapshot of ${c.name}: contents match memory. Confirm freshness?`,
       suggestedOps: [...moves, { type: "confirm_container", containerId }]
     });
-    persist();
-    notify();
     return proposal.id;
   }
 
@@ -1644,8 +1628,6 @@ export function createStore(options: StoreOptions): Store {
 
   function reset(): void {
     append<CommitRecord>({ recordType: "commit", id: id("commit"), at: nowIso(), summary: "Reset home memory to seed", ops: [{ type: "reset_to_seed" }] });
-    persist();
-    notify();
   }
 
   function importJson(data: unknown, expectedRevision?: number): void {
@@ -1668,8 +1650,6 @@ export function createStore(options: StoreOptions): Store {
     baselineRecords = importedBaseline;
     seq = records.length;
     rebuildAllocatedIds = true;
-    persist();
-    notify();
   }
 
   // ------------------------------------------------------------------- api

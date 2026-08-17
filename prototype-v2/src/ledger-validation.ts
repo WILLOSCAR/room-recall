@@ -1,6 +1,10 @@
 import type {
   AnyRecord, Belonging, Catalog, CommitOp, CommitRecord, Container, OperationData, PhotoMedia, PlaceRef, Room
 } from "./types.ts";
+import {
+  BOX_STATUSES, CONTAINER_KINDS, LIFECYCLE_STATES as LIFECYCLE_STATE_VALUES,
+  OPERATION_STATUSES as OPERATION_STATUS_VALUES, ROW_STATUSES as ROW_STATUS_VALUES
+} from "./types.ts";
 
 type ObjectValue = Record<string, unknown>;
 
@@ -10,11 +14,13 @@ const OBSERVATION_TYPES = new Set(["container_snapshot", "not_there_report", "du
 const PROPOSAL_TYPES = new Set(["placement_correction", "contents_update", "duplicate_merge", "container_refresh"]);
 const PLACE_TYPES = new Set(["room", "furniture", "container", "state"]);
 const RELATIONS = new Set(["inside", "on_surface", "under", "attached_to", "near"]);
-const LIFECYCLE_STATES = new Set(["at_home", "with_me", "packed", "in_transit", "laundry", "drying", "lent_out", "consumed", "missing", "retired"]);
-const BOX_STATUSES = new Set(["empty", "packing", "packed", "moved", "opened", "unpacked"]);
-const ROW_STATUSES = new Set(["to_get", "found", "packed", "skipped", "substituted", "missing", "uncertain"]);
-const OPERATION_STATUSES = new Set(["active", "done", "abandoned"]);
-const CONTAINER_KINDS = new Set(["drawer", "shelf", "surface", "basket", "bag", "suitcase", "tray", "box"]);
+// Canonical domain vocabulary lives in types.ts; build lookup Sets from it so
+// adding a lifecycle state / box status / container kind is a one-file edit.
+const LIFECYCLE_STATES = new Set<string>(LIFECYCLE_STATE_VALUES);
+const BOX_STATUSES_SET = new Set<string>(BOX_STATUSES);
+const ROW_STATUSES = new Set<string>(ROW_STATUS_VALUES);
+const OPERATION_STATUSES = new Set<string>(OPERATION_STATUS_VALUES);
+const CONTAINER_KINDS_SET = new Set<string>(CONTAINER_KINDS);
 const IMPORTANCE = new Set(["essential", "high", "normal"]);
 const COMMIT_OPS = new Set([
   "create_placement", "contradict_placement", "set_state", "create_belonging", "create_room",
@@ -122,7 +128,7 @@ function container(value: unknown, path: string): Container {
   const candidate = object(value, path);
   string(candidate["id"], `${path}.id`);
   boundedString(candidate["name"], `${path}.name`, 120);
-  oneOf(candidate["kind"], CONTAINER_KINDS, `${path}.kind`);
+  oneOf(candidate["kind"], CONTAINER_KINDS_SET, `${path}.kind`);
   placeRef(candidate["parent"], `${path}.parent`);
   optionalBoundedString(candidate["note"], `${path}.note`, 500);
   if (candidate["box"] !== undefined) {
@@ -212,7 +218,7 @@ function commitOps(value: unknown, path: string, allowUnknownPlace: boolean): Co
       case "create_container": container(op["container"], `${opPath}.container`); break;
       case "set_box_status":
         string(op["boxId"], `${opPath}.boxId`);
-        oneOf(op["status"], BOX_STATUSES, `${opPath}.status`);
+        oneOf(op["status"], BOX_STATUSES_SET, `${opPath}.status`);
         break;
       case "confirm_container": string(op["containerId"], `${opPath}.containerId`); break;
       case "create_operation": operation(op["operation"], `${opPath}.operation`); break;

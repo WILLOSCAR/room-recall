@@ -617,4 +617,8 @@ export const BOX_STATUSES: readonly BoxStatus[] = ["empty", "packing", "packed",
 
 export const ROW_STATUSES: readonly RowStatus[] = ["to_get", "found", "packed", "skipped", "substituted", "missing", "uncertain"];
 
+export const OPERATION_STATUSES: readonly OperationStatus[] = ["active", "done", "abandoned"];
+
+export const CONTAINER_KINDS: readonly ContainerKind[] = ["drawer", "shelf", "surface", "basket", "bag", "suitcase", "tray", "box"];
+
 export const IMPORTANCE_SCORE: Record<Importance, number> = { essential: 3, high: 2, normal: 1 };
