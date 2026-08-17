@@ -63,6 +63,16 @@ projection, zero settled RAF, no 320/390 overflow, full keyboard/screen-reader).
     proposes furniture moves or needs a write/mutation path.
   - **Full audit artifact:** workflow result captured in this session; guardrail list
     (34 verify assertion ids) is the invariant contract the spec/tickets must cite.
+- **2026-08-17 effort delivered** ([spec](spec.md), tickets 01–09 all `done`).
+  Shipped as 7 feature commits + review fixes on `codex/full-stack-low-latency`:
+  state-first selection + interactive 2D plan (02/03), 3D hover + fitted outline
+  (04), layer toggles + X-ray (05), locate↔inspect linkage (06), visual polish
+  (07), motion + a11y (08), code-review fixes (09). `npm run verify` **473/473**,
+  settled RAF 0, GPU budget held, benchmarks pass. Standards + Spec reviews found
+  no hard violations and 0 net correctness defects after fixes. Read-only
+  projection (ADR 0002) intact — no Store writes, selection out of the scene
+  signature. Residuals: 2D roving-tabindex done as all-focusable; layer union
+  restated 3× (minor); layout-health overlay + what-if ghost stay deferred/out.
 
 ## Fog
 
