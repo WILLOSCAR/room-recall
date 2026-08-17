@@ -1,7 +1,7 @@
 # 08 - Motion + accessibility polish
 
 Type: implementation
-Status: ready-for-agent
+Status: done
 Blocked by: 02, 03
 
 Motion: route non-reduced-motion keyboard orbit through eased `setLookAt`/rotate-with-transition to match pointer damping, keeping `settleFrames` decay; add reduced-motion-safe selection/pin micro-transitions. A11y: resolve the double live-region announcement (keep the composed `announce()` channel, drop `aria-live` from the inspector `<p>`); announce preset changes with a concise message; make individual objects keyboard-selectable in both projections (Tab/Arrow or `[`/`]` cycling + Enter/Space, advertised via `aria-keyshortcuts`; roving tabindex over 2D furniture once interactive).

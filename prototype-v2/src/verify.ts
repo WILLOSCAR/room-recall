@@ -2149,6 +2149,23 @@ async function runBrowserSmoke(): Promise<void> {
     assert("locate-auto-selects-spatial-object", locateLinkage.sceneSelected === "desk" && locateLinkage.uiSelected === "desk", JSON.stringify(locateLinkage));
     assert("locate-pairs-pin-with-selection-outline", locateLinkage.outline === "fitted", JSON.stringify(locateLinkage));
 
+    // Keyboard object selection: ] cycles selection to a different object, and the
+    // inspector <p> no longer carries aria-live (announce() is the single channel).
+    const keyboardSelect = await evalPage<{ before: string; after: string; inspectorLive: string }>(`new Promise((resolve) => {
+      const canvas = document.querySelector('[data-testid="plan-3d"] canvas');
+      if (!(canvas instanceof HTMLCanvasElement)) { resolve({ before: "missing", after: "missing", inspectorLive: "missing" }); return; }
+      const before = canvas.dataset.spatialSelectedId ?? '';
+      canvas.focus();
+      canvas.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true, cancelable: true }));
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve({
+        before,
+        after: canvas.dataset.spatialSelectedId ?? '',
+        inspectorLive: document.querySelector('[data-spatial-selection-detail]')?.getAttribute('aria-live') ?? 'none'
+      })));
+    })`);
+    assert("spatial-keyboard-cycles-selection", keyboardSelect.after.length > 0 && keyboardSelect.after !== keyboardSelect.before, JSON.stringify(keyboardSelect));
+    assert("spatial-inspector-has-single-live-region", keyboardSelect.inspectorLive === "none", JSON.stringify(keyboardSelect));
+
     // Switch to the 2D plan: furniture must be selectable and drive the SAME shared
     // selection (bidirectional parity), and work without a live 3D surface.
     await evalPage(`window.nestory.ui.planMode = "2d"; window.nestory.render()`);

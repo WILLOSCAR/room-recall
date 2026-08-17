@@ -736,9 +736,9 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   renderer.domElement.setAttribute("role", "img");
   renderer.domElement.setAttribute(
     "aria-label",
-    `${describeScene(data)} Use arrow keys to orbit, plus or minus to zoom, and Home to reset the view.`
+    `${describeScene(data)} Use arrow keys to orbit, plus or minus to zoom, square brackets to select furniture, Enter to focus the selection, and Home to reset the view.`
   );
-  renderer.domElement.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown + - Home");
+  renderer.domElement.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown + - [ ] Enter Home");
   renderer.domElement.tabIndex = 0;
   renderer.domElement.dataset.spatialSceneCanvas = "true";
   renderer.domElement.style.position = "absolute";
@@ -1036,11 +1036,26 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   });
 
   const orbitFromKeyboard = (azimuth: number, polar: number, zoom: number): void => {
-    void controls.rotate(azimuth, polar, false);
-    if (zoom !== 1) void controls.dolly(controls.distance * (1 - zoom), false);
-    controls.update(0);
+    // Glide the nudge to match pointer damping, but only when motion is allowed —
+    // under prefers-reduced-motion this must resolve in a single frame (no settle
+    // loop), so we step instantly and force one update.
+    const eased = !reduceMotion;
+    void controls.rotate(azimuth, polar, eased);
+    if (zoom !== 1) void controls.dolly(controls.distance * (1 - zoom), eased);
+    if (!eased) controls.update(0);
     settleFrames = reduceMotion ? 0 : Math.max(settleFrames, 6);
     scheduleRender();
+  };
+
+  // Keyboard object selection: [ and ] cycle through furniture/boxes, Enter/Space
+  // frames the selected object. Lets keyboard users reach specific objects, not
+  // just orbit — parity with the DOM anchor list.
+  const cycleSelection = (direction: 1 | -1): void => {
+    if (!solidObjects.length) return;
+    const currentId = renderer.domElement.dataset.spatialSelectedId || null;
+    const index = currentId ? solidObjects.findIndex((object) => object.id === currentId) : -1;
+    const next = solidObjects[(index + direction + solidObjects.length) % solidObjects.length];
+    if (next) setSelected(next.id);
   };
 
   const onCanvasKeyDown = (event: KeyboardEvent): void => {
@@ -1053,6 +1068,15 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
       case "=": orbitFromKeyboard(0, 0, 0.88); break;
       case "-":
       case "_": orbitFromKeyboard(0, 0, 1.14); break;
+      case "]": cycleSelection(1); break;
+      case "[": cycleSelection(-1); break;
+      case "Enter":
+      case " ": {
+        const current = renderer.domElement.dataset.spatialSelectedId;
+        const object = current ? objectData.get(current) ?? null : null;
+        if (object) focusObject(object, true); else return;
+        break;
+      }
       case "Home": frameCamera(camera, controls, bounds); settleFrames = reduceMotion ? 0 : Math.max(settleFrames, 6); scheduleRender(); break;
       default: return;
     }

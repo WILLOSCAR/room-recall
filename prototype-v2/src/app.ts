@@ -280,10 +280,14 @@ function applySpatialSelection(id: string | null, opts: { dispatchToScene?: bool
 document.addEventListener("spatial-preset-change", (event) => {
   const preset = (event as CustomEvent<UIState["spatialPreset"]>).detail;
   if (preset !== "home" && preset !== "study" && preset !== "top") return;
+  const changed = ui.spatialPreset !== preset;
   ui.spatialPreset = preset;
   for (const button of document.querySelectorAll<HTMLElement>('[data-action="spatial-preset"]')) {
     button.setAttribute("aria-pressed", String(button.dataset.preset === preset));
   }
+  // Camera presets are silent to assistive tech otherwise — announce a real change
+  // only (a scene mount re-emits "home" and should not chatter).
+  if (changed) announce(preset === "home" ? "Whole home view." : preset === "study" ? "Study corner view." : "Top view.");
 });
 
 document.addEventListener("spatial-selection", (event) => {
@@ -1913,7 +1917,7 @@ function renderPlan(): string {
       <aside class="spatial-inspector">
         <div class="step-kicker">Inspect the room</div>
         <h3 data-spatial-selection-title>${esc(selectedFurniture?.name ?? "Choose an anchor")}</h3>
-        <p data-spatial-selection-detail aria-live="polite">${esc(selectedRoom?.name ?? "Select a furniture anchor to inspect it.")}</p>
+        <p data-spatial-selection-detail>${esc(selectedRoom?.name ?? "Select a furniture anchor to inspect it.")}</p>
         <div class="spatial-anchor-list" role="list" aria-label="Furniture anchors">
           ${store.catalog.furniture.map((item) => {
             const room = store.state.rooms.get(item.room);
