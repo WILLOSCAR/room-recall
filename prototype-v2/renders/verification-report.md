@@ -1,11 +1,15 @@
 # Nestory V2 Verification Report
-Generated: 2026-07-20T16:56:15.703Z
-Runtime: node v25.8.0 · typescript strict
-- Assertions: 191
-- Passed: 191
-- Failed: 0
+Generated: 2026-08-17T10:01:28.493Z
+Runtime: node v26.3.1 · typescript strict
+- Assertions: 459
+- Passed: 458
+- Failed: 1
 - Browser smoke: ran
-- Screenshots: nestory-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png
+- UI DOM-commit p95: 2.300 ms
+- Household UI DOM-commit p95: 5.800 ms
+- Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
+- Settled spatial RAF callbacks observed: 4
+- Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
 ## typescript gate
 - ✓ `tsc-typecheck-and-emit`
 - ✓ `dist-app-emitted`
@@ -19,6 +23,35 @@ Runtime: node v25.8.0 · typescript strict
 - ✓ `state-change-applies`
 - ✓ `state-change-ledgered`
 - ✓ `state-answer-sentence`
+## P0.1 invalid commands are lossless
+- ✓ `invalid-domain-references-are-rejected`
+- ✓ `invalid-domain-commands-append-nothing`
+## P0.1 Store projection is read-only
+- ✓ `store-state-hides-map-mutation`
+- ✓ `store-state-freezes-record-arrays`
+- ✓ `store-query-cache-cannot-be-poisoned`
+- ✓ `store-catalog-cannot-be-poisoned`
+- ✓ `store-export-does-not-alias-ledger`
+## P0.1 indexed search preserves public ranking
+- ✓ `bounded-search-page-preserves-full-ranking-without-aliases`
+- ✓ `indexed-search-matches-legacy-ranking`
+- ✓ `indexed-locate-top-four-matches-full-search`
+- ✓ `search-index-invalidates-after-write`
+- ✓ `multi-hyphen-kind-remains-searchable`
+- ✓ `long-kind-index-remains-linear-and-searchable`
+## P0.1 subscriber revisions publish FIFO
+- ✓ `reentrant-subscriber-sees-every-coherent-revision-in-order`
+- ✓ `reentrant-subscriber-command-is-rejected-before-write`
+- ✓ `post-publication-command-ledger-remains-reloadable`
+## P0.1 persistence callbacks cannot re-enter commands
+- ✓ `storage-callback-command-is-rejected-before-write`
+- ✓ `storage-reentry-cannot-create-acknowledged-ghost`
+## P0.1 imported ids cannot collide with later commands
+- ✓ `allocator-skips-imported-record-ids-and-remains-reloadable`
+- ✓ `allocator-skips-imported-entity-ids-and-remains-reloadable`
+## P0.1 stale proposals fail before durable acceptance
+- ✓ `stale-proposal-fixture-occupies-suggested-id`
+- ✓ `stale-proposal-acceptance-rolls-back-and-ledger-reloads`
 ## P0.2 container memory
 - ✓ `contents-from-placements`
 - ✓ `contents-freshness-exposed`
@@ -28,6 +61,9 @@ Runtime: node v25.8.0 · typescript strict
 - ✓ `snapshot-creates-proposal`
 - ✓ `snapshot-never-direct-write`
 - ✓ `snapshot-observation-linked`
+- ✓ `snapshot-deduplicates-labels-and-resolved-items`
+- ✓ `snapshot-text-bound-rejects-before-ledger-write`
+- ✓ `snapshot-label-count-bound-rejects-before-ledger-write`
 - ✓ `snapshot-accept-moves-item`
 - ✓ `snapshot-accept-confirms-container`
 ## P0.3 find and correct
@@ -63,9 +99,16 @@ Runtime: node v25.8.0 · typescript strict
 - ✓ `search-across-boxes`
 - ✓ `unpack-priority-essentials-first`
 - ✓ `box-status-transitions-ledgered`
+- ✓ `commit-limit-preserves-newest-first`
+- ✓ `commit-limit-zero-preserves-full-view`
+- ✓ `commit-limit-rejects-invalid-windows`
 - ✓ `unpack-returns-to-default-home`
 - ✓ `empty-box-auto-unpacked`
 - ✓ `unpack-history-preserved`
+- ✓ `unpack-from-non-box-does-not-emit-box-status`
+- ✓ `empty-box-destination-keeps-compatible-default`
+- ✓ `box-name-boundary-remains-reloadable`
+- ✓ `box-label-over-bound-rejects-before-write`
 ## P0.6 capture proposal and review
 - ✓ `seed-inbox-pending`
 - ✓ `seed-snapshot-proposal`
@@ -77,6 +120,13 @@ Runtime: node v25.8.0 · typescript strict
 - ✓ `merge-contradicts-placement`
 - ✓ `merge-query-redirects`
 - ✓ `inbox-empty-after-decisions`
+- ✓ `review-can-correct-placement-before-accept`
+- ✓ `corrected-accept-is-ledgered`
+- ✓ `review-can-choose-duplicate-survivor`
+- ✓ `corrected-merge-keeps-query-redirect`
+- ✓ `multi-placement-proposal-has-two-items`
+- ✓ `per-item-placement-overrides-stay-distinct`
+- ✓ `destructive-proposal-requires-inspectable-source`
 ## P0.7 spatial recall
 - ✓ `plan-pin-resolves`
 - ✓ `plan-pin-for-box`
@@ -84,11 +134,37 @@ Runtime: node v25.8.0 · typescript strict
 ## P0.8 persistence and history
 - ✓ `state-survives-reload`
 - ✓ `export-shape`
+- ✓ `compact-export-is-schema-compatible`
+- ✓ `compact-export-avoids-pretty-print-overhead`
 - ✓ `import-round-trip`
 - ✓ `ledger-newest-first`
 - ✓ `ledger-ops-summaries`
 - ✓ `reset-ledgered`
 - ✓ `reset-back-to-seed`
+- ✓ `reset-preserves-append-only-history`
+- ✓ `reset-baseline-survives-reload-without-time-drift`
+## P0.8 temporal caches expire at record boundaries
+- ✓ `container-cache-expires-at-exact-age-boundary`
+- ✓ `attention-cache-refreshes-at-exact-age-boundary`
+## P0.8 durability failure semantics
+- ✓ `durability-failure-is-visible`
+- ✓ `failed-write-does-not-change-projection`
+- ✓ `failed-write-does-not-change-ledger`
+- ✓ `failed-write-does-not-notify`
+## P0.8 corrupt persistence semantics
+- ✓ `corrupt-storage-fails-closed`
+## P0.8 generated baseline validates before use
+- ✓ `generated-baseline-duplicates-fail-before-any-write`
+## P0.8 import validation semantics
+- ✓ `malformed-import-is-rejected`
+- ✓ `malformed-import-keeps-current-home`
+- ✓ `dangling-import-is-rejected`
+- ✓ `dangling-import-keeps-current-home`
+- ✓ `malformed-kit-row-import-is-rejected`
+- ✓ `proposal-cannot-compose-reset-control-op`
+- ✓ `import-baseline-cannot-contain-reset-control-op`
+- ✓ `import-bounds-indexed-search-fields`
+- ✓ `stale-import-revision-cannot-overwrite-acknowledged-write`
 ## agent answer contract
 - ✓ `packed-answer-names-box-and-destination`
 - ✓ `laundry-answer-names-default-home`
@@ -128,6 +204,7 @@ Runtime: node v25.8.0 · typescript strict
 ## agent toolkit
 - ✓ `toolkit-descriptors`
 - ✓ `tool-locate`
+- ✓ `tool-locate-omits-sensitive-media`
 - ✓ `tool-snapshot-proposal-only`
 - ✓ `tool-not-there-opens-proposal`
 - ✓ `tool-unknown-rejected`
@@ -142,8 +219,13 @@ Runtime: node v25.8.0 · typescript strict
 - ✓ `runtime-blocks-decision-tools`
 - ✓ `runtime-decision-not-applied`
 - ✓ `runtime-decision-allowed-explicitly`
+- ✓ `runtime-decision-grant-is-resource-scoped`
 - ✓ `runtime-round-budget`
 - ✓ `runtime-surfaces-tool-errors`
+- ✓ `runtime-large-results-remain-bounded-json`
+- ✓ `runtime-tool-call-backpressure-bounds-dispatch`
+- ✓ `runtime-tool-errors-use-bounded-json`
+- ✓ `runtime-llm-call-has-deadline`
 ## ask router
 - ✓ `ask-locate-intent`
 - ✓ `ask-which-box`
@@ -154,16 +236,43 @@ Runtime: node v25.8.0 · typescript strict
 - ✓ `ask-unknown-admits`
 - ✓ `ask-help-fallback`
 ## P0.10 sync service
+- ✓ `srv-corrupt-file-fails-closed`
 - ✓ `srv-health`
+- ✓ `srv-rejects-untrusted-origin`
+- ✓ `srv-untrusted-simple-post-cannot-mutate`
+- ✓ `srv-matching-forged-host-and-origin-cannot-mutate`
+- ✓ `srv-request-body-is-bounded`
+- ✓ `srv-snapshot-domain-bound-is-400-without-write`
+- ✓ `srv-cors-allows-idempotency-key`
+- ✓ `srv-private-responses-are-not-cached`
+- ✓ `srv-import-allows-household-sized-dump`
+- ✓ `srv-concurrent-import-cannot-erase-acknowledged-write`
 - ✓ `srv-locate-view`
+- ✓ `srv-search-keeps-full-array-compatibility-contract`
+- ✓ `srv-search-opt-in-window-bounds-network-projection`
+- ✓ `srv-search-window-validates-limit`
 - ✓ `srv-container-contents`
 - ✓ `srv-unknown-container-404`
 - ✓ `srv-ask`
+- ✓ `srv-ask-mutation-idempotent-retries-share-one-result`
+- ✓ `srv-idempotency-fingerprint-canonicalizes-json-keys`
+- ✓ `srv-store-scoped-idempotency-spans-server-instances`
+- ✓ `srv-oversized-idempotent-response-uses-bounded-committed-receipt`
+- ✓ `srv-durability-errors-remain-redacted-5xx`
 - ✓ `srv-tool-write`
 - ✓ `srv-proposals-grow`
+- ✓ `srv-idempotent-retry-applies-mutation-once`
+- ✓ `srv-idempotency-key-cannot-change-payload`
+- ✓ `srv-idempotency-key-cannot-change-route`
+- ✓ `srv-idempotency-key-is-bounded`
+- ✓ `srv-concurrent-idempotent-retries-share-one-result`
 - ✓ `srv-decision-403-without-confirm`
+- ✓ `srv-empty-proposal-rejection-reason-is-input-error`
 - ✓ `srv-decision-confirmed-applies`
 - ✓ `srv-unknown-tool-404`
+- ✓ `srv-known-tool-bad-args-400`
+- ✓ `srv-domain-input-errors-are-400-not-durability-failures`
+- ✓ `srv-malformed-percent-encoded-path-is-400`
 - ✓ `srv-unknown-route-404`
 - ✓ `srv-export-schema`
 - ✓ `srv-restart-durable`
@@ -176,46 +285,221 @@ Runtime: node v25.8.0 · typescript strict
 ## browser smoke
 - ✓ `app-boots`
 - ✓ `welcome-first-run`
+- ✓ `welcome-does-not-load-spatial-runtime`
+- ✓ `welcome-does-not-fetch-lucide-modules`
+- ✓ `welcome-mode-choices-are-buttons`
+- ✓ `toast-is-live-region`
+- ✓ `answers-have-persistent-live-announcer`
+- ✓ `skip-link-targets-main`
+- ✓ `mobile-welcome-has-no-empty-fixed-navigation-shell`
+- ✓ `mobile-welcome-choices-stack-with-readable-width`
+- ✓ `welcome-mode-choice-focuses`
 - ✓ `demo-mode-boots`
+- ✓ `dom-app-shell-recomposed`
+- ✓ `dom-command-shortcut-focuses-search`
+- ✓ `unchanged-shell-keeps-dom-identity`
+- ✓ `unchanged-shell-keeps-icon-identity`
 - ✓ `view-renders-home`
+- ✓ `form-controls-named-home`
+- ✓ `buttons-named-home`
+- ✓ `view-renders-ask`
+- ✓ `form-controls-named-ask`
+- ✓ `buttons-named-ask`
+- ✓ `view-renders-capture`
+- ✓ `form-controls-named-capture`
+- ✓ `buttons-named-capture`
 - ✓ `view-renders-spaces`
+- ✓ `form-controls-named-spaces`
+- ✓ `buttons-named-spaces`
 - ✓ `view-renders-belongings`
+- ✓ `form-controls-named-belongings`
+- ✓ `buttons-named-belongings`
 - ✓ `view-renders-operations`
+- ✓ `form-controls-named-operations`
+- ✓ `buttons-named-operations`
 - ✓ `view-renders-review`
+- ✓ `form-controls-named-review`
+- ✓ `buttons-named-review`
 - ✓ `view-renders-plan`
+- ✓ `form-controls-named-plan`
+- ✓ `buttons-named-plan`
 - ✓ `view-renders-ledger`
+- ✓ `form-controls-named-ledger`
+- ✓ `buttons-named-ledger`
+- ✓ `belongings-filter-keeps-input-node`
+- ✓ `belonging-row-accessible-name-has-location-state-confidence-and-freshness`
+- ✓ `primary-hover-token-keeps-small-text-contrast`
+- ✓ `all-lucide-placeholders-resolve`
+- ✓ `all-lucide-names-resolve-without-fallback`
+- ✓ `page-has-one-primary-heading`
+- ✓ `actions-use-native-controls`
+- ✓ `active-navigation-is-current-page`
 - ✓ `dom-locate-answer`
+- ✓ `home-locate-answer-precedes-spatial-cockpit`
+- ✓ `locate-answer-is-announced-through-persistent-region`
+- ✓ `home-locate-preserves-mounted-spatial-context`
+- ✓ `one-user-action-commits-view-once`
+- ✓ `destination-toast-survives-navigation-to-related-view`
 - ✓ `dom-review-badge`
 - ✓ `dom-proposal-cards`
+- ✓ `dom-review-shows-human-evidence`
+- ✓ `dom-review-shows-before-after`
+- ✓ `dom-review-allows-correction`
+- ✓ `dom-review-hides-record-ids-by-default`
+- ✓ `dom-review-placement-edit-updates-diff`
+- ✓ `dom-review-edit-preserves-focus`
+- ✓ `dom-review-survivor-edit-updates-diff`
+- ✓ `view-scoped-toast-does-not-leak-to-unrelated-page`
 - ✓ `dom-move-detail`
+- ✓ `operation-open-preserves-focus`
 - ✓ `dom-box-cards`
 - ✓ `dom-unpack-priority`
 - ✓ `dom-kit-rows`
 - ✓ `dom-plan-3d-canvas`
 - ✓ `dom-plan-3d-pixels`
+- ✓ `spatial-furniture-uses-readable-archetypes`
+- ✓ `spatial-camera-presets-change-the-mounted-view`
+- ✓ `spatial-object-list-selects-and-describes-furniture`
+- ✓ `spatial-labels-avoid-per-object-canvas-textures`
+- ✓ `spatial-room-geometry-budget`
+- ✓ `spatial-furnished-scene-stays-within-gpu-budget`
+- ✓ `spatial-labels-render-only-in-accessible-html-inspector`
+- ✓ `unrelated-update-preserves-spatial-canvas`
+- ✗ `settled-spatial-scene-has-zero-continuous-raf` — 4
+- ✓ `reduced-motion-disables-orbit-damping`
+- ✓ `reduced-motion-keyboard-orbit-has-no-settle-raf`
 - ✓ `dom-plan-pin`
+- ✓ `spatial-fault-path-cleans-partial-mount`
+- ✓ `spatial-recovers-after-faulted-mount`
 - ✓ `dom-capture-room`
+- ✓ `scan-build-preserves-focus`
 - ✓ `dom-scan-proposals`
 - ✓ `dom-scan-3d-canvas`
+- ✓ `scan-decision-preserves-focus`
 - ✓ `dom-container-cards`
 - ✓ `dom-container-modal`
+- ✓ `dialog-contract`
+- ✓ `dialog-blocks-global-shortcut`
+- ✓ `dialog-mutation-preserves-focus`
+- ✓ `dialog-escape-restores-opener`
+- ✓ `stale-focus-raf-cannot-steal-new-view`
+- ✓ `capture-draft-survives-store-driven-render`
+- ✓ `room-and-container-capture-media-never-cross-contexts`
+- ✓ `async-snapshot-photo-preserves-newer-text-focus-selection-and-locks-submit`
+- ✓ `snapshot-persistence-failure-keeps-dialog-text-and-photo`
+- ✓ `late-snapshot-photo-cannot-cross-modal-context`
 - ✓ `dom-proposal-photo`
+- ✓ `review-decision-focuses-next-action`
 - ✓ `dom-retrieval-plan`
 - ✓ `dom-ask-view`
 - ✓ `dom-ask-answer`
+- ✓ `dom-ask-does-not-repeat-answer-sentence`
 - ✓ `dom-ask-shows-tool-call`
-- ✓ `mobile-no-overflow-home`
-- ✓ `mobile-no-overflow-capture`
-- ✓ `mobile-no-overflow-plan`
-- ✓ `mobile-no-overflow-operations`
-- ✓ `mobile-no-overflow-spaces`
-- ✓ `mobile-no-overflow-setup`
-- ✓ `mobile-no-overflow-ask`
+- ✓ `ask-answer-is-announced-through-persistent-region`
+- ✓ `mobile-nav-reaches-home`
+- ✓ `mobile-nav-reaches-ask`
+- ✓ `mobile-nav-reaches-capture`
+- ✓ `mobile-nav-reaches-spaces`
+- ✓ `mobile-nav-reaches-belongings`
+- ✓ `mobile-nav-reaches-operations`
+- ✓ `mobile-nav-reaches-review`
+- ✓ `mobile-nav-reaches-plan`
+- ✓ `mobile-nav-reaches-ledger`
+- ✓ `mobile-nav-is-compact-and-touchable`
+- ✓ `mobile-global-search-keeps-explicit-submit`
+- ✓ `mobile-global-search-avoids-ios-auto-zoom`
+- ✓ `mobile-more-exposes-current-area-and-popup-state`
+- ✓ `mobile-more-is-an-accessible-route-sheet`
+- ✓ `mobile-more-escape-restores-trigger`
+- ✓ `responsive-320-no-document-overflow-home`
+- ✓ `responsive-320-critical-content-visible-home`
+- ✓ `responsive-320-no-document-overflow-ask`
+- ✓ `responsive-320-critical-content-visible-ask`
+- ✓ `responsive-320-no-document-overflow-capture`
+- ✓ `responsive-320-critical-content-visible-capture`
+- ✓ `responsive-320-no-document-overflow-spaces`
+- ✓ `responsive-320-critical-content-visible-spaces`
+- ✓ `responsive-320-no-document-overflow-belongings`
+- ✓ `responsive-320-critical-content-visible-belongings`
+- ✓ `responsive-320-no-document-overflow-operations`
+- ✓ `responsive-320-critical-content-visible-operations`
+- ✓ `responsive-320-no-document-overflow-review`
+- ✓ `responsive-320-critical-content-visible-review`
+- ✓ `responsive-320-no-document-overflow-plan`
+- ✓ `responsive-320-critical-content-visible-plan`
+- ✓ `responsive-320-no-document-overflow-ledger`
+- ✓ `responsive-320-critical-content-visible-ledger`
+- ✓ `responsive-390-no-document-overflow-home`
+- ✓ `responsive-390-critical-content-visible-home`
+- ✓ `responsive-390-no-document-overflow-ask`
+- ✓ `responsive-390-critical-content-visible-ask`
+- ✓ `responsive-390-no-document-overflow-capture`
+- ✓ `responsive-390-critical-content-visible-capture`
+- ✓ `responsive-390-no-document-overflow-spaces`
+- ✓ `responsive-390-critical-content-visible-spaces`
+- ✓ `responsive-390-no-document-overflow-belongings`
+- ✓ `responsive-390-critical-content-visible-belongings`
+- ✓ `responsive-390-no-document-overflow-operations`
+- ✓ `responsive-390-critical-content-visible-operations`
+- ✓ `responsive-390-no-document-overflow-review`
+- ✓ `responsive-390-critical-content-visible-review`
+- ✓ `responsive-390-no-document-overflow-plan`
+- ✓ `responsive-390-critical-content-visible-plan`
+- ✓ `responsive-390-no-document-overflow-ledger`
+- ✓ `responsive-390-critical-content-visible-ledger`
+- ✓ `responsive-761-no-document-overflow-home`
+- ✓ `responsive-761-critical-content-visible-home`
+- ✓ `responsive-761-no-document-overflow-ask`
+- ✓ `responsive-761-critical-content-visible-ask`
+- ✓ `responsive-761-no-document-overflow-capture`
+- ✓ `responsive-761-critical-content-visible-capture`
+- ✓ `responsive-761-no-document-overflow-spaces`
+- ✓ `responsive-761-critical-content-visible-spaces`
+- ✓ `responsive-761-no-document-overflow-belongings`
+- ✓ `responsive-761-critical-content-visible-belongings`
+- ✓ `responsive-761-no-document-overflow-operations`
+- ✓ `responsive-761-critical-content-visible-operations`
+- ✓ `responsive-761-no-document-overflow-review`
+- ✓ `responsive-761-critical-content-visible-review`
+- ✓ `responsive-761-no-document-overflow-plan`
+- ✓ `responsive-761-critical-content-visible-plan`
+- ✓ `responsive-761-no-document-overflow-ledger`
+- ✓ `responsive-761-critical-content-visible-ledger`
+- ✓ `mobile-capture-room-content-visible`
+- ✓ `mobile-capture-room-form-controls-avoid-ios-auto-zoom`
+- ✓ `mobile-capture-container-content-visible`
+- ✓ `mobile-capture-container-form-controls-avoid-ios-auto-zoom`
+- ✓ `mobile-capture-product-content-visible`
+- ✓ `mobile-capture-product-form-controls-avoid-ios-auto-zoom`
+- ✓ `mobile-upload-focus-is-visible-on-zone`
+- ✓ `mobile-plan-canvas-remains-usable`
+- ✓ `mobile-2d-plan-fits-and-keeps-furniture-readable`
+- ✓ `plan-surfaces-unknown-locate-result`
+- ✓ `mobile-nav-labels-readable`
+- ✓ `mobile-home-removes-duplicate-search`
+- ✓ `mobile-home-prioritizes-actions-and-defers-three`
+- ✓ `uncertain-priority-focuses-visible-attention-details`
+- ✓ `household-belongings-dom-is-bounded`
+- ✓ `household-belongings-shows-window-status`
+- ✓ `household-filter-searches-beyond-first-window`
+- ✓ `household-belongings-next-page-replaces-window`
+- ✓ `household-belongings-pagination-keeps-hard-dom-cap`
+- ✓ `household-container-modal-dom-is-bounded`
+- ✓ `household-container-filter-searches-full-truth`
+- ✓ `household-container-next-page-replaces-window-and-focuses-first-action`
+- ✓ `household-ledger-dom-is-bounded`
+- ✓ `household-ledger-shows-window-status`
+- ✓ `household-ledger-pagination-keeps-hard-dom-cap-and-focuses-final-page`
+- ✓ `household-review-dom-is-bounded`
+- ✓ `household-review-shows-window-status`
+- ✓ `household-review-pagination-keeps-hard-dom-cap`
 - ✓ `own-mode-boots-empty`
 - ✓ `own-mode-opens-setup`
 - ✓ `own-activation-checklist`
 - ✓ `own-activation-completes-in-dom`
 - ✓ `own-plan-renders`
+- ✓ `corrupt-browser-storage-opens-actionable-recovery-shell`
+- ✓ `browser-recovery-copy-restores-own-home`
 ## Loop command
 ```bash
 cd prototype-v2 && node src/verify.ts

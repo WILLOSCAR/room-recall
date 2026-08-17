@@ -6,25 +6,100 @@
   <meta name="theme-color" content="#1f2925">
   <link rel="icon" href="data:,">
   <title>Nestory · A memory system for your home</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="nestory.css">
+  <link rel="modulepreload" href="dist/app.js">
   <script type="importmap">
     {
       "imports": {
         "three": "./node_modules/three/build/three.module.js",
-        "three/addons/": "./node_modules/three/examples/jsm/"
+        "three/addons/": "./node_modules/three/examples/jsm/",
+        "camera-controls": "./node_modules/camera-controls/dist/camera-controls.module.js"
       }
     }
   </script>
 </head>
 <body>
-  <div id="app">
-    <aside id="sidebar" data-testid="sidebar"></aside>
+  <a class="skip-link" href="#view">Skip to main content</a>
+  <div id="app" class="app-shell" data-testid="app-shell">
+    <aside id="sidebar" data-testid="sidebar">
+      <div class="brand" aria-hidden="true">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span class="brand-copy"><strong>Nestory</strong><small>Home memory</small></span>
+      </div>
+      <div class="boot-sidebar-card" aria-hidden="true"><span></span><span></span></div>
+      <div class="boot-sidebar-lines" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    </aside>
     <div id="main">
-      <header id="topbar"></header>
-      <main id="view" data-testid="view"></main>
+      <header id="topbar">
+        <div class="boot-topbar-copy" aria-hidden="true"><span>Home memory</span><strong>Loading</strong></div>
+        <div class="boot-command" aria-hidden="true"><span></span></div>
+      </header>
+      <main id="view" tabindex="-1" data-testid="view">
+        <section class="boot-view" role="status" aria-live="polite">
+          <div class="boot-kicker">Nestory is getting ready</div>
+          <h2>Bringing your home memory into focus.</h2>
+          <p data-boot-status>Loading the latest trusted places, evidence, and decisions…</p>
+          <div class="boot-panels" aria-hidden="true"><span></span><span></span><span></span></div>
+        </section>
+      </main>
     </div>
   </div>
-  <div id="toast-root"></div>
+  <div id="toast-root" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="answer-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <script>
+    (() => {
+      let shown = false;
+      const mode = (() => { try { return localStorage.getItem("nestory-v2-mode"); } catch { return null; } })();
+      document.body.classList.toggle("welcome-mode", mode !== "demo" && mode !== "own");
+      const affectedKey = mode === "own" ? "nestory-v2-own" : "nestory-v2";
+      const affectedLabel = mode === "own" ? "your home" : "the demo home";
+      const showBootFailure = (reason) => {
+        if (shown || window.nestory?.version) return;
+        shown = true;
+        document.body.classList.add("welcome-mode", "boot-failure-mode");
+        const corrupt = /corrupt persisted home memory|invalid json|validated/i.test(String(reason || ""));
+        let raw = null;
+        try { raw = localStorage.getItem(affectedKey); } catch { /* storage can be unavailable */ }
+        const view = document.getElementById("view");
+        if (!view) return;
+        view.innerHTML = `<section class="boot-error" role="alert" aria-labelledby="boot-error-title">
+          <div class="boot-kicker">Protected startup</div>
+          <h2 id="boot-error-title">Home memory could not open.</h2>
+          <p>${corrupt
+            ? `The saved record set for ${affectedLabel} could not be validated. Nestory has not replaced or cleared it.`
+            : "Nestory could not finish starting. Your saved record set has not been changed."}</p>
+          <div class="boot-error-actions">
+            <button type="button" data-boot-action="reload">Try again</button>
+            ${raw !== null ? '<button type="button" data-boot-action="download">Download recovery copy</button>' : ""}
+            <button type="button" data-boot-action="switch">Open ${mode === "own" ? "demo home" : "your home"}</button>
+            ${corrupt && raw !== null ? `<button type="button" class="danger" data-boot-action="clear">Clear only ${affectedLabel}…</button>` : ""}
+          </div>
+          <small>Recovery actions affect only <code>${affectedKey}</code>. Download a copy before clearing it.</small>
+        </section>`;
+        view.querySelector('[data-boot-action="reload"]')?.addEventListener("click", () => location.reload());
+        view.querySelector('[data-boot-action="switch"]')?.addEventListener("click", () => {
+          try { localStorage.setItem("nestory-v2-mode", mode === "own" ? "demo" : "own"); } catch { /* reload still offers recovery */ }
+          location.reload();
+        });
+        view.querySelector('[data-boot-action="download"]')?.addEventListener("click", () => {
+          if (raw === null) return;
+          const url = URL.createObjectURL(new Blob([raw], { type: "text/plain;charset=utf-8" }));
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = `nestory-recovery-${mode === "own" ? "own" : "demo"}.txt`;
+          anchor.click();
+          URL.revokeObjectURL(url);
+        });
+        view.querySelector('[data-boot-action="clear"]')?.addEventListener("click", () => {
+          if (!confirm(`Clear the unreadable saved record set for ${affectedLabel}? Download a recovery copy first. This cannot be undone.`)) return;
+          try { localStorage.removeItem(affectedKey); } catch { return; }
+          location.reload();
+        });
+      };
+      window.addEventListener("error", (event) => showBootFailure(event.error?.message || event.message), true);
+      window.addEventListener("unhandledrejection", (event) => showBootFailure(event.reason?.message || event.reason));
+    })();
+  </script>
   <script type="module" src="dist/app.js"></script>
 </body>
 </html>

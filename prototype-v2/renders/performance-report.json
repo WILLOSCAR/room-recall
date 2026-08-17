@@ -1,0 +1,218 @@
+{
+  "generatedAt": "2026-08-11T15:53:21.706Z",
+  "runtime": "node v26.3.1",
+  "fixture": {
+    "seedRecords": 66,
+    "householdRecords": 10066,
+    "householdBelongings": 2021
+  },
+  "httpMethodology": {
+    "concurrency": 32,
+    "samplesPerWorkload": 320,
+    "warmRepeated": "two keys explicitly prewarmed before measurement",
+    "distinct": "320 unique exact fixture names; query cache cold; lazy search-index construction included",
+    "boundedSearch": "320 unique exact fixture names; legacy partial-token semantics make each a broad match set; opt-in /search?limit=100 returns 100 summaries",
+    "fullSearchResidual": "64 broad repeated /search?q=shared%20term requests preserve the original full bare-array compatibility response"
+  },
+  "durability": "same-directory atomic rename acknowledged by the OS page cache; no fsync claim",
+  "budgetsAreCiGates": false,
+  "seed": {
+    "query": {
+      "locate": {
+        "p50": 0.0002499999999940883,
+        "p95": 0.0007500000000106866,
+        "p99": 0.004750000000001364,
+        "max": 0.4654999999999916,
+        "samples": 250,
+        "budgetMs": 5,
+        "pass": true
+      },
+      "attention": {
+        "p50": 0.00012500000002546585,
+        "p95": 0.0003330000000119071,
+        "p99": 0.0018749999999840838,
+        "max": 0.5844999999999914,
+        "samples": 250,
+        "budgetMs": 5,
+        "pass": true
+      },
+      "containers": {
+        "p50": 0.00012499999999704414,
+        "p95": 0.0002920000000017353,
+        "p99": 0.0017909999999972115,
+        "max": 0.004166999999995369,
+        "samples": 250,
+        "budgetMs": 5,
+        "pass": true
+      }
+    },
+    "memoryWrite": {
+      "p50": 0.20458399999998278,
+      "p95": 0.3226669999999956,
+      "p99": 1.6084999999999923,
+      "max": 4.85612500000002,
+      "samples": 250,
+      "budgetMs": 10,
+      "pass": true
+    },
+    "coldStart": {
+      "p50": 0.6878340000000094,
+      "p95": 1.1512089999999944,
+      "p99": 2.137709000000001,
+      "max": 2.137709000000001,
+      "samples": 40,
+      "budgetMs": 25,
+      "pass": true
+    },
+    "export": {
+      "compactText": {
+        "p50": 0.06341700000001538,
+        "p95": 0.071124999999995,
+        "p99": 0.103999999999985,
+        "max": 0.103999999999985,
+        "samples": 80,
+        "budgetMs": 10,
+        "pass": true
+      },
+      "transferClone": {
+        "p50": 0.17970800000000509,
+        "p95": 0.197749999999985,
+        "p99": 0.20412499999997635,
+        "max": 0.20412499999997635,
+        "samples": 80,
+        "budgetMs": 25,
+        "pass": true
+      },
+      "compactBytes": 30795,
+      "prettyBytes": 48824
+    }
+  },
+  "household": {
+    "query": {
+      "locate": {
+        "p50": 0.00016599999997879422,
+        "p95": 0.0002089999999839165,
+        "p99": 0.0007499999999822649,
+        "max": 0.037583000000040556,
+        "samples": 250,
+        "budgetMs": 5,
+        "pass": true
+      },
+      "attention": {
+        "p50": 0.00008300000001781882,
+        "p95": 0.00012500000002546585,
+        "p99": 0.00020799999998644125,
+        "max": 6.998541000000046,
+        "samples": 250,
+        "budgetMs": 5,
+        "pass": true
+      },
+      "containers": {
+        "p50": 0.00008300000001781882,
+        "p95": 0.00008400000001529406,
+        "p99": 0.00012500000002546585,
+        "max": 0.0003749999999627107,
+        "samples": 250,
+        "budgetMs": 5,
+        "pass": true
+      }
+    },
+    "memoryWrite": {
+      "p50": 2.8619580000000724,
+      "p95": 4.520250000000033,
+      "p99": 8.674791000000027,
+      "max": 9.71391600000004,
+      "samples": 160,
+      "budgetMs": 10,
+      "pass": true
+    },
+    "coldStart": {
+      "p50": 24.008291999999983,
+      "p95": 32.73804099999995,
+      "p99": 32.73804099999995,
+      "max": 32.73804099999995,
+      "samples": 16,
+      "budgetMs": 100,
+      "pass": true
+    },
+    "export": {
+      "compactText": {
+        "p50": 5.511833999999908,
+        "p95": 5.850875000000087,
+        "p99": 5.946292000000085,
+        "max": 5.946292000000085,
+        "samples": 30,
+        "budgetMs": 10,
+        "pass": true
+      },
+      "transferClone": {
+        "p50": 15.324499999999944,
+        "p95": 16.75566700000013,
+        "p99": 23.58833400000003,
+        "max": 23.58833400000003,
+        "samples": 30,
+        "budgetMs": 25,
+        "pass": true
+      },
+      "compactBytes": 2584795,
+      "prettyBytes": 4180824
+    },
+    "fileWrite": {
+      "p50": 17.674208000000363,
+      "p95": 19.76541700000007,
+      "p99": 23.5239160000001,
+      "max": 23.5239160000001,
+      "samples": 60,
+      "budgetMs": 25,
+      "pass": true
+    },
+    "httpWarmRepeatedAt32": {
+      "p50": 4.454624999999851,
+      "p95": 9.106999999999971,
+      "p99": 10.755958000000192,
+      "max": 11.176582999999937,
+      "samples": 320,
+      "budgetMs": 50,
+      "pass": true,
+      "throughputRps": 4780.373578725834,
+      "meanResponseBytes": 3110,
+      "maxResponseBytes": 5050
+    },
+    "httpDistinctAt32": {
+      "p50": 7.569582999999966,
+      "p95": 29.347667,
+      "p99": 33.10137500000019,
+      "max": 33.749083000000155,
+      "samples": 320,
+      "budgetMs": 50,
+      "pass": true,
+      "throughputRps": 2746.301774246549,
+      "meanResponseBytes": 5050,
+      "maxResponseBytes": 5050
+    },
+    "httpBoundedSearchAt32": {
+      "p50": 9.927875000000313,
+      "p95": 29.727582999999868,
+      "p99": 34.31604100000004,
+      "max": 35.071208999999726,
+      "samples": 320,
+      "budgetMs": 50,
+      "pass": true,
+      "throughputRps": 2322.404831623909,
+      "meanResponseBytes": 22239,
+      "maxResponseBytes": 22239
+    },
+    "httpFullSearchCompatibilityAt32": {
+      "p50": 201.25545899999997,
+      "p95": 244.5015410000001,
+      "p99": 251.3494169999999,
+      "max": 251.3494169999999,
+      "samples": 64,
+      "budgetMs": null,
+      "pass": null,
+      "throughputRps": 140.5067518708391,
+      "meanResponseBytes": 2528001,
+      "maxResponseBytes": 2528001
+    }
+  }
+}

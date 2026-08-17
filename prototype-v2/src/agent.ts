@@ -37,16 +37,18 @@ interface ToolImpl {
   run(args: Record<string, unknown>): unknown;
 }
 
+export class AgentInputError extends Error {}
+
 function str(args: Record<string, unknown>, key: string): string {
   const value = args[key];
-  if (typeof value !== "string" || !value.trim()) throw new Error(`Tool argument "${key}" must be a non-empty string.`);
+  if (typeof value !== "string" || !value.trim()) throw new AgentInputError(`Tool argument "${key}" must be a non-empty string.`);
   return value;
 }
 
 function optionalStr(args: Record<string, unknown>, key: string): string | null {
   const value = args[key];
   if (value === undefined || value === null) return null;
-  if (typeof value !== "string") throw new Error(`Tool argument "${key}" must be a string.`);
+  if (typeof value !== "string") throw new AgentInputError(`Tool argument "${key}" must be a string.`);
   return value;
 }
 
@@ -58,7 +60,14 @@ export function createAgentToolkit(store: Store): AgentToolkit {
         description: "Answer 'where is X?' with place chain, default home, evidence, confidence, freshness, and an uncertainty admission when stale. Never guesses silently.",
         parameters: { type: "object", properties: { query: { type: "string", description: "Item name or kind, e.g. 'water bottle'." } }, required: ["query"] }
       },
-      run: (args) => store.locate(str(args, "query"))
+      run: (args) => {
+        const answer = store.locate(str(args, "query"));
+        if (!answer.ok) return answer;
+        return {
+          ...answer,
+          evidence: answer.evidence.map(({ media: _sensitiveMedia, ...evidence }) => evidence)
+        };
+      }
     },
     {
       descriptor: {
@@ -76,7 +85,7 @@ export function createAgentToolkit(store: Store): AgentToolkit {
       },
       run: (args) => {
         const contents = store.containerContents(str(args, "container_id"));
-        if (!contents) throw new Error("Unknown container.");
+        if (!contents) throw new AgentInputError("Unknown container.");
         return contents;
       }
     },
@@ -218,10 +227,10 @@ export function createAgentToolkit(store: Store): AgentToolkit {
     tools: tools.map((t) => t.descriptor),
     dispatch(name, args = {}) {
       const tool = byName.get(name);
-      if (!tool) throw new Error(`Unknown tool: ${name}`);
+      if (!tool) throw new AgentInputError(`Unknown tool: ${name}`);
       for (const required of tool.descriptor.parameters.required) {
         if (args[required] === undefined || args[required] === null) {
-          throw new Error(`Tool ${name} requires argument "${required}".`);
+          throw new AgentInputError(`Tool ${name} requires argument "${required}".`);
         }
       }
       return tool.run(args);

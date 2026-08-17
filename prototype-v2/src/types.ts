@@ -3,6 +3,12 @@
 // append-only records, commit ops (the write model), and derived views
 // (the read model). A future backend implements exactly these shapes.
 
+export type DeepReadonly<T> =
+  T extends (...args: never[]) => unknown ? T
+    : T extends readonly (infer U)[] ? readonly DeepReadonly<U>[]
+      : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+        : T;
+
 // ------------------------------------------------------------------ places
 
 export type PlaceRefType = "room" | "furniture" | "container" | "state";
@@ -290,6 +296,20 @@ export interface DerivedState {
   negatives: Map<string, string>;
 }
 
+export interface ReadonlyDerivedState {
+  readonly rooms: ReadonlyMap<string, Readonly<Room>>;
+  readonly belongings: ReadonlyMap<string, Readonly<BelongingEntity>>;
+  readonly containers: ReadonlyMap<string, Readonly<ContainerEntity>>;
+  readonly evidence: ReadonlyMap<string, Readonly<EvidenceRecord>>;
+  readonly observations: readonly Readonly<ObservationRecord>[];
+  readonly proposals: readonly Readonly<ProposalView>[];
+  readonly operations: ReadonlyMap<string, Readonly<OperationData>>;
+  readonly commits: readonly Readonly<CommitRecord>[];
+  readonly placements: ReadonlyMap<string, Readonly<PlacementSlot>>;
+  readonly states: ReadonlyMap<string, Readonly<{ state: LifecycleState; at: string }>>;
+  readonly negatives: ReadonlyMap<string, string>;
+}
+
 // ----------------------------------------------------------- derived views
 
 export type PlaceNode =
@@ -334,6 +354,13 @@ export interface BelongingView {
 }
 
 export type ScoredBelongingView = BelongingView & { score: number };
+
+export interface BelongingSearchPage {
+  items: ScoredBelongingView[];
+  offset: number;
+  limit: number;
+  total: number;
+}
 
 export interface LocateSuccess {
   ok: true;
@@ -479,6 +506,8 @@ export interface ExportDump {
   version: 2;
   exportedAt: string;
   records: AnyRecord[];
+  /** Immutable reset target. Optional only for backward-compatible v2 imports. */
+  baselineRecords?: AnyRecord[];
 }
 
 // ------------------------------------------------------------------ store
@@ -526,31 +555,35 @@ export interface CreateContainerInput {
 }
 
 export interface Store {
-  readonly state: DerivedState;
-  readonly catalog: Catalog;
-  subscribe(fn: (state: DerivedState) => void): () => void;
+  readonly state: ReadonlyDerivedState;
+  readonly catalog: DeepReadonly<Catalog>;
+  readonly recordCount: number;
+  readonly revision: number;
+  subscribe(fn: (state: ReadonlyDerivedState) => void): () => void;
 
   // read
-  searchBelongings(query?: string): ScoredBelongingView[];
-  belongingView(itemId: string): BelongingView | null;
-  locate(query: string): LocateAnswer;
-  locateById(itemId: string, ctx?: { query?: string | null; alternates?: ScoredBelongingView[] }): LocateAnswer;
-  containerContents(containerId: string): ContainerContentsView | null;
-  containersView(): ContainerView[];
-  staleContainers(): ContainerView[];
-  whichContainerHas(query: string): WhichContainerHit[];
-  attention(): AttentionSummary;
-  activation(): ActivationSummary;
-  operationsView(): OperationView[];
-  operationView(opId: string): OperationView | null;
-  retrievalPlan(opId: string): RetrievalPlanGroup[];
-  unpackPriority(opId?: string | null): UnpackPriorityEntry[];
-  proposals(statusFilter?: ProposalStatus | null): ProposalView[];
-  commitsView(limit?: number | null): CommitRecord[];
+  searchBelongings(query?: string): DeepReadonly<ScoredBelongingView[]>;
+  searchBelongingsPage(query: string, offset: number, limit: number): DeepReadonly<BelongingSearchPage>;
+  belongingView(itemId: string): DeepReadonly<BelongingView> | null;
+  locate(query: string): DeepReadonly<LocateAnswer>;
+  locateById(itemId: string, ctx?: { query?: string | null; alternates?: DeepReadonly<ScoredBelongingView[]> }): DeepReadonly<LocateAnswer>;
+  containerContents(containerId: string): DeepReadonly<ContainerContentsView> | null;
+  containersView(): DeepReadonly<ContainerView[]>;
+  staleContainers(): DeepReadonly<ContainerView[]>;
+  whichContainerHas(query: string): DeepReadonly<WhichContainerHit[]>;
+  attention(): DeepReadonly<AttentionSummary>;
+  activation(): DeepReadonly<ActivationSummary>;
+  operationsView(): DeepReadonly<OperationView[]>;
+  operationView(opId: string): DeepReadonly<OperationView> | null;
+  retrievalPlan(opId: string): DeepReadonly<RetrievalPlanGroup[]>;
+  unpackPriority(opId?: string | null): DeepReadonly<UnpackPriorityEntry[]>;
+  proposals(statusFilter?: ProposalStatus | null): DeepReadonly<ProposalView[]>;
+  commitsView(limit?: number | null): DeepReadonly<CommitRecord[]>;
   exportJson(): ExportDump;
+  exportJsonText(options?: { pretty?: boolean }): string;
   planPinFor(ref: PlaceRef): PlanPin | null;
-  chainFor(ref: PlaceRef | null): PlaceNode[];
-  chainText(chain: PlaceNode[]): string;
+  chainFor(ref: PlaceRef | null): DeepReadonly<PlaceNode[]>;
+  chainText(chain: DeepReadonly<PlaceNode[]>): string;
   lifecycleOf(itemId: string): LifecycleState;
 
   // write
@@ -561,7 +594,7 @@ export interface Store {
   correctPlacement(itemId: string, placeRef: PlaceRef, opts?: { relation?: Relation; note?: string | null }): CommitRecord;
   markNotThere(itemId: string): { observationId: string; proposalId: string };
   snapshotContainer(containerId: string, seenText: string, photo?: PhotoMedia | null): string;
-  acceptProposal(proposalId: string, extra?: { placeRef?: PlaceRef }): CommitRecord;
+  acceptProposal(proposalId: string, extra?: { placeRef?: PlaceRef; placementOverrides?: Record<string, PlaceRef>; mergeKeepId?: string }): CommitRecord;
   rejectProposal(proposalId: string, reason?: string): CommitRecord;
   confirmContainer(containerId: string): CommitRecord;
   startOperation(templateId: string): string;
@@ -572,7 +605,7 @@ export interface Store {
   setBoxStatus(boxId: string, status: BoxStatus): CommitRecord;
   unpackItem(itemId: string, placeRef?: PlaceRef | null): CommitRecord;
   reset(): void;
-  importJson(data: unknown): void;
+  importJson(data: unknown, expectedRevision?: number): void;
 }
 
 export const LIFECYCLE_STATES: readonly LifecycleState[] = [

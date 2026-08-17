@@ -5,10 +5,10 @@
 // The public surface implements the Store interface in types.ts.
 
 import type {
-  ActivationSummary, AnyRecord, AttentionSummary, BelongingEntity, BelongingView, BoxStatus, Catalog,
+  ActivationSummary, AnyRecord, AttentionSummary, BelongingEntity, BelongingSearchPage, BelongingView, BoxStatus, Catalog,
   CommitOp, CommitRecord, ContainerContentsView, ContainerEntity, ContainerView,
   ContainerWithContentsView, CreateBelongingInput, CreateBoxInput, CreateContainerInput,
-  CreateRoomInput, DerivedState,
+  CreateRoomInput, DerivedState, ReadonlyDerivedState,
   EvidenceKind, EvidenceRecord, ExportDump, Kit, KitReadiness, KitRow, KitRowView,
   LifecycleState, LocateAnswer, LocateSuccess, MoveReadiness, ObservationRecord,
   OperationData, OperationStatus, OperationView, PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
@@ -18,6 +18,7 @@ import type {
   WhichContainerHit
 } from "./types.ts";
 import { BOX_STATUSES, IMPORTANCE_SCORE, LIFECYCLE_STATES, ROW_STATUSES } from "./types.ts";
+import { validateLedgerSemantics, validatedLedgerRecords } from "./ledger-validation.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -26,59 +27,363 @@ const RELATION_PHRASE: Record<Relation, string> = {
 };
 
 const UNAVAILABLE_STATES: readonly LifecycleState[] = ["laundry", "drying", "lent_out", "missing", "in_transit"];
+const OPERATION_STATUSES = new Set<OperationStatus>(["active", "done", "abandoned"]);
+const SEARCH_CACHE_LIMIT = 32;
+const SEARCH_MATCH_CACHE_LIMIT = 8;
+const LOCATE_CACHE_LIMIT = 256;
+
+export class StoreConflictError extends Error {}
+export class ReentrantStoreCommandError extends Error {}
+export class DomainInputError extends Error {}
+
+const CONTAINER_KIND_VALUES = new Set(["drawer", "shelf", "surface", "basket", "bag", "suitcase", "tray", "box"]);
+
+function boundedInput(value: string | null | undefined, label: string, maxLength: number): string {
+  const normalized = value?.trim() ?? "";
+  if (!normalized) throw new DomainInputError(`${label} must not be empty.`);
+  if (normalized.length > maxLength) throw new DomainInputError(`${label} must be at most ${maxLength} characters.`);
+  return normalized;
+}
+
+interface BelongingSearchEntry {
+  belonging: BelongingEntity;
+  normalizedName: string;
+  nameTokens: string[];
+  ordinal: number;
+  nameRank: number;
+}
+
+interface BelongingSearchIndex {
+  entries: BelongingSearchEntry[];
+  nameGrams: Map<string, number[]>;
+  kinds: Array<{ kind: string; phrase: string; ordinals: number[] }>;
+  scratch: {
+    generation: number;
+    seen: Uint32Array;
+    overlaps: Uint32Array;
+    flags: Uint8Array;
+    touched: number[];
+  };
+}
+
+interface BelongingSearchMatch {
+  entry: BelongingSearchEntry;
+  score: number;
+}
+
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+  for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested, seen);
+  return Object.freeze(value);
+}
+
+function readonlyMap<K, V>(source: Map<K, V>): ReadonlyMap<K, V> {
+  for (const value of source.values()) deepFreeze(value);
+  let facade: ReadonlyMap<K, V>;
+  const view = {
+    get size(): number { return source.size; },
+    get(key: K): V | undefined { return source.get(key); },
+    has(key: K): boolean { return source.has(key); },
+    entries(): MapIterator<[K, V]> { return source.entries(); },
+    keys(): MapIterator<K> { return source.keys(); },
+    values(): MapIterator<V> { return source.values(); },
+    forEach(callback: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: unknown): void {
+      source.forEach((value, key) => callback.call(thisArg, value, key, facade));
+    },
+    [Symbol.iterator](): MapIterator<[K, V]> { return source[Symbol.iterator](); }
+  };
+  facade = Object.freeze(view);
+  return facade;
+}
+
+function readonlyState(source: DerivedState): ReadonlyDerivedState {
+  return Object.freeze({
+    rooms: readonlyMap(source.rooms),
+    belongings: readonlyMap(source.belongings),
+    containers: readonlyMap(source.containers),
+    evidence: readonlyMap(source.evidence),
+    observations: deepFreeze([...source.observations]),
+    proposals: deepFreeze([...source.proposals]),
+    operations: readonlyMap(source.operations),
+    commits: deepFreeze([...source.commits]),
+    placements: readonlyMap(source.placements),
+    states: readonlyMap(source.states),
+    negatives: readonlyMap(source.negatives)
+  });
+}
+
+function lruGet<K, V>(cache: Map<K, V>, key: K): V | undefined {
+  if (!cache.has(key)) return undefined;
+  const value = cache.get(key) as V;
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+function lruSet<K, V>(cache: Map<K, V>, key: K, value: V, limit: number): void {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > limit) {
+    const oldest = cache.keys().next().value as K | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
 
 export function createStore(options: StoreOptions): Store {
   const {
-    catalog,
+    catalog: inputCatalog,
     seedFactory,
     now = () => Date.now(),
     storage = defaultStorage(),
     persistKey = "nestory-v2"
   } = options;
 
-  let records: AnyRecord[] = loadRecords();
+  // Own an immutable catalog snapshot. Neither a caller nor a cached query may
+  // become a second, unledgered source of Place Graph truth.
+  const catalog = deepFreeze(structuredClone(inputCatalog));
+  const generatedBaselineRecords: AnyRecord[] = structuredClone(validatedLedgerRecords({
+    version: 2,
+    records: seedFactory ? seedFactory() : []
+  }, "Generated baseline"));
+  validateResetBaseline(generatedBaselineRecords, "Generated baseline");
+  validateLedgerSemantics(generatedBaselineRecords, catalog, []);
+  const loaded = loadLedger();
+  let baselineRecords: AnyRecord[] = loaded?.baselineRecords ?? generatedBaselineRecords;
+  let records: AnyRecord[] = loaded?.records ?? structuredClone(baselineRecords);
   let seq = records.length;
-  const listeners = new Set<(state: DerivedState) => void>();
+  let revision = 0;
+  const listeners = new Set<(state: ReadonlyDerivedState) => void>();
+  let publishing = false;
   let state: DerivedState = derive();
+  let exposedState: ReadonlyDerivedState = readonlyState(state);
+  let allocatedIds = collectAllocatedIds();
+  let stagedAllocatedIds: string[] | null = null;
+  let rebuildAllocatedIds = false;
+  let staging = false;
+  let belongingSearchIndex: BelongingSearchIndex | null = null;
+  const furnitureById = new Map(catalog.furniture.map((furniture) => [furniture.id, furniture]));
+  const belongingViewCache = new Map<string, BelongingView | null>();
+  const searchCache = new Map<string, ScoredBelongingView[]>();
+  const searchMatchCache = new Map<string, BelongingSearchMatch[]>();
+  const locateCache = new Map<string, LocateAnswer>();
+  const containerContentsCache = new Map<string, ContainerContentsView | null>();
+  let containersCache: ContainerView[] | null = null;
+  let attentionCache: AttentionSummary | null = null;
+  let activeItemsByContainerCache: Map<string, string[]> | null = null;
+  let temporalCacheObservedAt: number | null = null;
+  let temporalCacheExpiresAt = 0;
 
-  function seedRecords(): AnyRecord[] {
-    return seedFactory ? seedFactory() : [];
+  function clearQueryCaches(resetTemporal = true): void {
+    belongingViewCache.clear();
+    searchCache.clear();
+    searchMatchCache.clear();
+    locateCache.clear();
+    containerContentsCache.clear();
+    containersCache = null;
+    attentionCache = null;
+    activeItemsByContainerCache = null;
+    if (resetTemporal) {
+      temporalCacheObservedAt = null;
+      temporalCacheExpiresAt = 0;
+    }
   }
 
-  function loadRecords(): AnyRecord[] {
-    if (storage) {
-      try {
-        const raw = storage.getItem(persistKey);
-        if (raw) {
-          const parsed: unknown = JSON.parse(raw);
-          if (parsed && typeof parsed === "object" && Array.isArray((parsed as { records?: unknown }).records)) {
-            const stored = (parsed as { records: AnyRecord[] }).records;
-            if (stored.length) return stored;
-          }
-        }
-      } catch { /* fall through to seed */ }
+  function nextTemporalBoundary(current: number): number {
+    let next = Number.POSITIVE_INFINITY;
+    const consider = (iso: string | null | undefined): void => {
+      if (!iso) return;
+      const at = Date.parse(iso);
+      if (!Number.isFinite(at)) return;
+      const elapsed = Math.max(0, current - at);
+      next = Math.min(next, at + (Math.floor(elapsed / DAY) + 1) * DAY);
+    };
+    for (const slot of state.placements.values()) consider(slot.active?.at);
+    for (const container of state.containers.values()) consider(container.lastConfirmedAt);
+    return next;
+  }
+
+  function ensureTemporalCacheFresh(): void {
+    const current = now();
+    if (temporalCacheObservedAt === null || current < temporalCacheObservedAt || current >= temporalCacheExpiresAt) {
+      clearQueryCaches(false);
+      temporalCacheExpiresAt = nextTemporalBoundary(current);
     }
-    return seedRecords();
+    temporalCacheObservedAt = current;
+  }
+
+  function baselineFromDump(data: unknown, ledger: readonly AnyRecord[], source: string, fallback: readonly AnyRecord[]): AnyRecord[] {
+    if (data && typeof data === "object" && "baselineRecords" in data && (data as { baselineRecords?: unknown }).baselineRecords !== undefined) {
+      return structuredClone(validatedLedgerRecords(
+        { version: 2, records: (data as { baselineRecords: unknown }).baselineRecords },
+        `${source} baseline`
+      ));
+    }
+    if (generatedBaselineRecords.length > 0) {
+      const prefix = ledger.slice(0, generatedBaselineRecords.length);
+      const matchesSeedIdentity = prefix.length === generatedBaselineRecords.length
+        && prefix.every((record, index) => record.id === generatedBaselineRecords[index]?.id && record.recordType === generatedBaselineRecords[index]?.recordType);
+      if (matchesSeedIdentity) return structuredClone(prefix);
+    }
+    return structuredClone(Array.from(fallback));
+  }
+
+  function validateResetBaseline(baseline: readonly AnyRecord[], source: string): void {
+    const reset = baseline.find((record) => record.recordType === "commit" && record.ops.some((op) => op.type === "reset_to_seed"));
+    if (reset) throw new Error(`${source} cannot contain reset_to_seed; the baseline is already the immutable reset target.`);
+  }
+
+  function loadLedger(): { records: AnyRecord[]; baselineRecords: AnyRecord[] } | null {
+    if (storage) {
+      const raw = storage.getItem(persistKey);
+      if (raw !== null) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (error) {
+          throw new Error("Corrupt persisted home memory: invalid JSON", { cause: error });
+        }
+        try {
+          // JSON.parse already gives this Store an unaliased object graph. Keep
+          // validation, but avoid cloning a household-sized ledger a second
+          // time on the first-render critical path.
+          const stored = validatedLedgerRecords(parsed, "Corrupt persisted home memory");
+          const storedBaseline = baselineFromDump(parsed, stored, "Corrupt persisted home memory", generatedBaselineRecords);
+          validateResetBaseline(storedBaseline, "Corrupt persisted home memory baseline");
+          validateLedgerSemantics(storedBaseline, catalog, []);
+          validateLedgerSemantics(stored, catalog, storedBaseline);
+          return { records: stored, baselineRecords: storedBaseline };
+        } catch (error) {
+          if (error instanceof Error && /^Corrupt persisted home memory/.test(error.message)) throw error;
+          throw new Error(`Corrupt persisted home memory: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        }
+      }
+    }
+    return null;
+  }
+
+  function persistNow(): void {
+    if (!storage) return;
+    storage.setItem(persistKey, JSON.stringify({ version: 2, records, baselineRecords }));
   }
 
   function persist(): void {
-    if (!storage) return;
-    try { storage.setItem(persistKey, JSON.stringify({ version: 2, records })); } catch { /* quota/full: ignore */ }
+    if (staging) return;
+    persistNow();
+  }
+
+  function publish(nextState: DerivedState): void {
+    state = nextState;
+    exposedState = readonlyState(nextState);
+    if (rebuildAllocatedIds) {
+      allocatedIds = collectAllocatedIds();
+      rebuildAllocatedIds = false;
+    }
+    revision += 1;
+    belongingSearchIndex = null;
+    clearQueryCaches();
+    publishing = true;
+    try {
+      for (const fn of [...listeners]) {
+        try {
+          fn(exposedState);
+        } catch (error) {
+          console.error("Nestory Store subscriber failed", error);
+        }
+      }
+    } finally {
+      publishing = false;
+    }
   }
 
   function notify(): void {
-    state = derive();
-    for (const fn of listeners) fn(state);
+    if (staging) return;
+    publish(derive());
+  }
+
+  function transact<T>(command: () => T): T {
+    if (staging || publishing) {
+      throw new ReentrantStoreCommandError("Store commands cannot run during another command or inside a subscriber callback; schedule the command after the current transaction is delivered.");
+    }
+
+    const previousRecords = records;
+    const previousBaselineRecords = baselineRecords;
+    const previousSeq = seq;
+    const previousState = state;
+    const previousRebuildAllocatedIds = rebuildAllocatedIds;
+    records = [...records];
+    staging = true;
+    stagedAllocatedIds = [];
+    try {
+      const result = command();
+      // Keep command emitters and reload/import validation in lockstep without
+      // replaying the entire ledger on every household-scale write.
+      if (records.length > previousRecords.length) {
+        validatedLedgerRecords({ version: 2, records: records.slice(previousRecords.length) }, "Command output");
+      }
+      const nextState = derive();
+      persistNow();
+      staging = false;
+      publish(nextState);
+      stagedAllocatedIds = null;
+      return result;
+    } catch (error) {
+      for (const allocatedId of stagedAllocatedIds ?? []) allocatedIds.delete(allocatedId);
+      records = previousRecords;
+      baselineRecords = previousBaselineRecords;
+      seq = previousSeq;
+      state = previousState;
+      rebuildAllocatedIds = previousRebuildAllocatedIds;
+      throw error;
+    } finally {
+      staging = false;
+      stagedAllocatedIds = null;
+    }
+  }
+
+  function reserveId(candidate: string): void {
+    if (allocatedIds.has(candidate)) return;
+    allocatedIds.add(candidate);
+    stagedAllocatedIds?.push(candidate);
   }
 
   function id(prefix: string): string {
-    seq += 1;
-    return `${prefix}-${seq.toString(36)}-${Math.floor(Math.random() * 46655).toString(36)}`;
+    for (let attempt = 0; attempt < 1_024; attempt += 1) {
+      seq += 1;
+      const candidate = `${prefix}-${seq.toString(36)}-${Math.floor(Math.random() * 46655).toString(36)}`;
+      if (!allocatedIds.has(candidate)) {
+        reserveId(candidate);
+        return candidate;
+      }
+    }
+    throw new Error(`Could not allocate a unique ${prefix} id`);
+  }
+
+  function collectAllocatedIds(): Set<string> {
+    return new Set([
+      ...baselineRecords.map((record) => record.id),
+      ...records.map((record) => record.id),
+      ...state.rooms.keys(),
+      ...state.belongings.keys(),
+      ...state.containers.keys(),
+      ...state.operations.keys(),
+      ...catalog.furniture.map((furniture) => furniture.id)
+    ]);
   }
 
   function nowIso(): string { return new Date(now()).toISOString(); }
 
   function append<T extends AnyRecord>(record: T): T {
+    reserveId(record.id);
+    const ops = record.recordType === "commit" ? record.ops : record.recordType === "proposal" ? record.suggestedOps : [];
+    for (const op of ops) {
+      if (op.type === "create_room") reserveId(op.room.id);
+      else if (op.type === "create_container") reserveId(op.container.id);
+      else if (op.type === "create_belonging") reserveId(op.belonging.id);
+      else if (op.type === "create_operation") reserveId(op.operation.id);
+    }
     records.push(record);
     return record;
   }
@@ -102,6 +407,17 @@ export function createStore(options: StoreOptions): Store {
   // ---------------------------------------------------------------- derive
 
   function derive(): DerivedState {
+    let lastResetIndex = -1;
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+      const candidate = records[index];
+      if (candidate?.recordType === "commit" && candidate.ops.some((op) => op.type === "reset_to_seed")) {
+        lastResetIndex = index;
+        break;
+      }
+    }
+    const projectionRecords = lastResetIndex >= 0
+      ? [...baselineRecords, ...records.slice(lastResetIndex + 1)]
+      : records;
     const rooms = new Map<string, Room>();
     const belongings = new Map<string, BelongingEntity>();
     const containers = new Map<string, ContainerEntity>();
@@ -109,7 +425,7 @@ export function createStore(options: StoreOptions): Store {
     const observations: ObservationRecord[] = [];
     const proposalMap = new Map<string, ProposalView>();
     const operations = new Map<string, OperationData>();
-    const commits: CommitRecord[] = [];
+    const commits = records.filter((record): record is CommitRecord => record.recordType === "commit");
     const placements = new Map<string, PlacementSlot>();
     const states = new Map<string, { state: LifecycleState; at: string }>();
     const negatives = new Map<string, string>();
@@ -124,7 +440,7 @@ export function createStore(options: StoreOptions): Store {
       return slot;
     };
 
-    for (const rec of records) {
+    for (const rec of projectionRecords) {
       if (rec.recordType === "evidence") { evidence.set(rec.id, rec); continue; }
       if (rec.recordType === "observation") {
         observations.push(rec);
@@ -136,7 +452,6 @@ export function createStore(options: StoreOptions): Store {
         continue;
       }
 
-      commits.push(rec);
       for (const op of rec.ops) {
         switch (op.type) {
           case "create_belonging": {
@@ -270,9 +585,17 @@ export function createStore(options: StoreOptions): Store {
   // ------------------------------------------------------------- resolvers
 
   function roomOf(roomId: string): Room | null { return state.rooms.get(roomId) ?? null; }
-  function furnitureOf(furnitureId: string) { return catalog.furniture.find((f) => f.id === furnitureId) ?? null; }
+  function furnitureOf(furnitureId: string) { return furnitureById.get(furnitureId) ?? null; }
   function containerOf(containerId: string): ContainerEntity | null { return state.containers.get(containerId) ?? null; }
   function belongingOf(itemId: string): BelongingEntity | null { return state.belongings.get(itemId) ?? null; }
+
+  function requirePlace(ref: PlaceRef): void {
+    const exists = ref.type === "room" ? state.rooms.has(ref.id)
+      : ref.type === "furniture" ? furnitureById.has(ref.id)
+      : ref.type === "container" ? state.containers.has(ref.id)
+      : (LIFECYCLE_STATES as readonly string[]).includes(ref.id);
+    if (!exists) throw new DomainInputError(`Unknown Place Reference: ${ref.type}:${ref.id}`);
+  }
 
   function placeNode(ref: PlaceRef): PlaceNode | null {
     if (ref.type === "room") {
@@ -355,42 +678,243 @@ export function createStore(options: StoreOptions): Store {
     return Math.min(0.98, Math.max(0.05, Number(c.toFixed(2))));
   }
 
+  function addPosting(postings: Map<string, number[]>, key: string, ordinal: number): void {
+    const existing = postings.get(key);
+    if (existing) existing.push(ordinal);
+    else postings.set(key, [ordinal]);
+  }
+
+  function addShortGrams(postings: Map<string, number[]>, text: string, ordinal: number): void {
+    const grams = new Set<string>();
+    for (let width = 1; width <= Math.min(3, text.length); width += 1) {
+      for (let start = 0; start <= text.length - width; start += 1) {
+        grams.add(text.slice(start, start + width));
+      }
+    }
+    for (const gram of grams) addPosting(postings, gram, ordinal);
+  }
+
+  function buildBelongingSearchIndex(): BelongingSearchIndex {
+    const entries: BelongingSearchEntry[] = [];
+    const nameGrams = new Map<string, number[]>();
+    const kindOrdinals = new Map<string, number[]>();
+
+    for (const belonging of state.belongings.values()) {
+      if (belonging.mergedInto) continue;
+      const normalizedName = belonging.name.toLowerCase();
+      const ordinal = entries.length;
+      const nameTokens = normalizedName.split(/\s+/).filter(Boolean);
+      entries.push({ belonging, normalizedName, nameTokens, ordinal, nameRank: 0 });
+      addShortGrams(nameGrams, normalizedName, ordinal);
+      for (const kind of new Set(belonging.kinds)) addPosting(kindOrdinals, kind, ordinal);
+    }
+
+    const nameOrdered = [...entries].sort((a, b) =>
+      a.belonging.name.localeCompare(b.belonging.name) || a.ordinal - b.ordinal
+    );
+    nameOrdered.forEach((entry, nameRank) => { entry.nameRank = nameRank; });
+    const kinds = [...kindOrdinals].map(([kind, ordinals]) => ({ kind, phrase: kind.replace(/-/g, " "), ordinals }));
+    return {
+      entries,
+      nameGrams,
+      kinds,
+      scratch: {
+        generation: 0,
+        seen: new Uint32Array(entries.length),
+        overlaps: new Uint32Array(entries.length),
+        flags: new Uint8Array(entries.length),
+        touched: []
+      }
+    };
+  }
+
+  function currentBelongingSearchIndex(): BelongingSearchIndex {
+    belongingSearchIndex ??= buildBelongingSearchIndex();
+    return belongingSearchIndex;
+  }
+
+  function queryGramKeys(query: string): string[] {
+    const width = Math.min(3, query.length);
+    const keys = new Set<string>();
+    for (let start = 0; start <= query.length - width; start += 1) {
+      keys.add(query.slice(start, start + width));
+    }
+    return [...keys];
+  }
+
+  function rarestGramPosting(query: string, postings: Map<string, number[]>): number[] | null {
+    let rarest: number[] | null = null;
+    for (const key of queryGramKeys(query)) {
+      const posting = postings.get(key);
+      if (!posting) return null;
+      if (!rarest || posting.length < rarest.length) rarest = posting;
+    }
+    return rarest;
+  }
+
+  /**
+   * Produces the exact legacy match scores without walking every belonging's
+   * strings. The postings are only candidate generators; the precedence is
+   * intentionally identical to matchScore: exact, substring, all-token,
+   * kind, then partial token overlap.
+   */
+  function indexedBelongingMatches(query: string, limit: number | null = null): BelongingSearchMatch[] {
+    const index = currentBelongingSearchIndex();
+    if (!query) {
+      const all = index.entries.map((entry) => ({ entry, score: 1 }));
+      if (limit === null) return all;
+      return all.sort(compareBelongingMatches).slice(0, limit);
+    }
+
+    const { scratch } = index;
+    scratch.generation += 1;
+    if (scratch.generation >= 0xffff_ffff) {
+      scratch.seen.fill(0);
+      scratch.generation = 1;
+    }
+    const generation = scratch.generation;
+    const { overlaps, flags, seen, touched } = scratch;
+    touched.length = 0;
+    const touch = (ordinal: number): void => {
+      if (seen[ordinal] === generation) return;
+      seen[ordinal] = generation;
+      overlaps[ordinal] = 0;
+      flags[ordinal] = 0;
+      touched.push(ordinal);
+    };
+
+    // A string containing the query contains every 1/2/3-gram. The rarest
+    // posting is therefore a complete candidate set, then includes() removes
+    // gram collisions without changing semantics.
+    const substringPosting = rarestGramPosting(query, index.nameGrams);
+    for (const ordinal of substringPosting ?? []) {
+      if (!index.entries[ordinal]?.normalizedName.includes(query)) continue;
+      touch(ordinal);
+      flags[ordinal] = (flags[ordinal] ?? 0) | 1;
+    }
+
+    const queryTokens = query.split(/\s+/).filter(Boolean);
+    for (const token of queryTokens) {
+      for (const ordinal of rarestGramPosting(token, index.nameGrams) ?? []) {
+        const entry = index.entries[ordinal];
+        if (!entry?.nameTokens.some((nameToken) => nameToken.startsWith(token))) continue;
+        touch(ordinal);
+        overlaps[ordinal] = (overlaps[ordinal] ?? 0) + 1;
+      }
+    }
+
+    const markKind = (ordinal: number): void => {
+      touch(ordinal);
+      flags[ordinal] = (flags[ordinal] ?? 0) | 2;
+    };
+    const kindNeedle = query.replace(/\s+/g, "-");
+    // Kinds are a small shared taxonomy in ordinary homes. A direct pass is
+    // cheaper and far more memory-stable than building a second gram index for
+    // adversarially high-cardinality user tags; this preserves both legacy
+    // `kind includes query` and `query includes kind phrase` semantics.
+    for (const { kind, phrase, ordinals } of index.kinds) {
+      if (!kind.includes(kindNeedle) && !query.includes(phrase)) continue;
+      for (const ordinal of ordinals) markKind(ordinal);
+    }
+
+    const matches: BelongingSearchMatch[] = [];
+    for (const ordinal of touched) {
+      const entry = index.entries[ordinal] as BelongingSearchEntry;
+      const overlap = overlaps[ordinal] ?? 0;
+      const flag = flags[ordinal] ?? 0;
+      let score = 0;
+      if ((flag & 1) !== 0) score = entry.normalizedName === query ? 100 : 80;
+      else if (overlap > 0 && overlap === queryTokens.length) score = 70;
+      else if ((flag & 2) !== 0) score = 55;
+      else if (overlap > 0) score = 30 + overlap;
+      if (score <= 0) continue;
+      if (limit !== null && matches.length >= limit) {
+        const last = matches[matches.length - 1] as BelongingSearchMatch;
+        if (score < last.score || (score === last.score && entry.nameRank >= last.entry.nameRank)) continue;
+      }
+      const match = { entry, score };
+      if (limit === null) {
+        matches.push(match);
+        continue;
+      }
+      let position = 0;
+      while (position < matches.length && compareBelongingMatches(match, matches[position] as BelongingSearchMatch) >= 0) position += 1;
+      if (position >= limit) continue;
+      matches.splice(position, 0, match);
+      if (matches.length > limit) matches.pop();
+    }
+    return matches;
+  }
+
+  function compareBelongingMatches(a: BelongingSearchMatch, b: BelongingSearchMatch): number {
+    return b.score - a.score || a.entry.nameRank - b.entry.nameRank;
+  }
+
+  function scoredView(match: BelongingSearchMatch): ScoredBelongingView | null {
+    const view = belongingView(match.entry.belonging.id);
+    return view ? { ...view, score: match.score } : null;
+  }
+
+  function rankedBelongingMatches(query: string): BelongingSearchMatch[] {
+    const cached = lruGet(searchMatchCache, query);
+    if (cached) return cached;
+    const matches = indexedBelongingMatches(query).sort(compareBelongingMatches);
+    lruSet(searchMatchCache, query, matches, SEARCH_MATCH_CACHE_LIMIT);
+    return matches;
+  }
+
+  function searchBelongingsTop(query: string, limit: number): ScoredBelongingView[] {
+    ensureTemporalCacheFresh();
+    const q = query.trim().toLowerCase();
+    const top = indexedBelongingMatches(q, limit);
+    return deepFreeze(top.map(scoredView).filter((view): view is ScoredBelongingView => !!view));
+  }
+
   // ------------------------------------------------------------------ read
 
   function searchBelongings(query = ""): ScoredBelongingView[] {
+    ensureTemporalCacheFresh();
     const q = query.trim().toLowerCase();
-    const rows: ScoredBelongingView[] = [];
-    for (const b of state.belongings.values()) {
-      if (b.mergedInto) continue;
-      const score = q ? matchScore(b, q) : 1;
-      if (q && score <= 0) continue;
-      const view = belongingView(b.id);
-      if (view) rows.push({ ...view, score });
-    }
-    rows.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-    return rows;
+    const cacheKey = q;
+    const cached = lruGet(searchCache, cacheKey);
+    if (cached) return cached;
+    const rows = rankedBelongingMatches(q)
+      .map(scoredView)
+      .filter((view): view is ScoredBelongingView => !!view);
+    const frozenRows = deepFreeze(rows);
+    lruSet(searchCache, cacheKey, frozenRows, SEARCH_CACHE_LIMIT);
+    return frozenRows;
   }
 
-  function matchScore(b: BelongingEntity, q: string): number {
-    const name = b.name.toLowerCase();
-    if (name === q) return 100;
-    if (name.includes(q)) return 80;
-    const qTokens = q.split(/\s+/).filter(Boolean);
-    const nameTokens = name.split(/\s+/);
-    const overlap = qTokens.filter((t) => nameTokens.some((n) => n.startsWith(t))).length;
-    if (overlap && overlap === qTokens.length) return 70;
-    if (b.kinds.some((k) => k.includes(q.replace(/\s+/g, "-")) || q.includes(k.replace(/-/g, " ")))) return 55;
-    if (overlap) return 30 + overlap;
-    return 0;
+  function searchBelongingsPage(query: string, offset: number, limit: number): BelongingSearchPage {
+    ensureTemporalCacheFresh();
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new DomainInputError("Search offset must be a non-negative integer");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new DomainInputError("Search limit must be an integer from 1 to 200");
+    const q = query.trim().toLowerCase();
+    const cached = lruGet(searchCache, q);
+    if (cached) {
+      return deepFreeze({ items: cached.slice(offset, offset + limit), offset, limit, total: cached.length });
+    }
+    // Rank every match to preserve the established search order, but only
+    // materialize the requested Belonging views. Broad HTTP searches therefore
+    // avoid allocating evidence/history projections for thousands of rows.
+    const matches = rankedBelongingMatches(q);
+    const items = matches.slice(offset, offset + limit)
+      .map(scoredView)
+      .filter((view): view is ScoredBelongingView => !!view);
+    return deepFreeze({ items, offset, limit, total: matches.length });
   }
 
   function belongingView(itemId: string): BelongingView | null {
+    ensureTemporalCacheFresh();
+    const cacheKey = itemId;
+    if (belongingViewCache.has(cacheKey)) return belongingViewCache.get(cacheKey) ?? null;
     const b = belongingOf(itemId);
     if (!b) return null;
     const slot = state.placements.get(itemId) ?? { active: null, history: [] };
     const active = slot.active;
     const chain = active ? chainFor(active.placeRef) : [];
-    return {
+    const view: BelongingView = {
       id: b.id,
       name: b.name,
       kinds: b.kinds,
@@ -411,15 +935,28 @@ export function createStore(options: StoreOptions): Store {
       ...(b.dimensions ? { dimensions: b.dimensions } : {}),
       ...(b.source ? { source: b.source } : {})
     };
+    const frozenView = deepFreeze(view);
+    belongingViewCache.set(cacheKey, frozenView);
+    return frozenView;
   }
 
   function locate(query: string): LocateAnswer {
-    const matches = searchBelongings(query);
+    ensureTemporalCacheFresh();
+    const cacheKey = query;
+    const cached = lruGet(locateCache, cacheKey);
+    if (cached) return cached;
+    const matches = searchBelongingsTop(query, 4);
     const best = matches[0];
     if (!best) {
-      return { ok: false, query, sentence: `I have no memory of “${query}”. Add it as a belonging or run a container snapshot.`, nextAction: "add_belonging" };
+      const answer: LocateAnswer = { ok: false, query, sentence: `I have no memory of “${query}”. Add it as a belonging or run a container snapshot.`, nextAction: "add_belonging" };
+      const frozenAnswer = deepFreeze(answer);
+      lruSet(locateCache, cacheKey, frozenAnswer, LOCATE_CACHE_LIMIT);
+      return frozenAnswer;
     }
-    return locateById(best.id, { query, alternates: matches.slice(1, 4) });
+    const answer = locateById(best.id, { query, alternates: matches.slice(1, 4) });
+    const frozenAnswer = deepFreeze(answer);
+    lruSet(locateCache, cacheKey, frozenAnswer, LOCATE_CACHE_LIMIT);
+    return frozenAnswer;
   }
 
   function locateById(itemId: string, ctx: { query?: string | null; alternates?: ScoredBelongingView[] } = {}): LocateAnswer {
@@ -452,13 +989,13 @@ export function createStore(options: StoreOptions): Store {
       planPin: view.placement ? planPinFor(view.placement.placeRef) : null,
       nextAction: "mark_not_there"
     };
-    return {
+    return deepFreeze({
       ...draft,
       sentence: buildSentence(draft, view),
       hint: view.placement
         ? "If it is not there, mark “not there” and I will open a correction."
         : "Record a placement or run a container snapshot to teach me."
-    };
+    });
   }
 
   function buildSentence(answer: Omit<LocateSuccess, "sentence" | "hint">, view: BelongingView): string {
@@ -483,23 +1020,33 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function containerContents(containerId: string): ContainerContentsView | null {
+    ensureTemporalCacheFresh();
+    const cacheKey = containerId;
+    if (containerContentsCache.has(cacheKey)) return containerContentsCache.get(cacheKey) ?? null;
     const c = containerOf(containerId);
     if (!c) return null;
     const items: BelongingView[] = [];
-    for (const [itemId, slot] of state.placements) {
-      if (!slot.active) continue;
+    activeItemsByContainerCache ??= (() => {
+      const index = new Map<string, string[]>();
+      for (const [itemId, slot] of state.placements) {
+        if (slot.active?.placeRef.type !== "container") continue;
+        const current = index.get(slot.active.placeRef.id) ?? [];
+        current.push(itemId);
+        index.set(slot.active.placeRef.id, current);
+      }
+      return index;
+    })();
+    for (const itemId of activeItemsByContainerCache.get(containerId) ?? []) {
       const b = belongingOf(itemId);
       if (!b || b.mergedInto) continue;
-      if (slot.active.placeRef.type === "container" && slot.active.placeRef.id === containerId) {
-        const view = belongingView(itemId);
-        if (view) items.push(view);
-      }
+      const view = belongingView(itemId);
+      if (view) items.push(view);
     }
     items.sort((a, b) => IMPORTANCE_SCORE[b.importance] - IMPORTANCE_SCORE[a.importance] || a.name.localeCompare(b.name));
     const lastConfirmedAt = c.lastConfirmedAt;
     const staleDays = lastConfirmedAt ? daysAgo(lastConfirmedAt) : null;
     const stale = staleDays === null || staleDays > 30;
-    return {
+    const contents: ContainerContentsView = {
       container: c,
       items,
       lastConfirmedAt,
@@ -509,16 +1056,22 @@ export function createStore(options: StoreOptions): Store {
         ? "Not confirmed recently — there may be unrecorded things inside. Unknown is not empty."
         : null
     };
+    const frozenContents = deepFreeze(contents);
+    containerContentsCache.set(cacheKey, frozenContents);
+    return frozenContents;
   }
 
   function containersView(): ContainerView[] {
+    ensureTemporalCacheFresh();
+    if (containersCache) return containersCache;
     const views: ContainerView[] = [];
     for (const c of state.containers.values()) {
       const contents = containerContents(c.id);
       if (!contents) continue;
       views.push({ ...c, itemCount: contents.items.length, stale: contents.stale, daysSinceConfirmed: contents.daysSinceConfirmed });
     }
-    return views;
+    containersCache = deepFreeze(views);
+    return containersCache;
   }
 
   function staleContainers(): ContainerView[] {
@@ -546,13 +1099,16 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function attention(): AttentionSummary {
+    ensureTemporalCacheFresh();
+    if (attentionCache) return attentionCache;
     const all = searchBelongings("");
-    return {
+    attentionCache = deepFreeze({
       staleContainers: staleContainers(),
       uncertainItems: all.filter((v) => v.placement && (v.confidence < 0.45 || (v.daysSinceUpdate ?? 0) > 30)),
       missingItems: all.filter((v) => v.state === "missing"),
       pendingProposals: state.proposals.filter((p) => p.status === "pending").length
-    };
+    });
+    return attentionCache;
   }
 
   // PRD §8 activation metric, derived live from the graph.
@@ -666,12 +1222,24 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function commitsView(limit: number | null = null): CommitRecord[] {
-    const list = [...state.commits].reverse();
-    return limit ? list.slice(0, limit) : list;
+    if (limit === null || limit === 0) return [...state.commits].reverse();
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError("Commit view limit must be a positive integer, null, or zero.");
+    const start = Math.max(0, state.commits.length - limit);
+    return state.commits.slice(start).reverse();
   }
 
   function exportJson(): ExportDump {
-    return { version: 2, exportedAt: nowIso(), records: [...records] };
+    // Export is a mutable transfer object by contract, never an alias into the
+    // append-only in-memory ledger.
+    return structuredClone({ version: 2, exportedAt: nowIso(), records, baselineRecords });
+  }
+
+  function exportJsonText(options: { pretty?: boolean } = {}): string {
+    return JSON.stringify(
+      { version: 2, exportedAt: nowIso(), records, baselineRecords },
+      null,
+      options.pretty ? 2 : undefined
+    );
   }
 
   // ----------------------------------------------------------------- write
@@ -700,19 +1268,18 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function createRoom(input: CreateRoomInput): string {
-    const name = input.name?.trim();
-    if (!name) throw new Error("Room needs a name.");
-    const roomId = slugId("room", name, (candidate) => state.rooms.has(candidate));
+    const name = boundedInput(input.name, "Room name", 100);
+    const roomId = slugId("room", name, (candidate) => state.rooms.has(candidate) || allocatedIds.has(candidate));
     const room: Room = { id: roomId, name, plan: input.plan ?? nextRoomSlot() };
     appendCommit({ summary: `Add room: ${name}`, ops: [{ type: "create_room", room }] });
     return roomId;
   }
 
   function createContainer(input: CreateContainerInput): string {
-    const name = input.name?.trim();
-    if (!name) throw new Error("Container needs a name.");
-    if (!state.rooms.has(input.roomId)) throw new Error("Unknown room — create the room first.");
-    const containerId = slugId("container", name, (candidate) => state.containers.has(candidate));
+    const name = boundedInput(input.name, "Container name", 120);
+    if (!CONTAINER_KIND_VALUES.has(input.kind)) throw new DomainInputError("Unknown container kind.");
+    if (!state.rooms.has(input.roomId)) throw new DomainInputError("Unknown room — create the room first.");
+    const containerId = slugId("container", name, (candidate) => state.containers.has(candidate) || allocatedIds.has(candidate));
     appendCommit({
       summary: `Add container: ${name}`,
       ops: [{
@@ -724,8 +1291,12 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function createBelonging(input: CreateBelongingInput): string {
-    const name = input.name?.trim();
-    if (!name) throw new Error("Belonging needs a name.");
+    const name = boundedInput(input.name, "Belonging name", 200);
+    const kinds = input.kinds ?? [];
+    if (kinds.length > 32) throw new DomainInputError("Belonging kinds must contain at most 32 values.");
+    if (kinds.some((kind) => !kind.trim() || kind.length > 64)) throw new DomainInputError("Each belonging kind must be 1-64 characters.");
+    requirePlace(input.defaultHome);
+    if (input.currentPlace) requirePlace(input.currentPlace);
     const itemId = id("item");
     const ev = appendEvidence("user_confirmation", `Created belonging ${name}`);
     const ops: CommitOp[] = [{
@@ -733,7 +1304,7 @@ export function createStore(options: StoreOptions): Store {
       belonging: {
         id: itemId,
         name,
-        kinds: input.kinds ?? [],
+        kinds,
         importance: input.importance ?? "normal",
         defaultHome: input.defaultHome,
         ...(input.dimensions ? { dimensions: input.dimensions } : {}),
@@ -749,7 +1320,8 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function setItemState(itemId: string, lifecycle: LifecycleState): void {
-    if (!LIFECYCLE_STATES.includes(lifecycle)) throw new Error(`Unknown state ${lifecycle}`);
+    if (!LIFECYCLE_STATES.includes(lifecycle)) throw new DomainInputError(`Unknown state ${lifecycle}`);
+    if (!belongingOf(itemId)) throw new DomainInputError("Unknown belonging");
     appendCommit({
       summary: `Set ${belongingOf(itemId)?.name ?? itemId} state: ${lifecycle}`,
       ops: [{ type: "set_state", itemId, state: lifecycle }]
@@ -759,7 +1331,8 @@ export function createStore(options: StoreOptions): Store {
   // Direct trusted correction: the user explicitly places the item.
   function correctPlacement(itemId: string, placeRef: PlaceRef, opts: { relation?: Relation; note?: string | null } = {}): CommitRecord {
     const b = belongingOf(itemId);
-    if (!b) throw new Error("Unknown belonging");
+    if (!b) throw new DomainInputError("Unknown belonging");
+    requirePlace(placeRef);
     const ev = appendEvidence("user_confirmation", opts.note ?? `You placed ${b.name} here`);
     const ops: CommitOp[] = [];
     if (state.placements.get(itemId)?.active) {
@@ -775,7 +1348,7 @@ export function createStore(options: StoreOptions): Store {
 
   function markNotThere(itemId: string): { observationId: string; proposalId: string } {
     const b = belongingOf(itemId);
-    if (!b) throw new Error("Unknown belonging");
+    if (!b) throw new DomainInputError("Unknown belonging");
     const obs = append<ObservationRecord>({ recordType: "observation", id: id("obs"), type: "not_there_report", at: nowIso(), itemId });
     appendEvidence("negative_report", `You reported ${b.name} was not at its recorded place`);
     const proposal = append<ProposalRecord>({
@@ -795,25 +1368,29 @@ export function createStore(options: StoreOptions): Store {
 
   function snapshotContainer(containerId: string, seenText: string, photo: PhotoMedia | null = null): string {
     const c = containerOf(containerId);
-    if (!c) throw new Error("Unknown container");
+    if (!c) throw new DomainInputError("Unknown container");
+    const normalizedSeenText = boundedInput(seenText, "Snapshot text", 4_000);
+    const tokens = [...new Set(normalizedSeenText.split(/[,;]+/).map((token) => token.trim().toLowerCase()).filter(Boolean))];
+    if (tokens.length > 100) throw new DomainInputError("Snapshot text must contain at most 100 distinct labels.");
     const obs = append<ObservationRecord>({
       recordType: "observation", id: id("obs"), type: "container_snapshot", at: nowIso(),
-      containerId, ...(photo ? { photo } : {}), payload: { seenText }
+      containerId, ...(photo ? { photo } : {}), payload: { seenText: normalizedSeenText }
     });
     // Photo is evidence, never recognition: it rides along with the snapshot
     // and gets cited by any placement the user later accepts from it.
     const snapshotEvidence = append<EvidenceRecord>({
       recordType: "evidence", id: id("ev"),
       kind: photo ? "photo_note" : "snapshot_text",
-      summary: `Snapshot of ${c.name}: ${seenText}`,
+      summary: `Snapshot of ${c.name}: ${normalizedSeenText}`,
       at: nowIso(),
       ...(photo ? { media: photo } : {})
     });
-    const tokens = seenText.split(/[,;]+/).map((t) => t.trim().toLowerCase()).filter(Boolean);
     const moves: CommitOp[] = [];
+    const matchedItems = new Set<string>();
     for (const token of tokens) {
-      const match = searchBelongings(token)[0];
-      if (!match || match.score < 55) continue;
+      const match = searchBelongingsTop(token, 1)[0];
+      if (!match || match.score < 55 || matchedItems.has(match.id)) continue;
+      matchedItems.add(match.id);
       const already = match.placement?.placeRef.type === "container" && match.placement.placeRef.id === containerId;
       if (!already) {
         moves.push(
@@ -835,41 +1412,75 @@ export function createStore(options: StoreOptions): Store {
     return proposal.id;
   }
 
-  function acceptProposal(proposalId: string, extra: { placeRef?: PlaceRef } = {}): CommitRecord {
+  function acceptProposal(
+    proposalId: string,
+    extra: { placeRef?: PlaceRef; placementOverrides?: Record<string, PlaceRef>; mergeKeepId?: string } = {}
+  ): CommitRecord {
     const p = state.proposals.find((x) => x.id === proposalId && x.status === "pending");
-    if (!p) throw new Error("No pending proposal with that id");
+    if (!p) throw new DomainInputError("No pending proposal with that id");
+    const changesExistingRecord = p.suggestedOps.some((op) => op.type === "contradict_placement" || op.type === "merge_belongings");
+    const hasInspectableSource = p.sourceObservationIds.some((observationId) => state.observations.some((observation) => observation.id === observationId));
+    if (changesExistingRecord && !hasInspectableSource) {
+      throw new DomainInputError("This proposal changes an existing record but has no inspectable source observation.");
+    }
     const ops: CommitOp[] = [];
+    let corrected = false;
     for (const op of p.suggestedOps) {
-      if (op.type === "create_placement" && !op.placeRef) {
-        if (!extra.placeRef) throw new Error("This correction needs a target place (extra.placeRef).");
-        ops.push({ ...op, placeRef: extra.placeRef });
+      if (op.type === "create_placement") {
+        const override = extra.placementOverrides?.[op.itemId] ?? extra.placeRef;
+        const placeRef = override ?? op.placeRef;
+        if (!placeRef) throw new DomainInputError("This correction needs a target place (extra.placeRef).");
+        requirePlace(placeRef);
+        corrected ||= !!override && (!op.placeRef || op.placeRef.type !== override.type || op.placeRef.id !== override.id);
+        ops.push({ ...op, placeRef });
+      } else if (op.type === "merge_belongings" && extra.mergeKeepId) {
+        const candidates = [op.keepId, op.mergeId];
+        if (!candidates.includes(extra.mergeKeepId)) throw new DomainInputError("The survivor must be one of the proposed duplicate records.");
+        const mergeId = candidates.find((id) => id !== extra.mergeKeepId);
+        if (!mergeId) throw new DomainInputError("The duplicate proposal needs two distinct records.");
+        corrected ||= extra.mergeKeepId !== op.keepId;
+        ops.push({ ...op, keepId: extra.mergeKeepId, mergeId });
       } else {
         ops.push({ ...op });
       }
     }
-    const ev = appendEvidence(p.type === "placement_correction" ? "correction" : "user_confirmation", `Accepted proposal: ${p.summary}`);
+    const ev = appendEvidence(
+      p.type === "placement_correction" ? "correction" : "user_confirmation",
+      `${corrected ? "Accepted corrected proposal" : "Accepted proposal"}: ${p.summary}`
+    );
     for (const op of ops) {
       if (op.type === "create_placement") op.evidenceIds = [...(op.evidenceIds ?? []), ev.id];
     }
     if (p.type === "duplicate_merge") {
-      const mergeOp = p.suggestedOps.find((o): o is Extract<CommitOp, { type: "merge_belongings" }> => o.type === "merge_belongings");
+      const mergeOp = ops.find((o): o is Extract<CommitOp, { type: "merge_belongings" }> => o.type === "merge_belongings");
       if (mergeOp && state.placements.get(mergeOp.mergeId)?.active) {
         ops.push({ type: "contradict_placement", itemId: mergeOp.mergeId, reason: "merged_duplicate" });
       }
     }
     ops.push({ type: "accept_proposal", proposalId });
-    return appendCommit({ summary: `Accept: ${p.summary}`, ops, sourceProposalId: proposalId, sourceObservationIds: p.sourceObservationIds });
+    const commit = appendCommit({ summary: `${corrected ? "Accept with correction" : "Accept"}: ${p.summary}`, ops, sourceProposalId: proposalId, sourceObservationIds: p.sourceObservationIds });
+    try {
+      // Proposals are long-lived drafts. Re-run the complete semantic fold only
+      // at this low-frequency decision boundary so a once-valid suggestion
+      // cannot overwrite an entity or reference that changed in the meantime.
+      validateLedgerSemantics(records, catalog, baselineRecords);
+    } catch (error) {
+      throw new DomainInputError(`Proposal no longer applies cleanly: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+    return commit;
   }
 
   function rejectProposal(proposalId: string, reason = "rejected by user"): CommitRecord {
     const p = state.proposals.find((x) => x.id === proposalId && x.status === "pending");
-    if (!p) throw new Error("No pending proposal with that id");
-    return appendCommit({ summary: `Reject: ${p.summary}`, ops: [{ type: "reject_proposal", proposalId, reason }], sourceProposalId: proposalId });
+    if (!p) throw new DomainInputError("No pending proposal with that id");
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw new DomainInputError("Proposal rejection reason must not be empty");
+    return appendCommit({ summary: `Reject: ${p.summary}`, ops: [{ type: "reject_proposal", proposalId, reason: normalizedReason }], sourceProposalId: proposalId });
   }
 
   function confirmContainer(containerId: string): CommitRecord {
     const c = containerOf(containerId);
-    if (!c) throw new Error("Unknown container");
+    if (!c) throw new DomainInputError("Unknown container");
     appendEvidence("user_confirmation", `Confirmed contents of ${c.name}`);
     return appendCommit({ summary: `Confirm container: ${c.name}`, ops: [{ type: "confirm_container", containerId }] });
   }
@@ -878,7 +1489,7 @@ export function createStore(options: StoreOptions): Store {
 
   function startOperation(templateId: string): string {
     const template = catalog.operationTemplates.find((t) => t.id === templateId);
-    if (!template) throw new Error("Unknown operation template");
+    if (!template) throw new DomainInputError("Unknown operation template");
     const opId = id("op");
     if (template.type === "move") {
       appendCommit({
@@ -946,7 +1557,10 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function setRowStatus(opId: string, rowId: string, status: RowStatus, note?: string | null): CommitRecord {
-    if (!ROW_STATUSES.includes(status)) throw new Error(`Unknown row status ${status}`);
+    if (!ROW_STATUSES.includes(status)) throw new DomainInputError(`Unknown row status ${status}`);
+    const operation = state.operations.get(opId);
+    if (!operation || operation.type !== "kit") throw new DomainInputError("Unknown kit operation");
+    if (!(operation.rows ?? []).some((row) => row.id === rowId)) throw new DomainInputError("Unknown kit row");
     const op: CommitOp = note !== undefined
       ? { type: "set_op_row_status", opId, rowId, status, note }
       : { type: "set_op_row_status", opId, rowId, status };
@@ -954,14 +1568,19 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function setOperationStatus(opId: string, status: OperationStatus): CommitRecord {
+    if (!OPERATION_STATUSES.has(status)) throw new DomainInputError(`Unknown operation status ${status}`);
+    if (!state.operations.has(opId)) throw new DomainInputError("Unknown operation");
     return appendCommit({ summary: `Operation ${opId}: ${status}`, ops: [{ type: "set_op_status", opId, status }] });
   }
 
   function createBox(input: CreateBoxInput): string {
-    const label = input.label?.trim();
-    if (!label) throw new Error("Box needs a label.");
+    const label = boundedInput(input.label, "Box label", 100);
+    const destination = input.destination?.trim()
+      ? boundedInput(input.destination, "Box destination", 200)
+      : "New home";
     const roomId = input.roomId ?? state.rooms.keys().next().value;
-    if (!roomId || !state.rooms.has(roomId)) throw new Error("Create a room first — boxes live in rooms.");
+    if (!roomId || !state.rooms.has(roomId)) throw new DomainInputError("Create a room first — boxes live in rooms.");
+    if (input.operationId && !state.operations.has(input.operationId)) throw new DomainInputError("Unknown operation");
     const boxId = id("box");
     appendCommit({
       summary: `Create box: ${label}`,
@@ -972,7 +1591,7 @@ export function createStore(options: StoreOptions): Store {
           name: `Box · ${label}`,
           kind: "box",
           parent: { type: "room", id: roomId },
-          box: { label, destination: input.destination || "New home", operationId: input.operationId ?? null }
+          box: { label, destination, operationId: input.operationId ?? null }
         }
       }]
     });
@@ -982,7 +1601,7 @@ export function createStore(options: StoreOptions): Store {
   function assignToBox(itemId: string, boxId: string): CommitRecord {
     const b = belongingOf(itemId);
     const box = containerOf(boxId);
-    if (!b || !box || box.kind !== "box") throw new Error("Need a belonging and a box");
+    if (!b || !box || box.kind !== "box") throw new DomainInputError("Need a belonging and a box");
     const ev = appendEvidence("user_confirmation", `Packed ${b.name} into ${box.name}`);
     const ops: CommitOp[] = [];
     if (state.placements.get(itemId)?.active) {
@@ -995,17 +1614,21 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function setBoxStatus(boxId: string, status: BoxStatus): CommitRecord {
-    if (!BOX_STATUSES.includes(status)) throw new Error(`Unknown box status ${status}`);
+    if (!BOX_STATUSES.includes(status)) throw new DomainInputError(`Unknown box status ${status}`);
     const box = containerOf(boxId);
-    if (!box) throw new Error("Unknown box");
+    if (!box || box.kind !== "box") throw new DomainInputError("Unknown box");
     return appendCommit({ summary: `${box.name}: ${status}`, ops: [{ type: "set_box_status", boxId, status }] });
   }
 
   function unpackItem(itemId: string, placeRef: PlaceRef | null = null): CommitRecord {
     const b = belongingOf(itemId);
-    if (!b) throw new Error("Unknown belonging");
+    if (!b) throw new DomainInputError("Unknown belonging");
     const target = placeRef ?? b.defaultHome;
-    const fromBoxId = state.placements.get(itemId)?.active?.placeRef.id ?? null;
+    requirePlace(target);
+    const activePlace = state.placements.get(itemId)?.active?.placeRef ?? null;
+    const fromBoxId = activePlace?.type === "container" && state.containers.get(activePlace.id)?.kind === "box"
+      ? activePlace.id
+      : null;
     const ev = appendEvidence("user_confirmation", `Unpacked ${b.name} to ${chainText(chainFor(target))}`);
     const ops: CommitOp[] = [
       { type: "contradict_placement", itemId, reason: "unpacked", evidenceIds: [ev.id] },
@@ -1020,19 +1643,31 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function reset(): void {
-    records = seedRecords();
-    seq = records.length;
     append<CommitRecord>({ recordType: "commit", id: id("commit"), at: nowIso(), summary: "Reset home memory to seed", ops: [{ type: "reset_to_seed" }] });
     persist();
     notify();
   }
 
-  function importJson(data: unknown): void {
-    if (!data || typeof data !== "object" || !Array.isArray((data as { records?: unknown }).records)) {
-      throw new Error("Import needs { records: [...] }");
+  function importJson(data: unknown, expectedRevision?: number): void {
+    if (expectedRevision !== undefined && expectedRevision !== revision) {
+      throw new StoreConflictError("Import conflict: home memory changed while the file was being read.");
     }
-    records = (data as { records: AnyRecord[] }).records;
+    let imported: AnyRecord[];
+    let importedBaseline: AnyRecord[];
+    try {
+      imported = structuredClone(validatedLedgerRecords(data, "Import"));
+      importedBaseline = baselineFromDump(data, imported, "Import", baselineRecords);
+      validateResetBaseline(importedBaseline, "Import baseline");
+      validateLedgerSemantics(importedBaseline, catalog, []);
+      validateLedgerSemantics(imported, catalog, importedBaseline);
+    } catch (error) {
+      if (error instanceof DomainInputError) throw error;
+      throw new DomainInputError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    records = imported;
+    baselineRecords = importedBaseline;
     seq = records.length;
+    rebuildAllocatedIds = true;
     persist();
     notify();
   }
@@ -1040,22 +1675,37 @@ export function createStore(options: StoreOptions): Store {
   // ------------------------------------------------------------------- api
 
   const api: Store = {
-    get state() { return state; },
+    get state() { return exposedState; },
     catalog,
+    get recordCount() { return records.length; },
+    get revision() { return revision; },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     // read
-    searchBelongings, belongingView, locate, locateById,
+    searchBelongings, searchBelongingsPage, belongingView, locate, locateById,
     containerContents, containersView, staleContainers, whichContainerHas,
     attention, activation, operationsView, operationView, retrievalPlan, unpackPriority,
-    proposals, commitsView, exportJson, planPinFor, chainFor, chainText,
+    proposals, commitsView, exportJson, exportJsonText, planPinFor, chainFor, chainText,
     lifecycleOf,
     // write
-    createRoom, createContainer,
-    createBelonging, setItemState, correctPlacement, markNotThere,
-    snapshotContainer, acceptProposal, rejectProposal, confirmContainer,
-    startOperation, setRowStatus, setOperationStatus,
-    createBox, assignToBox, setBoxStatus, unpackItem,
-    reset, importJson
+    createRoom: (input) => transact(() => createRoom(input)),
+    createContainer: (input) => transact(() => createContainer(input)),
+    createBelonging: (input) => transact(() => createBelonging(input)),
+    setItemState: (itemId, lifecycle) => transact(() => setItemState(itemId, lifecycle)),
+    correctPlacement: (itemId, placeRef, opts) => transact(() => correctPlacement(itemId, placeRef, opts)),
+    markNotThere: (itemId) => transact(() => markNotThere(itemId)),
+    snapshotContainer: (containerId, seenText, photo) => transact(() => snapshotContainer(containerId, seenText, photo)),
+    acceptProposal: (proposalId, extra) => transact(() => acceptProposal(proposalId, extra)),
+    rejectProposal: (proposalId, reason) => transact(() => rejectProposal(proposalId, reason)),
+    confirmContainer: (containerId) => transact(() => confirmContainer(containerId)),
+    startOperation: (templateId) => transact(() => startOperation(templateId)),
+    setRowStatus: (opId, rowId, status, note) => transact(() => setRowStatus(opId, rowId, status, note)),
+    setOperationStatus: (opId, status) => transact(() => setOperationStatus(opId, status)),
+    createBox: (input) => transact(() => createBox(input)),
+    assignToBox: (itemId, boxId) => transact(() => assignToBox(itemId, boxId)),
+    setBoxStatus: (boxId, status) => transact(() => setBoxStatus(boxId, status)),
+    unpackItem: (itemId, placeRef) => transact(() => unpackItem(itemId, placeRef)),
+    reset: () => transact(reset),
+    importJson: (data, expectedRevision) => transact(() => importJson(data, expectedRevision))
   };
   return api;
 }

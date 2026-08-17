@@ -9,6 +9,8 @@
     "build": "tsc",
     "check": "tsc --noEmit",
     "verify": "node src/verify.ts",
+    "benchmark": "node src/benchmark.ts",
+    "browser-benchmark": "npm run build && node src/browser-benchmark.ts",
     "serve": "python3 -m http.server 8791",
     "serve-api": "node src/server.ts",
     "cli": "node src/agent-cli.ts",
@@ -20,6 +22,7 @@
     "typescript": "^5.8.0"
   },
   "dependencies": {
+    "camera-controls": "^3.1.2",
     "lucide": "^1.24.0",
     "three": "^0.185.1"
   }
