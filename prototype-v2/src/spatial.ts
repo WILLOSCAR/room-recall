@@ -852,6 +852,18 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   let interacting = false;
   let settleFrames = 0;
   let lastFrameAt = performance.now();
+  // camera-controls' update() reports "changed" for any nonzero delta, so its
+  // exponential damping tail keeps drifting sub-millimeter forever and never
+  // lets the loop quiesce. Gate rescheduling on visible movement instead: early
+  // transition frames move far, only the imperceptible tail falls below this.
+  const restEpsilon = 1e-3;
+  let lastCameraX = camera.position.x;
+  let lastCameraY = camera.position.y;
+  let lastCameraZ = camera.position.z;
+  const restingTarget = controls.getTarget(new Vector3());
+  let lastTargetX = restingTarget.x;
+  let lastTargetY = restingTarget.y;
+  let lastTargetZ = restingTarget.z;
   const pinHalo = scene.getObjectByName("pin-halo");
   const pinCore = scene.getObjectByName("pin-core");
   const pinBaseY = pinCore?.position.y ?? 0;
@@ -879,7 +891,24 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     if (pinCore) pinCore.position.y = pinAnimating ? pinBaseY + Math.sin(time * 0.0032) * 0.018 : pinBaseY;
     const delta = Math.min(Math.max(0, time - lastFrameAt) / 1_000, 0.05);
     lastFrameAt = time;
-    const controlsChanged = controls.update(delta);
+    controls.update(delta);
+    const cameraTarget = controls.getTarget(new Vector3());
+    // "Meaningful" motion = the camera or its target moved more than a hair
+    // this frame. The damping tail drops below restEpsilon within a few frames
+    // even though controls.update() would keep reporting change indefinitely.
+    const cameraMoving =
+      Math.abs(camera.position.x - lastCameraX) > restEpsilon ||
+      Math.abs(camera.position.y - lastCameraY) > restEpsilon ||
+      Math.abs(camera.position.z - lastCameraZ) > restEpsilon ||
+      Math.abs(cameraTarget.x - lastTargetX) > restEpsilon ||
+      Math.abs(cameraTarget.y - lastTargetY) > restEpsilon ||
+      Math.abs(cameraTarget.z - lastTargetZ) > restEpsilon;
+    lastCameraX = camera.position.x;
+    lastCameraY = camera.position.y;
+    lastCameraZ = camera.position.z;
+    lastTargetX = cameraTarget.x;
+    lastTargetY = cameraTarget.y;
+    lastTargetZ = cameraTarget.z;
     const labelBudget = declutterLabels(content, camera, renderer.domElement);
     renderer.render(scene, camera);
     renderedFrames += 1;
@@ -890,11 +919,10 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     renderer.domElement.dataset.spatialVisibleLabels = String(labelBudget.visible);
     renderer.domElement.dataset.spatialTotalLabels = String(labelBudget.total);
     renderer.domElement.dataset.spatialCameraState = [camera.position.x, camera.position.y, camera.position.z].map((value) => value.toFixed(3)).join(",");
-    const cameraTarget = controls.getTarget(new Vector3());
     renderer.domElement.dataset.spatialCameraTarget = [cameraTarget.x, cameraTarget.y, cameraTarget.z].map((value) => value.toFixed(3)).join(",");
     if (reduceMotion) settleFrames = 0;
     else if (!interacting && settleFrames > 0) settleFrames -= 1;
-    if (pinAnimating || interacting || settleFrames > 0 || controlsChanged) scheduleRender();
+    if (pinAnimating || interacting || settleFrames > 0 || cameraMoving) scheduleRender();
   };
 
   function scheduleRender(): void {

@@ -1,14 +1,14 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-17T10:01:28.493Z
+Generated: 2026-08-17T11:34:43.888Z
 Runtime: node v26.3.1 · typescript strict
 - Assertions: 459
-- Passed: 458
-- Failed: 1
+- Passed: 459
+- Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 2.300 ms
-- Household UI DOM-commit p95: 5.800 ms
+- UI DOM-commit p95: 2.500 ms
+- Household UI DOM-commit p95: 8.400 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
-- Settled spatial RAF callbacks observed: 4
+- Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
 ## typescript gate
 - ✓ `tsc-typecheck-and-emit`
@@ -365,7 +365,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `spatial-furnished-scene-stays-within-gpu-budget`
 - ✓ `spatial-labels-render-only-in-accessible-html-inspector`
 - ✓ `unrelated-update-preserves-spatial-canvas`
-- ✗ `settled-spatial-scene-has-zero-continuous-raf` — 4
+- ✓ `settled-spatial-scene-has-zero-continuous-raf`
 - ✓ `reduced-motion-disables-orbit-damping`
 - ✓ `reduced-motion-keyboard-orbit-has-no-settle-raf`
 - ✓ `dom-plan-pin`

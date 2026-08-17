@@ -1,9 +1,9 @@
 # Nestory browser performance report
 
-Generated: 2026-08-11T15:52:55.839Z
+Generated: 2026-08-17T11:35:54.427Z
 Result: surface budget passed
 Runtime: node v26.3.1
-Chrome: Chrome/151.0.7922.109 · protocol 1.3
+Chrome: Chrome/151.0.7922.138 · protocol 1.3
 Viewport: 1440 × 960 @ 1x
 Seed fixture: 66 records / 21 belongings
 Persisted household fixture: 10066 records / 2021 belongings / 2584731 localStorage characters
@@ -12,16 +12,16 @@ Persisted household fixture: 10066 records / 2021 belongings / 2584731 localStor
 
 | Fixture | Metric | p50 ms | p95 ms | p99 ms | max ms | budget | result |
 |---|---|---:|---:|---:|---:|---:|---|
-| seed | cache-bypassed reload → first contentful paint | 64.000 | 156.000 | 156.000 | 156.000 | diagnostic | not gated |
-| seed | cache-bypassed reload → app ready (controller-observed) | 106.753 | 155.692 | 155.692 | 155.692 | diagnostic | not gated |
-| seed | interaction → DOM + forced layout critical path | 1.600 | 2.500 | 2.800 | 2.800 | diagnostic | not gated |
-| seed | raw headless rAF callback latency | 8.300 | 9.800 | 9.800 | 9.800 | diagnostic | not gated |
-| seed | interaction → captured compositor surface upper bound | 60.054 | 62.534 | 63.098 | 63.098 | < 100 | pass |
-| persisted household | cache-bypassed reload → first contentful paint | 56.000 | 64.000 | 64.000 | 64.000 | diagnostic | not gated |
-| persisted household | cache-bypassed reload → app ready (controller-observed) | 138.821 | 145.132 | 145.132 | 145.132 | diagnostic | not gated |
-| persisted household | interaction → DOM + forced layout critical path | 6.300 | 7.000 | 9.600 | 9.600 | diagnostic | not gated |
-| persisted household | raw headless rAF callback latency | 8.300 | 10.300 | 10.300 | 10.300 | diagnostic | not gated |
-| persisted household | interaction → captured compositor surface upper bound | 61.686 | 63.026 | 63.418 | 63.418 | < 100 | pass |
+| seed | cache-bypassed reload → first contentful paint | 84.000 | 204.000 | 204.000 | 204.000 | diagnostic | not gated |
+| seed | cache-bypassed reload → app ready (controller-observed) | 173.349 | 248.331 | 248.331 | 248.331 | diagnostic | not gated |
+| seed | interaction → DOM + forced layout critical path | 1.600 | 2.700 | 3.300 | 3.300 | diagnostic | not gated |
+| seed | raw headless rAF callback latency | 8.300 | 9.200 | 9.200 | 9.200 | diagnostic | not gated |
+| seed | interaction → captured compositor surface upper bound | 62.918 | 72.959 | 77.729 | 77.729 | < 100 | pass |
+| persisted household | cache-bypassed reload → first contentful paint | 80.000 | 88.000 | 88.000 | 88.000 | diagnostic | not gated |
+| persisted household | cache-bypassed reload → app ready (controller-observed) | 163.084 | 195.610 | 195.610 | 195.610 | diagnostic | not gated |
+| persisted household | interaction → DOM + forced layout critical path | 6.800 | 7.500 | 8.100 | 8.100 | diagnostic | not gated |
+| persisted household | raw headless rAF callback latency | 8.300 | 8.500 | 8.500 | 8.500 | diagnostic | not gated |
+| persisted household | interaction → captured compositor surface upper bound | 62.580 | 70.726 | 72.235 | 72.235 | < 100 | pass |
 
 The only <100 ms pass/fail decision is the controller-observed interaction-to-captured-surface metric. It starts before CDP asks a real navigation button to click and ends only after `Page.captureScreenshot({fromSurface:true})` returns. The value therefore includes two CDP command roundtrips, DOM work, style/layout, compositor-surface readback, PNG encoding, Base64 transfer, and controller overhead. It is intentionally a conservative upper bound for this headless setup, not a claim about physical-display presentation time.
 
