@@ -1,8 +1,8 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-17T13:57:08.872Z
+Generated: 2026-08-17T14:07:08.811Z
 Runtime: node v26.3.1 · typescript strict
-- Assertions: 468
-- Passed: 468
+- Assertions: 470
+- Passed: 470
 - Failed: 0
 - Browser smoke: ran
 - UI DOM-commit p95: 2.400 ms
@@ -372,6 +372,8 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `spatial-hover-sets-cursor-and-outline`
 - ✓ `spatial-layer-toggle-hides-group`
 - ✓ `spatial-xray-toggle-changes-transparency`
+- ✓ `locate-auto-selects-spatial-object`
+- ✓ `locate-pairs-pin-with-selection-outline`
 - ✓ `plan-2d-furniture-is-interactive`
 - ✓ `plan-2d-selection-works-without-live-3d`
 - ✓ `plan-2d-selection-shows-outline`

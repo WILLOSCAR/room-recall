@@ -1,7 +1,7 @@
 # 06 - Locate ↔ inspect linkage across 2D and 3D
 
 Type: implementation
-Status: ready-for-agent
+Status: done
 Blocked by: 02, 04
 
 When `ui.lastAnswer` resolves to a furniture/container that exists as a spatial object, auto-select it and visually pair the confidence pin with the selection outline in BOTH surfaces. Make the pin orb pickable so clicking it re-focuses the located item (read-only camera move). Re-arm the pin pulse on selection change (reset `pinAnimationStartedAt=null`), time-boxed to ~800 ms so the loop still quiesces.

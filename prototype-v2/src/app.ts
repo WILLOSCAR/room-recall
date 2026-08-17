@@ -384,6 +384,29 @@ function buildScanDraft(anchorCm: number): ScanDraft {
   };
 }
 
+// The scene object a located item rests on/in: the nearest furniture or box in
+// the answer's place chain. Used to pair the pin with a selection outline.
+function spatialObjectIdForAnswer(answer: DeepReadonly<LocateAnswer> | null): string | null {
+  if (!answer?.ok || !answer.planPin) return null;
+  const furnitureIds = new Set(store.catalog.furniture.map((f) => f.id));
+  const boxIds = new Set(store.containersView().filter((c) => c.kind === "box").map((c) => c.id));
+  for (const node of answer.chain) {
+    if (node.type === "furniture" && furnitureIds.has(node.id)) return node.id;
+    if (node.type === "container" && boxIds.has(node.id)) return node.id;
+  }
+  return null;
+}
+
+// Set the current locate answer and pair the spatial selection with it so the
+// pin and the selection outline reinforce each other in both 2D and 3D. Pure
+// projection: no store write.
+function setLocateAnswer(answer: DeepReadonly<LocateAnswer>): DeepReadonly<LocateAnswer> {
+  ui.lastAnswer = answer;
+  const paired = spatialObjectIdForAnswer(answer);
+  if (paired) ui.spatialSelectedId = paired;
+  return answer;
+}
+
 function spatialSceneData(includeScanDraft: boolean): SpatialSceneData {
   const rooms = [...store.state.rooms.values()].map((room) => ({
     id: room.id, name: room.name, x: room.plan.x, z: room.plan.y, w: room.plan.w, d: room.plan.h
@@ -409,13 +432,28 @@ function spatialSceneData(includeScanDraft: boolean): SpatialSceneData {
   // it independent from lastAnswer preserves the mounted WebGL context across
   // the core Locate interaction. The full Plan owns the inspectable pin.
   const answer = ui.view === "plan" ? ui.lastAnswer : null;
+  // Pair the pin with the spatial object the located item rests on/in: the nearest
+  // furniture (or box) node in the answer's place chain that exists as a scene
+  // object. This lets the scene auto-select it so the pin and selection outline
+  // reinforce each other. Derived from the answer only — no store write.
+  const spatialObjectIds = new Set(objects.map((o) => o.id));
+  let pinObjectId: string | undefined;
+  if (answer?.ok && answer.planPin) {
+    for (const node of answer.chain) {
+      if ((node.type === "furniture" || node.type === "container") && spatialObjectIds.has(node.id)) {
+        pinObjectId = node.id;
+        break;
+      }
+    }
+  }
   return {
     rooms,
     objects,
     proposals: includeScanDraft ? ui.scanDraft?.proposals.map((p) => p.object) ?? [] : [],
     pin: answer?.ok && answer.planPin ? {
       x: answer.planPin.x, z: answer.planPin.y, y: 0.82,
-      radius: 0.14 + (1 - answer.confidence) * 0.28
+      radius: 0.14 + (1 - answer.confidence) * 0.28,
+      objectId: pinObjectId
     } : null
   };
 }
@@ -2138,14 +2176,14 @@ function navigate(view: ViewId, { focus = true, cancelMedia = true }: { focus?: 
 
 function doLocate(query: string, returnFocusId: string): void {
   if (!query.trim()) return;
-  ui.lastAnswer = store.locate(query.trim());
+  const answer = setLocateAnswer(store.locate(query.trim()));
   if (ui.view !== "home" && ui.view !== "plan") {
     navigate("home");
   } else {
     controlReturnFocus = { elementId: returnFocusId, dataset: {} };
     render();
   }
-  announce(ui.lastAnswer.sentence);
+  announce(answer.sentence);
 }
 
 document.addEventListener("click", (e) => {
@@ -2413,7 +2451,7 @@ document.addEventListener("click", (e) => {
     }
     case "unpack-item": if (t.dataset.item) { controlReturnFocus = focusBookmark(t); act(() => store.unpackItem(t.dataset.item as string), "Unpacked to default home."); } break;
     case "box-search": controlReturnFocus = focusBookmark(t); ui.boxQuery = inputValue("box-search-input"); render(); break;
-    case "locate-item": if (t.dataset.id) { ui.lastAnswer = store.locateById(t.dataset.id); navigate("home"); } break;
+    case "locate-item": if (t.dataset.id) { setLocateAnswer(store.locateById(t.dataset.id)); navigate("home"); } break;
     case "accept-proposal": {
       const pid = t.dataset.id;
       if (!pid) break;
@@ -2753,7 +2791,7 @@ window.nestory = {
   mode,
   chooseMode,
   setView(v) { navigate(v); },
-  locate(q) { ui.lastAnswer = store.locate(q); render(); announce(ui.lastAnswer.sentence); return ui.lastAnswer; },
+  locate(q) { const answer = setLocateAnswer(store.locate(q)); render(); announce(answer.sentence); return answer; },
   ask(q) { ui.view = "ask"; ui.modal = null; return doAsk(q); },
   openContainer(id) {
     modalReturnFocus = null;

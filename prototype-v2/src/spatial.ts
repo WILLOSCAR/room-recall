@@ -102,6 +102,7 @@ export interface SpatialPin {
   radius?: number;
   roomId?: string;
   color?: SpatialColor;
+  objectId?: string;
 }
 
 export interface SpatialSceneData {
@@ -453,7 +454,7 @@ function addProposalObject(parent: Group, object: SpatialObject): void {
   }
 }
 
-function addPin(parent: Group, pin: SpatialPin): void {
+function addPin(parent: Group, pin: SpatialPin): Mesh {
   const radius = pin.radius ?? 0.18;
   const color = pin.color ?? PIN_COLOR;
   const halo = new Mesh(
@@ -495,7 +496,10 @@ function addPin(parent: Group, pin: SpatialPin): void {
   orb.position.set(pin.x, (pin.y ?? 0) + radius * 0.34 + 0.03, pin.z);
   orb.renderOrder = 7;
   orb.castShadow = true;
+  // The orb re-focuses the located object on click, so it joins the pickables.
+  if (pin.objectId) orb.userData["spatialObjectId"] = pin.objectId;
   parent.add(orb);
+  return orb;
 }
 
 function sceneObjects(data: SpatialSceneData): { solid: SpatialObject[]; proposals: SpatialObject[] } {
@@ -840,7 +844,10 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     archetypes.add(object.archetype ?? (object.kind === "box" ? "box" : "block"));
   }
   for (const proposal of proposalObjects) addProposalObject(proposalLayer, proposal);
-  if (data.pin) addPin(pinLayer, data.pin);
+  if (data.pin) {
+    const orb = addPin(pinLayer, data.pin);
+    if (data.pin.objectId) interactiveMeshes.push(orb);
+  }
   renderer.domElement.dataset.spatialArchetypes = [...archetypes].sort().join(",");
 
   const gridSize = Math.max(4, Math.ceil(Math.max(size.x, size.z) + 2));
@@ -1293,7 +1300,11 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   });
 
   renderer.domElement.dataset.spatialPreset = "home";
-  const initial = solidObjects.find((object) => data.pin && object.roomId === data.pin.roomId);
+  // Prefer auto-selecting the object the pin sits on/in so the located memory and
+  // its selection outline reinforce each other; fall back to a room-level match.
+  const initial = (data.pin?.objectId && objectData.has(data.pin.objectId))
+    ? objectData.get(data.pin.objectId) ?? null
+    : solidObjects.find((object) => data.pin && object.roomId === data.pin.roomId) ?? null;
   if (initial) setSelected(initial.id);
 
   const onContextLost = (event: Event): void => {

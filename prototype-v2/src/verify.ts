@@ -2132,6 +2132,23 @@ async function runBrowserSmoke(): Promise<void> {
     await evalPage(`document.querySelector('[data-action="spatial-xray"][aria-pressed="true"]')?.click()`);
     await sleep(80);
 
+    // Locate ↔ inspect linkage: locating an item auto-selects the scene object it
+    // rests on/in (water bottle → desk) so the pin and selection outline pair up.
+    await evalPage(`window.nestory.setView("ledger")`);
+    await evalPage(`window.nestory.locate("water bottle")`);
+    await evalPage(`window.nestory.ui.planMode = "3d"; window.nestory.setView("plan")`);
+    await sleep(360);
+    const locateLinkage = await evalPage<{ sceneSelected: string; uiSelected: string; outline: string }>(`(() => {
+      const canvas = document.querySelector('[data-testid="plan-3d"] canvas');
+      return {
+        sceneSelected: canvas?.getAttribute('data-spatial-selected-id') ?? '',
+        uiSelected: window.nestory.ui.spatialSelectedId ?? '',
+        outline: canvas?.getAttribute('data-spatial-selection-outline') ?? ''
+      };
+    })()`);
+    assert("locate-auto-selects-spatial-object", locateLinkage.sceneSelected === "desk" && locateLinkage.uiSelected === "desk", JSON.stringify(locateLinkage));
+    assert("locate-pairs-pin-with-selection-outline", locateLinkage.outline === "fitted", JSON.stringify(locateLinkage));
+
     // Switch to the 2D plan: furniture must be selectable and drive the SAME shared
     // selection (bidirectional parity), and work without a live 3D surface.
     await evalPage(`window.nestory.ui.planMode = "2d"; window.nestory.render()`);
