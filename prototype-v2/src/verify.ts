@@ -2066,6 +2066,42 @@ async function runBrowserSmoke(): Promise<void> {
     assert("spatial-selection-from-scene-updates-inspector", sceneSelectionParity.anchorPressed && sceneSelectionParity.title.includes("Desk"), JSON.stringify(sceneSelectionParity));
     assert("spatial-selection-does-not-remount-canvas", sceneSelectionParity.mountsAfter === 1, JSON.stringify(sceneSelectionParity));
 
+    // The committed selection draws a fitted EdgesGeometry outline (not the old
+    // axis-aligned Box3Helper cage), and hovering the canvas gives cursor feedback
+    // + a distinct hover outline.
+    const selectionOutlineStyle = await evalPage<string>(`document.querySelector('[data-testid="plan-3d"] canvas')?.getAttribute('data-spatial-selection-outline') ?? ''`);
+    assert("spatial-selection-uses-fitted-outline", selectionOutlineStyle === "fitted", selectionOutlineStyle);
+    const hoverAffordance = await evalPage<{ cursor: string; hovered: string }>(`new Promise((resolve) => {
+      const canvas = document.querySelector('[data-testid="plan-3d"] canvas');
+      if (!(canvas instanceof HTMLCanvasElement)) { resolve({ cursor: "missing", hovered: "missing" }); return; }
+      const rect = canvas.getBoundingClientRect();
+      // Sweep a grid of canvas points; furniture fills much of the framed scene, so
+      // at least one probe lands on an interactive mesh regardless of exact framing.
+      const cols = 7, rows = 5;
+      let i = 0;
+      const points = [];
+      for (let r = 1; r < rows; r++) for (let c = 1; c < cols; c++) {
+        points.push([rect.left + rect.width * c / cols, rect.top + rect.height * r / rows]);
+      }
+      const step = () => {
+        if (i >= points.length) {
+          resolve({ cursor: canvas.style.cursor, hovered: canvas.getAttribute('data-spatial-hovered') ?? '' });
+          return;
+        }
+        const [x, y] = points[i++];
+        canvas.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: x, clientY: y }));
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if ((canvas.getAttribute('data-spatial-hovered') ?? '').length > 0) {
+            resolve({ cursor: canvas.style.cursor, hovered: canvas.getAttribute('data-spatial-hovered') ?? '' });
+          } else {
+            step();
+          }
+        }));
+      };
+      step();
+    })`);
+    assert("spatial-hover-sets-cursor-and-outline", hoverAffordance.cursor === "pointer" && hoverAffordance.hovered.length > 0, JSON.stringify(hoverAffordance));
+
     // Switch to the 2D plan: furniture must be selectable and drive the SAME shared
     // selection (bidirectional parity), and work without a live 3D surface.
     await evalPage(`window.nestory.ui.planMode = "2d"; window.nestory.render()`);

@@ -2,7 +2,6 @@ import type { Material, Object3D } from "three";
 import {
   ACESFilmicToneMapping,
   Box3,
-  Box3Helper,
   BoxGeometry,
   BufferGeometry,
   CanvasTexture,
@@ -117,6 +116,8 @@ const FLOOR_COLORS = [0xc99b6d, 0xd9d7cf, 0xd7c9b5];
 const WALL_COLOR = 0xf3eee5;
 const PIN_COLOR = 0xe26139;
 const OUTLINE_COLOR = 0x4d5d55;
+const SELECTION_OUTLINE_COLOR = 0xe16642;
+const HOVER_OUTLINE_COLOR = 0x9c7a5a;
 const PROPOSAL_COLORS: Record<SpatialProposalState, number> = {
   accepted: 0x4b9a76,
   pending: 0xd19536,
@@ -1037,11 +1038,48 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   renderer.domElement.addEventListener("keydown", onCanvasKeyDown);
   cleanupStack.push(() => renderer.domElement.removeEventListener("keydown", onCanvasKeyDown));
 
-  const selectionHelper = new Box3Helper(new Box3(), 0xe16642);
-  selectionHelper.name = "selection-outline";
-  selectionHelper.visible = false;
-  selectionHelper.renderOrder = 40;
-  scene.add(selectionHelper);
+  // Fitted selection + hover outlines: EdgesGeometry line loops parented to the
+  // object root, so they inherit the object's rotation instead of the crude
+  // axis-aligned cage the old Box3Helper drew. Rebuilt on change, disposed on clear.
+  let selectionOutline: Group | null = null;
+  let hoverOutline: Group | null = null;
+
+  const disposeOutline = (holder: Group | null): void => {
+    if (!holder) return;
+    holder.parent?.remove(holder);
+    holder.traverse((node: Object3D) => {
+      const line = node as LineSegments;
+      if (line.isLineSegments) {
+        line.geometry.dispose();
+        (line.material as Material).dispose();
+      }
+    });
+  };
+
+  const buildOutline = (id: string, color: number, opacity: number, renderOrder: number): Group | null => {
+    const root = objectRoots.get(id);
+    if (!root) return null;
+    const holder = new Group();
+    holder.name = "spatial-outline";
+    root.traverse((node: Object3D) => {
+      const mesh = node as Mesh;
+      if (mesh.isMesh && mesh.geometry) {
+        const edges = new LineSegments(
+          new EdgesGeometry(mesh.geometry, 24),
+          new LineBasicMaterial({ color, transparent: true, opacity })
+        );
+        edges.position.copy(mesh.position);
+        edges.quaternion.copy(mesh.quaternion);
+        edges.scale.copy(mesh.scale);
+        edges.renderOrder = renderOrder;
+        holder.add(edges);
+      }
+    });
+    if (!holder.children.length) return null;
+    root.add(holder);
+    return holder;
+  };
+
   const raycaster = new Raycaster();
   const pointer = new Vector2();
 
@@ -1069,19 +1107,21 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     scheduleRender();
   };
 
+  let hoverId: string | null = null;
   const setSelected = (id: string | null, { focus = false }: { focus?: boolean } = {}): void => {
     const object = id ? objectData.get(id) ?? null : null;
     renderer.domElement.dataset.spatialSelectedId = object?.id ?? "";
+    disposeOutline(selectionOutline);
+    selectionOutline = null;
     if (object) {
-      const root = objectRoots.get(object.id);
-      if (root) {
-        selectionHelper.box.setFromObject(root).expandByScalar(0.025);
-        selectionHelper.visible = true;
-      }
+      selectionOutline = buildOutline(object.id, SELECTION_OUTLINE_COLOR, 0.95, 42);
+      // A newly selected object should not keep a stale hover ghost on it.
+      if (hoverId === object.id) { disposeOutline(hoverOutline); hoverOutline = null; hoverId = null; }
       if (focus) focusObject(object, true);
-    } else {
-      selectionHelper.visible = false;
     }
+    // Observable marker: 'fitted' when a fitted EdgesGeometry outline is mounted,
+    // '' when nothing is selected. Lets verification assert the outline style.
+    renderer.domElement.dataset.spatialSelectionOutline = selectionOutline ? "fitted" : "";
     container.dispatchEvent(new CustomEvent<SpatialSelection | null>("spatial-selection", {
       bubbles: true,
       detail: object ? {
@@ -1094,6 +1134,22 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     }));
     scheduleRender();
   };
+
+  // Hover is a lightweight, dimmer outline distinct from the committed selection.
+  const setHovered = (id: string | null): void => {
+    if (id === hoverId) return;
+    hoverId = id;
+    disposeOutline(hoverOutline);
+    hoverOutline = null;
+    // Never draw a hover ghost on the already-selected object.
+    if (id && id !== renderer.domElement.dataset.spatialSelectedId) {
+      hoverOutline = buildOutline(id, HOVER_OUTLINE_COLOR, 0.5, 41);
+    }
+    renderer.domElement.style.cursor = id ? "pointer" : "";
+    renderer.domElement.dataset.spatialHovered = hoverOutline ? (hoverId ?? "") : "";
+    scheduleRender();
+  };
+  cleanupStack.push(() => { disposeOutline(selectionOutline); disposeOutline(hoverOutline); });
 
   const applyPreset = (preset: SpatialViewPreset): void => {
     const animate = !reduceMotion;
@@ -1129,16 +1185,55 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   container.addEventListener("spatial-command", onSurfaceCommand);
   cleanupStack.push(() => container.removeEventListener("spatial-command", onSurfaceCommand));
 
-  const onCanvasClick = (event: MouseEvent): void => {
+  const pickObjectId = (event: MouseEvent): string | null => {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.set((event.clientX - rect.left) / Math.max(1, rect.width) * 2 - 1, -((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1);
     raycaster.setFromCamera(pointer, camera);
     const hit = raycaster.intersectObjects(interactiveMeshes, false)[0]?.object;
     const id = hit?.userData["spatialObjectId"];
-    setSelected(typeof id === "string" ? id : null);
+    return typeof id === "string" ? id : null;
+  };
+
+  const onCanvasClick = (event: MouseEvent): void => {
+    setSelected(pickObjectId(event));
   };
   renderer.domElement.addEventListener("click", onCanvasClick);
   cleanupStack.push(() => renderer.domElement.removeEventListener("click", onCanvasClick));
+
+  // A second click / double-click on an object frames it, matching the eased
+  // focus that list + command selection already gets (focus:true). Single click
+  // stays a plain select so it never surprises the user with a camera move.
+  const onCanvasDblClick = (event: MouseEvent): void => {
+    const id = pickObjectId(event);
+    const object = id ? objectData.get(id) ?? null : null;
+    if (object) focusObject(object, true);
+  };
+  renderer.domElement.addEventListener("dblclick", onCanvasDblClick);
+  cleanupStack.push(() => renderer.domElement.removeEventListener("dblclick", onCanvasDblClick));
+
+  // Hover raycast, rAF-throttled to one probe per frame. Each hover change fires a
+  // single scheduleRender (which quiesces) — never a continuous loop. Skipped while
+  // the pointer is dragging the camera so orbit stays cheap.
+  let hoverProbePending = false;
+  let lastPointerEvent: MouseEvent | null = null;
+  const onCanvasPointerMove = (event: MouseEvent): void => {
+    if (interacting) return;
+    lastPointerEvent = event;
+    if (hoverProbePending) return;
+    hoverProbePending = true;
+    window.requestAnimationFrame(() => {
+      hoverProbePending = false;
+      if (!lastPointerEvent || !canRender()) return;
+      setHovered(pickObjectId(lastPointerEvent));
+    });
+  };
+  const onCanvasPointerLeave = (): void => setHovered(null);
+  renderer.domElement.addEventListener("pointermove", onCanvasPointerMove, { passive: true });
+  renderer.domElement.addEventListener("pointerleave", onCanvasPointerLeave);
+  cleanupStack.push(() => {
+    renderer.domElement.removeEventListener("pointermove", onCanvasPointerMove);
+    renderer.domElement.removeEventListener("pointerleave", onCanvasPointerLeave);
+  });
 
   renderer.domElement.dataset.spatialPreset = "home";
   const initial = solidObjects.find((object) => data.pin && object.roomId === data.pin.roomId);

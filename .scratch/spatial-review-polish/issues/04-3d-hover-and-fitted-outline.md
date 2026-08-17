@@ -1,7 +1,7 @@
 # 04 - 3D hover affordance + fitted selection outline
 
 Type: implementation
-Status: ready-for-agent
+Status: done
 Blocked by: 02
 
 Add a throttled pointermove raycast against `interactiveMeshes` that sets `cursor:pointer` over a hit and shows a dim hover outline distinct from the committed selection. Replace the AABB `Box3Helper` selection cage with a fitted `EdgesGeometry` outline (or subtle emissive lift) of the selected root, rebuilt on select and disposed on deselect. Add focus-on-select parity: a canvas double-click (or second click on the selected object) frames it via the eased `focusObject` path.
