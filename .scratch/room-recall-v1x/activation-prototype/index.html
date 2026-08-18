@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nestory · Five-Minute Activation Prototype</title>
+<!--
+  THROWAWAY DESIGN PROTOTYPE — room-recall-v1x ticket 02.
+  Answers one question: what is the shortest first-session path that lets a
+  moving renter reach a *trusted recall outcome* within five minutes, and where
+  do Container Snapshot / Room Scan / Product Intake / operation-first entry
+  belong? It is NOT production code and does not touch prototype-v2/. It is a
+  feel-and-time harness: pick an entry path, run it, and read the instrumented
+  five axes (time-to-first-trusted-memory, taps, correction burden, privacy
+  surprise, immediate retrieval). Proposal-first, evidence+confidence, and
+  progressive precision are modelled, not faked away.
+-->
+<style>
+  :root{
+    --paper:#fbf8f1; --paper-2:#f2ece1; --card:#fffdf8; --ink:#20302a; --ink-soft:#5a6a61;
+    --ink-faint:#8a978d; --line:rgba(31,45,39,.12); --line-strong:rgba(31,45,39,.2);
+    --accent:#de6841; --accent-soft:#f7e2d8; --accent-ink:#8f3a1e;
+    --sage:#2f7b62; --sage-soft:#dfece6; --amber:#9a6d25; --amber-soft:#f3e7cf;
+    --radius:16px; --radius-sm:10px; --radius-lg:24px; --shadow:0 10px 30px rgba(31,48,40,.08);
+    --shadow-lift:0 24px 70px rgba(19,31,26,.14);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    background:linear-gradient(160deg,#f6efe3,#fbf8f1 40%);color:var(--ink);min-height:100vh}
+  .wrap{max-width:960px;margin:0 auto;padding:24px 18px 80px}
+  header h1{margin:0 0 2px;font-size:22px;letter-spacing:-.02em}
+  header p{margin:0;color:var(--ink-soft);font-size:13px}
+  .eyebrow{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--accent-ink)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+  .grid{display:grid;gap:14px}
+  @media(min-width:720px){.grid.cols-2{grid-template-columns:1fr 1fr}}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line-strong);background:var(--card);color:var(--ink);
+    border-radius:var(--radius-sm);padding:10px 14px;transition:background .16s,border-color .16s,transform .05s}
+  button:hover{background:var(--paper-2)}
+  button:active{transform:translateY(1px)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:650}
+  button.primary:hover{background:var(--accent-ink)}
+  button.ghost{background:transparent;border-color:var(--line)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .clock{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    margin:-24px -18px 18px;padding:12px 18px;background:rgba(251,248,241,.9);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)}
+  .clock .t{font-variant-numeric:tabular-nums;font-weight:750;font-size:20px}
+  .clock .t.warn{color:var(--amber)} .clock .t.over{color:var(--accent-ink)}
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:12px;
+    background:var(--paper-2);color:var(--ink-soft);border:1px solid var(--line)}
+  .pill.good{background:var(--sage-soft);color:#1f5c46;border-color:transparent}
+  .pill.warn{background:var(--amber-soft);color:#7a5312;border-color:transparent}
+  .pill.bad{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}
+  .path-grid{display:grid;gap:12px}
+  @media(min-width:720px){.path-grid{grid-template-columns:1fr 1fr}}
+  .path{border:1px solid var(--line);border-radius:var(--radius);padding:16px;background:var(--card);cursor:pointer;
+    display:flex;flex-direction:column;gap:8px;transition:border-color .16s,box-shadow .16s}
+  .path:hover{border-color:var(--accent);box-shadow:var(--shadow)}
+  .path h3{margin:0;font-size:16px} .path .why{color:var(--ink-soft);font-size:13px}
+  .path .cost{font-size:12px;color:var(--ink-faint)}
+  .path.recommended{border-color:var(--sage);box-shadow:0 0 0 1px var(--sage-soft)}
+  .tag{align-self:flex-start;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:#1f5c46;background:var(--sage-soft);padding:2px 7px;border-radius:6px}
+  .step{display:none} .step.active{display:block;animation:fade .2s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  label{display:block;font-size:13px;font-weight:600;margin:12px 0 4px}
+  input[type=text],textarea,select{width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line-strong);
+    border-radius:var(--radius-sm);background:var(--paper);color:var(--ink)}
+  textarea{min-height:64px;resize:vertical}
+  .chiprow{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .chip{padding:7px 12px;border-radius:999px;border:1px solid var(--line-strong);background:var(--card);font-size:13px}
+  .chip.on{background:var(--sage-soft);border-color:var(--sage);color:#1f5c46;font-weight:600}
+  .snap{position:relative;border:2px dashed var(--line-strong);border-radius:var(--radius);padding:22px;text-align:center;
+    background:var(--paper-2);color:var(--ink-soft)}
+  .snap.captured{border-style:solid;border-color:var(--sage);background:var(--sage-soft);color:#1f5c46}
+  .proposal{border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:var(--radius-sm);
+    padding:12px 14px;margin:10px 0;background:#fffdf6}
+  .proposal .src{font-size:12px;color:var(--ink-faint);margin-top:6px}
+  .answer{border:1px solid var(--line);border-left:4px solid var(--sage);border-radius:var(--radius-sm);padding:14px 16px;background:#f8fcf9}
+  .answer .conf{font-size:12px;color:var(--ink-soft);margin-top:6px}
+  .muted{color:var(--ink-soft);font-size:13px}
+  .scorecard{margin-top:14px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-faint)}
+  td.num{font-variant-numeric:tabular-nums;text-align:right}
+  .privacy{margin-top:10px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--accent-soft);
+    color:var(--accent-ink);font-size:13px;display:none}
+  .privacy.show{display:block}
+  .footnote{margin-top:26px;color:var(--ink-faint);font-size:12px;line-height:1.6}
+  h2.sec{font-size:15px;margin:26px 0 10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="clock" id="clock" hidden>
+    <span class="t" id="timer">0:00</span>
+    <span class="pill" id="tapPill">0 taps</span>
+    <span class="pill" id="pathPill"></span>
+    <button class="ghost" id="restart" style="margin-left:auto">↺ Restart</button>
+  </div>
+
+  <header>
+    <div class="eyebrow">RoomRecall · Nestory — ticket 02 prototype</div>
+    <h1>The five-minute activation path</h1>
+    <p>You just moved. Can you reach one <strong>trusted recall outcome</strong> in five minutes? Pick an entry path and feel it.</p>
+  </header>
+
+  <!-- STEP: choose entry path -->
+  <section class="step active" id="step-choose">
+    <h2 class="sec">Scenario</h2>
+    <div class="card">
+      <p style="margin:0 0 4px">Moving day is over. Boxes are everywhere. Tonight you need your <strong>phone charger</strong> and you cannot find it. Nestory has just opened for the first time — no data yet.</p>
+      <p class="muted" style="margin:6px 0 0">The durable promise (ticket 01) is <em>Ownership + pre-purchase recall</em>; moving is the acquisition event that seeds it. So the bar is not "model the home" — it is <strong>build one trusted memory and get one useful answer, fast</strong>.</p>
+    </div>
+
+    <h2 class="sec">Choose your first-session entry path</h2>
+    <div class="path-grid" id="paths"></div>
+
+    <div class="footnote">
+      Each path is instrumented on the five axes ticket 02 names: <strong>time to first trusted memory</strong>,
+      <strong>manual work</strong> (taps/fields), <strong>correction burden</strong>, <strong>privacy surprise</strong>,
+      and whether you can <strong>immediately retrieve</strong> something you care about. Run more than one, then read the scorecard.
+    </div>
+  </section>
+
+  <!-- STEP: the running path -->
+  <section class="step" id="step-run">
+    <div class="card" id="runCard"></div>
+  </section>
+
+  <!-- STEP: retrieval outcome -->
+  <section class="step" id="step-outcome">
+    <div class="card">
+      <div class="eyebrow">The moment of truth</div>
+      <h2 class="sec" style="margin-top:4px">"Where is my phone charger?"</h2>
+      <div id="answerBox"></div>
+      <div class="privacy" id="privacyNote"></div>
+      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="primary" id="confirmOk">✓ Found it there — confirm</button>
+        <button class="ghost" id="notThere">✗ Not there — correct</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP: scorecard -->
+  <section class="step" id="step-score">
+    <div class="card">
+      <div class="eyebrow">Result</div>
+      <h2 class="sec" style="margin-top:4px" id="scoreTitle"></h2>
+      <div id="scoreBody"></div>
+    </div>
+    <div class="card scorecard">
+      <div class="eyebrow">All paths you have run</div>
+      <table id="scoreTable"><thead><tr>
+        <th>Path</th><th class="num">Time</th><th class="num">Taps</th><th>Correction</th><th>Privacy</th><th>Retrieved?</th>
+      </tr></thead><tbody></tbody></table>
+      <div class="footnote" id="verdict"></div>
+    </div>
+    <div style="margin-top:14px"><button class="ghost" id="tryAnother">← Try another path</button></div>
+  </section>
+</div>
+
+<script>
+"use strict";
+// ---- instrumentation --------------------------------------------------------
+const state = { path:null, startedAt:0, taps:0, corrections:0, privacyHit:false, retrieved:false,
+  timer:null, chosenContainer:null };
+const results = []; // one row per completed run
+
+const PATHS = [
+  { id:"snapshot", name:"Container Snapshot", tag:"fast lane",
+    why:"Photograph one box + say what's inside. One capture → a reviewable contents proposal.",
+    cost:"~1 photo + 1 sentence · progressive precision", recommended:true },
+  { id:"operation", name:"Start a Move (operation-first)",
+    why:"Create the move, add boxes with labels + destination rooms, then fill contents.",
+    cost:"structured, but more setup before the first answer" },
+  { id:"product", name:"Product Intake",
+    why:"Type the item, its category and where it lives. No camera.",
+    cost:"precise, all-manual, one item at a time" },
+  { id:"roomscan", name:"Room Scan",
+    why:"Sweep the room with the camera to reconstruct geometry, then place items.",
+    cost:"heaviest capture · geometry the recall does not need yet" },
+];
+
+const $ = s => document.querySelector(s);
+const show = id => { document.querySelectorAll(".step").forEach(s=>s.classList.remove("active")); $("#"+id).classList.add("active"); window.scrollTo({top:0,behavior:"smooth"}); };
+const tap = () => { state.taps++; $("#tapPill").textContent = state.taps+" taps"; };
+function fmt(ms){ const s=Math.floor(ms/1000); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
+function tick(){ const el=$("#timer"); const ms=Date.now()-state.startedAt; el.textContent=fmt(ms);
+  el.className="t"+(ms>300000?" over":ms>210000?" warn":""); }
+
+// ---- render path chooser ----------------------------------------------------
+function renderPaths(){
+  $("#paths").innerHTML = PATHS.map(p=>`
+    <div class="path${p.recommended?" recommended":""}" data-path="${p.id}" role="button" tabindex="0">
+      ${p.recommended?'<span class="tag">hypothesized winner</span>':''}
+      <h3>${p.name}</h3>
+      <div class="why">${p.why}</div>
+      <div class="cost">${p.cost}</div>
+    </div>`).join("");
+  document.querySelectorAll(".path").forEach(el=>{
+    const go=()=>startPath(el.dataset.path);
+    el.addEventListener("click",go);
+    el.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();go();}});
+  });
+}
+
+function startPath(id){
+  state.path=id; state.startedAt=Date.now(); state.taps=0; state.corrections=0;
+  state.privacyHit=false; state.retrieved=false; state.chosenContainer=null;
+  $("#clock").hidden=false; $("#pathPill").textContent=PATHS.find(p=>p.id===id).name;
+  $("#tapPill").textContent="0 taps"; clearInterval(state.timer); state.timer=setInterval(tick,250); tick();
+  RUN[id]();
+  show("step-run");
+}
+
+// ---- the four paths ---------------------------------------------------------
+const RUN = {
+  // Container Snapshot fast lane: one photo + one sentence → contents proposal → review → commit.
+  snapshot(){
+    $("#runCard").innerHTML = `
+      <div class="eyebrow">Container Snapshot · fast lane</div>
+      <h2 class="sec" style="margin-top:4px">Capture one box</h2>
+      <p class="muted">Point at the box you think holds tonight's essentials. One photo, one sentence — that's the whole capture.</p>
+      <div class="snap" id="snap">📷 Tap to photograph the box</div>
+      <label>Say what's inside (rough is fine — precision comes later)</label>
+      <textarea id="snapText" placeholder="e.g. bedroom essentials: charger, lamp, meds, socks"></textarea>
+      <div class="chiprow" id="destRow">
+        <span class="muted" style="width:100%">Destination room:</span>
+        ${["Bedroom","Living room","Kitchen","Unsure"].map(r=>`<span class="chip" data-dest="${r}">${r}</span>`).join("")}
+      </div>
+      <div style="margin-top:16px"><button class="primary" id="snapBuild" disabled>Build contents proposal →</button></div>`;
+    const snap=$("#snap");
+    snap.addEventListener("click",()=>{ tap(); snap.classList.add("captured"); snap.textContent="✓ Photo captured — stored as evidence (photo_note)"; maybeEnable(); });
+    $("#snapText").addEventListener("input",()=>maybeEnable());
+    document.querySelectorAll("[data-dest]").forEach(c=>c.addEventListener("click",()=>{
+      tap(); document.querySelectorAll("[data-dest]").forEach(x=>x.classList.remove("on")); c.classList.add("on"); maybeEnable();
+    }));
+    function maybeEnable(){ const ok=$("#snap").classList.contains("captured") && $("#snapText").value.trim().length>3;
+      $("#snapBuild").disabled=!ok; }
+    $("#snapBuild").addEventListener("click",()=>{ tap(); reviewSnapshot(); });
+  },
+  operation(){
+    $("#runCard").innerHTML = `
+      <div class="eyebrow">Operation-first · start a Move</div>
+      <h2 class="sec" style="margin-top:4px">Set up the move</h2>
+      <label>Name this move</label><input type="text" id="opName" value="Apartment move">
+      <label>Add a box (label + destination) — you need at least one before any answer</label>
+      <input type="text" id="boxLabel" placeholder="Box label, e.g. Bedroom essentials">
+      <select id="boxDest"><option value="">Destination room…</option><option>Bedroom</option><option>Living room</option><option>Kitchen</option></select>
+      <label>What's in it? (one per line)</label>
+      <textarea id="opItems" placeholder="charger&#10;lamp&#10;meds"></textarea>
+      <div style="margin-top:16px"><button class="primary" id="opBuild" disabled>Save box contents →</button></div>
+      <p class="muted" style="margin-top:10px">Note the extra setup: a named operation and a structured box before you can ask a single question.</p>`;
+    ["opName","boxLabel","boxDest","opItems"].forEach(id=>$("#"+id).addEventListener("input",check));
+    $("#boxDest").addEventListener("change",check);
+    ["opName","boxLabel","opItems"].forEach(id=>$("#"+id).addEventListener("focus",tap,{once:true}));
+    function check(){ $("#opBuild").disabled = !($("#boxLabel").value.trim() && $("#boxDest").value && $("#opItems").value.trim()); }
+    $("#opBuild").addEventListener("click",()=>{ tap();
+      state.chosenContainer=$("#boxLabel").value.trim()+" · "+$("#boxDest").value;
+      // operation-first commits directly to a labelled box — no review inbox needed, high trust, more work
+      commitDirect("charger", state.chosenContainer, 0.9, "you labelled this box while packing"); });
+  },
+  product(){
+    $("#runCard").innerHTML = `
+      <div class="eyebrow">Product Intake · manual</div>
+      <h2 class="sec" style="margin-top:4px">Add the item by hand</h2>
+      <label>Item name</label><input type="text" id="pName" placeholder="Phone charger">
+      <label>Category</label><input type="text" id="pCat" placeholder="electronics / cable">
+      <label>Where does it live?</label><input type="text" id="pWhere" placeholder="e.g. Bedside drawer">
+      <div style="margin-top:16px"><button class="primary" id="pBuild" disabled>Save item →</button></div>
+      <p class="muted" style="margin-top:10px">Precise and camera-free, but it only records the one item you already thought of — no discovery, no evidence photo.</p>`;
+    ["pName","pCat","pWhere"].forEach(id=>{ const el=$("#"+id);
+      el.addEventListener("focus",tap,{once:true});
+      el.addEventListener("input",()=>{ $("#pBuild").disabled=!($("#pName").value.trim()&&$("#pWhere").value.trim()); }); });
+    $("#pBuild").addEventListener("click",()=>{ tap(); state.chosenContainer=$("#pWhere").value.trim();
+      commitDirect("charger", state.chosenContainer, 0.7, "you typed this in by hand (no evidence photo)"); });
+  },
+  roomscan(){
+    $("#runCard").innerHTML = `
+      <div class="eyebrow">Room Scan · heaviest capture</div>
+      <h2 class="sec" style="margin-top:4px">Sweep the room</h2>
+      <div class="snap" id="scan">🎥 Hold to sweep the room… (simulated)</div>
+      <div class="privacy show" style="margin-top:12px">⚠️ A full room video may capture faces, screens, documents, and your address. Room Scan needs a privacy pass before it can even start — that surprise is part of the cost.</div>
+      <p class="muted" style="margin-top:10px">The scan reconstructs geometry the recall question does not need yet: to find the charger you still have to place it afterwards. This is the cost ADR-0002 and the 2026-07-21 correction warn about.</p>
+      <div style="margin-top:16px"><button class="primary" id="scanDone" disabled>Finish scan → place items</button></div>`;
+    state.privacyHit=true;
+    const scan=$("#scan"); let held=0;
+    scan.addEventListener("click",()=>{ tap(); held++; scan.textContent = held<3?`🎥 Sweeping… (${held}/3 walls)`:"✓ Geometry reconstructed — now place items by hand";
+      if(held>=3) $("#scanDone").disabled=false; });
+    $("#scanDone").addEventListener("click",()=>{ tap();
+      // even after the heavy scan, the item still needs a manual placement → a proposal
+      state.chosenContainer="Bedroom · near the window (from scan)";
+      commitDirect("charger", state.chosenContainer, 0.6, "placed by hand after the scan; geometry alone saw no charger"); });
+  }
+};
+
+// ---- proposal review (snapshot path) → commit -------------------------------
+function reviewSnapshot(){
+  const dest=(document.querySelector("[data-dest].on")||{}).dataset?.dest || "Unsure";
+  const text=$("#snapText").value.trim();
+  const guessed = text.split(/[,，\s]+/).filter(w=>w.length>2).slice(0,5);
+  state.chosenContainer = "the box you photographed"+(dest!=="Unsure"?` · ${dest}`:"");
+  $("#runCard").innerHTML = `
+    <div class="eyebrow">Review · nothing is trusted until you confirm</div>
+    <h2 class="sec" style="margin-top:4px">Proposed contents</h2>
+    <p class="muted">Your photo + sentence became a <strong>proposal</strong>, not a fact. Check it, then commit.</p>
+    <div class="proposal">
+      <strong>Box → ${dest}</strong>
+      <div style="margin-top:6px">${guessed.map(g=>`<span class="pill">${g}</span>`).join(" ")||'<span class="muted">no items parsed — add more words</span>'}</div>
+      <div class="src">Evidence: 1 photo (photo_note) + your note · confidence 0.72 · unknown items stay unknown</div>
+    </div>
+    <p class="muted">Unknown/unphotographed parts of the box remain <em>unknown</em> — the prototype will not invent contents to fill the flow.</p>
+    <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+      <button class="primary" id="commit">✓ Commit — this becomes trusted memory</button>
+      <button class="ghost" id="editFirst">Edit an item first</button>
+    </div>`;
+  $("#editFirst").addEventListener("click",()=>{ tap(); state.corrections++; alert("(prototype) you'd tweak an item here — counts as pre-commit correction, cheaper than a wrong write."); });
+  $("#commit").addEventListener("click",()=>{ tap(); toOutcome(0.72, "your photo + confirmation", true); });
+}
+
+// paths that commit directly (operation/product/roomscan) skip the inbox
+function commitDirect(item, place, conf, evidence){ toOutcome(conf, evidence, false); }
+
+function toOutcome(conf, evidence, viaReview){
+  state._conf=conf; state._evidence=evidence; state._viaReview=viaReview;
+  const place = state.chosenContainer || "the place you recorded";
+  const staleWarn = conf<0.7 ? " It may be stale or low-confidence — treat as a candidate." : "";
+  $("#answerBox").innerHTML = `
+    <div class="answer">
+      <div>Your <strong>phone charger</strong> is probably in <strong>${place}</strong>.${staleWarn}</div>
+      <div class="conf">Evidence: ${evidence}. Confidence: ${conf.toFixed(2)}. ${viaReview?"Passed through Review before it was trusted.":"Committed directly from your structured entry."}</div>
+    </div>`;
+  $("#privacyNote").className="privacy"+(state.privacyHit?" show":"");
+  if(state.privacyHit) $("#privacyNote").textContent="You met a privacy surprise on this path (raw room video). A lighter path never raised it.";
+  show("step-outcome");
+}
+
+$("#confirmOk").addEventListener("click",()=>{ tap(); state.retrieved=true; finish("confirmed"); });
+$("#notThere").addEventListener("click",()=>{ tap(); state.corrections++; state.retrieved=false;
+  // a wrong answer becomes negative evidence + a correction, never a silent overwrite
+  finish("corrected"); });
+
+// ---- scorecard --------------------------------------------------------------
+function finish(kind){
+  clearInterval(state.timer);
+  const ms=Date.now()-state.startedAt;
+  const row={ path:PATHS.find(p=>p.id===state.path).name, ms, taps:state.taps,
+    corrections:state.corrections, privacy:state.privacyHit, retrieved:state.retrieved,
+    under5:ms<=300000, conf:state._conf };
+  results.push(row);
+  $("#scoreTitle").textContent = row.under5 ? `First trusted memory in ${fmt(ms)} ✓ under five minutes` : `${fmt(ms)} — over the five-minute bar`;
+  $("#scoreBody").innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <span class="pill ${row.under5?"good":"bad"}">${row.under5?"≤ 5 min":"> 5 min"}</span>
+      <span class="pill">${row.taps} taps</span>
+      <span class="pill ${row.corrections?"warn":"good"}">${row.corrections} pre-commit correction(s)</span>
+      <span class="pill ${row.privacy?"bad":"good"}">${row.privacy?"privacy surprise":"no privacy surprise"}</span>
+      <span class="pill ${row.retrieved?"good":"warn"}">${row.retrieved?"retrieved ✓":"needed correction"}</span>
+      <span class="pill">confidence ${row.conf?.toFixed(2)??"—"}</span>
+    </div>
+    <p class="muted">${kind==="confirmed"
+      ? "You confirmed the location — that confirmation is itself fresh evidence, so the memory got <em>more</em> trusted by being used. This is one Monthly Trusted Recall Outcome (vision §14)."
+      : "You marked it not-there — that becomes negative evidence and opens a correction, never a silent overwrite. The memory stays honest."}</p>`;
+  renderTable();
+  show("step-score");
+}
+function renderTable(){
+  const tb=$("#scoreTable tbody");
+  tb.innerHTML = results.map(r=>`<tr>
+    <td>${r.path}</td><td class="num">${fmt(r.ms)}${r.under5?" ✓":""}</td><td class="num">${r.taps}</td>
+    <td>${r.corrections}</td><td>${r.privacy?"⚠️ yes":"—"}</td><td>${r.retrieved?"✓":"correction"}</td></tr>`).join("");
+  // verdict once ≥2 paths compared
+  if(results.length>=2){
+    const best=[...results].sort((a,b)=>a.ms-b.ms)[0];
+    $("#verdict").innerHTML = `<strong>Reading so far:</strong> fastest to a trusted answer is <strong>${best.path}</strong> (${fmt(best.ms)}, ${best.taps} taps${best.privacy?", but with a privacy surprise":""}). Container Snapshot tends to win the five-minute bar because it captures evidence and defers precision; operation-first is more trustworthy but front-loads setup; Room Scan pays a privacy + geometry tax the recall question does not need yet.`;
+  } else {
+    $("#verdict").textContent="Run one more path to compare them head-to-head.";
+  }
+}
+
+// ---- controls ---------------------------------------------------------------
+$("#restart").addEventListener("click",()=>location.reload());
+$("#tryAnother").addEventListener("click",()=>{ $("#clock").hidden=true; clearInterval(state.timer); show("step-choose"); });
+renderPaths();
+</script>
+</body>
+</html>
