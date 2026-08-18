@@ -1,9 +1,10 @@
 # 01 — Choose The Durable Product Promise
 
 Type: grilling
-Status: claimed
+Status: resolved
 Claimed by: Codex
 Claimed on: 2026-07-21
+Resolved on: 2026-08-18
 Blocked by: None
 
 ## Question
@@ -81,3 +82,29 @@ Confirmed hierarchy: treat decluttering as a secondary recurring Operation built
 - Intent Kits and Declutter Review are secondary Operations built on trusted Home Memory.
 - Home Capability remains the longer-term expansion of Intent Kits, not a separate product promise.
 - The shared product vision is drafted in `docs/nestory-product-vision.zh-CN.md`; it remains directional until payer, willingness, and falsification evidence are resolved.
+
+## Answer
+
+Resolved 2026-08-18. The working notes had already converged; this records the decision the question demands.
+
+**Segment (confirmed):** urban renters moving within ~3 months or just moved, small home, enough boxes/bags/activity gear that location memory is unreliable. Not reopened.
+
+**Is moving the durable core, the acquisition event, or one Operation?**
+→ **Moving/unpacking is the acquisition & activation event, NOT the durable product promise.** It is the high-motivation on-ramp where the first trusted Home Memory is cheap to build (packing is already a natural Capture); it is not what keeps a user for a year.
+
+**The durable promise (what earns retention):** **Ownership Recall + pre-purchase recall** — "do I already own this / a usable substitute, where is it, is it still good?" — sitting on the Remember+Retrieve foundation. This is the confirmed first long-term retention loop; moving feeds it its first data. Intent Kits and Declutter Review are secondary Operations on top, not the promise.
+
+**Outcome the user changes behavior for:** a **trusted recall outcome** — finding a stored belonging without opening many boxes, and (post-move) checking the home before buying and avoiding a duplicate / choosing a substitute. The North Star is **Monthly Trusted Recall Outcomes** per active home, not item count (vision §14).
+
+**Who benefits / who might pay:** the individual renter/owner is the beneficiary and the likely first payer, willing to pay for *saved money + reclaimed space + less "I know I have one somewhere"*, once the loop is proven. Payment model is deliberately left to a later fog item — identifying the beneficiary and valued outcome is enough for this decision.
+
+**Why structured Home Memory beats the workarounds** (box labels, camera roll, notes, spreadsheets): those store fragments and rot; a Place Graph understands containment, state, freshness, and confidence, and stays trustworthy through life change because every real action (find / not-there / re-home / release) corrects it as a side effect — no periodic inventory labor.
+
+**First evidence that would DISPROVE the promise (falsification):**
+1. Moving users do NOT return after ~3 months for any Ownership/pre-purchase recall (the acquisition event acquires nobody durable).
+2. Capture/correction cost exceeds the cost of occasional duplicate purchases (maintenance > value — the core behavioral risk named in the notes).
+3. Users cannot reach a first useful, trusted answer within five minutes (activation fails — hands off to ticket 02).
+
+**Boundaries kept intact:** V1 moving/unpacking + Intent Kits wedge unchanged (ADR-0001). Room Scan / 2D / 3D stay evidence-gated (2026-07-21 correction). This decision sets *direction* for the V1.x contract; it does not publish a spec.
+
+**Hands off to:** ticket 02 (five-minute activation path) — now unblocked — must let this segment reach a trusted recall outcome in ≤5 min; and later tickets carry the falsification metrics above into field testing (ticket 03).

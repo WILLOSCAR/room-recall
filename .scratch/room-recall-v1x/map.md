@@ -22,6 +22,8 @@ A decision-complete foundation for `to-spec` to publish one ready-for-agent V1.x
 
 <!-- Append one gist and relative link per resolved child ticket. The full decision belongs in the child ticket. -->
 
+- **01 — durable product promise** ([resolved 2026-08-18](issues/01-choose-durable-product-promise.md)): moving/unpacking is the **acquisition & activation event, not the durable promise**; the durable promise is **Ownership Recall + pre-purchase recall** on the Remember+Retrieve foundation. North Star = **Monthly Trusted Recall Outcomes** per home. Beneficiary/first payer = the individual renter/owner (payment model deferred to fog). Falsification: no 3-month return, capture cost > duplicate-purchase cost, or no useful trusted answer in ≤5 min. V1 wedge + evidence-gated 2D/3D unchanged. → unblocks 02.
+
 ## Fog
 
 Decisions we can tell are coming but cannot yet state as a precise question. An item graduates from fog into an issue ticket when the question can be stated exactly — not when it can be answered.

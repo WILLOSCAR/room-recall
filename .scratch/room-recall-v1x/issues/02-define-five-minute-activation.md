@@ -1,8 +1,10 @@
 # 02 — Define The Five-Minute Activation Path
 
 Type: prototype
-Status: open
-Blocked by: 01 — Choose The Durable Product Promise
+Status: claimed
+Claimed by: Claude
+Claimed on: 2026-08-18
+Blocked by: None (01 resolved 2026-08-18)
 
 ## Question
 
