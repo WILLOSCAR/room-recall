@@ -1,6 +1,8 @@
 # Issue tracker: Local Markdown
 
-Issues and specs (you may know a spec as a PRD) for this repo live as markdown files in `.scratch/`. There is no GitHub or GitLab remote for this idea yet.
+New issues and specs (you may know a spec as a PRD) for this repo live privately as markdown files in `.scratch/`. The repository has a GitHub remote for source control, but that does not make GitHub Issues the tracker: do not create, update, or publish remote issues unless the user explicitly changes this configuration.
+
+This checkout excludes `.scratch/` through `.git/info/exclude`, so newly created tracker files stay local by default. Existing `.scratch` files already tracked by Git remain historical repository content; this setup does not rewrite or remove them.
 
 ## Conventions
 

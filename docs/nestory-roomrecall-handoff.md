@@ -1,12 +1,19 @@
 # Nestory / RoomRecall Handoff
 
-Created: 2026-07-06 · Updated: 2026-08-11 (system optimization and UI rebuild)
+Created: 2026-07-06 · Updated: 2026-08-18 (two engineering efforts shipped; wayfinder 01–03 resolved)
 
 Audience: a new product / design / engineering agent or human who needs to understand the current work in about 10 minutes and continue it without re-discovering the whole thread.
 
 Product vision draft: `docs/nestory-product-vision.zh-CN.md` now unifies moving as the acquisition event, long-term Ownership Recall and pre-purchase recall, Home Capability, and Declutter Review. It is directional context, not a replacement for the canonical V1 PRD or a future V1.x build spec.
 
-> **2026-07-13 update — read this box first.**
+> **2026-08-18 update — read this box first.**
+> Work since the 08-11 pass, all on branch `codex/full-stack-low-latency`:
+> 1. **Two engineering efforts shipped and reviewed** (tracker: `.scratch/full-stack-low-latency/`, `.scratch/spatial-review-polish/`, all tickets done). (a) *Loss-safe low-latency runtime* — ADR-0003: command-as-transaction, atomic file persistence, private query indexes, bounded HTTP/agent transport, lazy Three.js, zero settled RAF. (b) *2D/3D spatial-review polish* — read-only projection per ADR-0002: state-first selection with 2D↔3D parity, hover + fitted `EdgesGeometry` selection outline, layer + X-ray toggles, locate↔inspect linkage, lighting/token elegance, motion + a11y. Both closed with two-axis `code-review`; `npm run verify` all green.
+> 2. **`wayfinder` map `.scratch/room-recall-v1x/` advanced 01→03.** (01) moving is the *acquisition/activation event*, not the durable promise — the durable promise is **Ownership Recall + pre-purchase recall**; North Star = *Monthly Trusted Recall Outcomes*. (02) the **Container Snapshot fast lane** is the five-minute activation path — runnable prototype in `.scratch/room-recall-v1x/activation-prototype/`. (03) real users were unavailable, so an **evidence proxy** (desk research + synthetic personas — *not* field evidence) returned **REVISE**: advance the on-ramp to a *real* ≥5-user field test with a revised protocol; do **not** proceed to a V1.x `spec.md` on the proxy. Downstream reconstruction tickets (04+) stay blocked on real evidence.
+> 3. **Tracker is now private-local.** New `.scratch/` files are excluded via `.git/info/exclude`; already-tracked `.scratch/` files remain historical repository content. A GitHub remote exists for source control, but GitHub Issues is not the tracker — do not create/publish remote issues unless the user reconfigures. Workflow doc `AGENTS.md` is aligned to the current `ask-matt` router (§20 below predates this; treat AGENTS.md as authoritative on process).
+> The honest state: the on-ramp is promising enough to field-test; the durable Ownership-Recall promise sits on the category's dominant failure mode (episodic-utility churn + correction-cost) and is **unproven** — the true next step is a real ≥5-user test, not more building.
+
+> **2026-07-13 update.**
 > The three top recommendations of this handoff have been executed:
 > 1. **V1 surface decided**: moving/unpacking + kits. Decision record in `docs/nestory-v1-prd.md` (canonical V1 PRD).
 > 2. **PRD tightened**: `docs/nestory-v1-prd.md` supersedes the long-form requirements contract (now `docs/archive/product-requirements.md`) for V1 scope.

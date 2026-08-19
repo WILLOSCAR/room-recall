@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Work is tracked as local markdown under `.scratch/`; there is no GitHub or GitLab remote for this idea yet. See `docs/agents/issue-tracker.md`.
+New work is tracked privately as local markdown under `.scratch/`. A GitHub remote exists for source control, but agents must not create or update remote issues unless the user explicitly switches the tracker. Existing `.scratch` files already tracked by Git remain historical repository content. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
