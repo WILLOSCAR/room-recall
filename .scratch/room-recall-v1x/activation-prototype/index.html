@@ -79,9 +79,17 @@
   .proposal .src{font-size:12px;color:var(--ink-faint);margin-top:6px}
   .answer{border:1px solid var(--line);border-left:4px solid var(--sage);border-radius:var(--radius-sm);padding:14px 16px;background:#f8fcf9}
   .answer .conf{font-size:12px;color:var(--ink-soft);margin-top:6px}
+  .answer-photo{display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;padding:6px 10px;border-radius:8px;
+    background:var(--paper-2);border:1px solid var(--line);font-size:12px;color:var(--ink-soft)}
+  .answer-photo span{font-weight:600;color:var(--ink)}
+  .chip-x{border:0;background:transparent;color:var(--ink-faint);font-size:14px;line-height:1;padding:0 0 0 2px;cursor:pointer}
+  .chip-x:hover{color:var(--accent-ink)}
+  .privacy-pre{margin:4px 0 12px;padding:9px 12px;border-radius:var(--radius-sm);background:var(--sage-soft);
+    color:#1f5c46;font-size:12.5px}
   .muted{color:var(--ink-soft);font-size:13px}
   .scorecard{margin-top:14px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
+  .scorecard{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px;min-width:520px}
   th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
   th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-faint)}
   td.num{font-variant-numeric:tabular-nums;text-align:right}
@@ -166,7 +174,7 @@
 "use strict";
 // ---- instrumentation --------------------------------------------------------
 const state = { path:null, startedAt:0, taps:0, corrections:0, privacyHit:false, retrieved:false,
-  timer:null, chosenContainer:null };
+  timer:null, chosenContainer:null, items:[] };
 const results = []; // one row per completed run
 
 const PATHS = [
@@ -195,7 +203,7 @@ function tick(){ const el=$("#timer"); const ms=Date.now()-state.startedAt; el.t
 function renderPaths(){
   $("#paths").innerHTML = PATHS.map(p=>`
     <div class="path${p.recommended?" recommended":""}" data-path="${p.id}" role="button" tabindex="0">
-      ${p.recommended?'<span class="tag">hypothesized winner</span>':''}
+      ${p.recommended?'<span class="tag">fewest steps</span>':''}
       <h3>${p.name}</h3>
       <div class="why">${p.why}</div>
       <div class="cost">${p.cost}</div>
@@ -209,7 +217,7 @@ function renderPaths(){
 
 function startPath(id){
   state.path=id; state.startedAt=Date.now(); state.taps=0; state.corrections=0;
-  state.privacyHit=false; state.retrieved=false; state.chosenContainer=null;
+  state.privacyHit=false; state.retrieved=false; state.chosenContainer=null; state.items=[];
   $("#clock").hidden=false; $("#pathPill").textContent=PATHS.find(p=>p.id===id).name;
   $("#tapPill").textContent="0 taps"; clearInterval(state.timer); state.timer=setInterval(tick,250); tick();
   RUN[id]();
@@ -223,17 +231,18 @@ const RUN = {
     $("#runCard").innerHTML = `
       <div class="eyebrow">Container Snapshot · fast lane</div>
       <h2 class="sec" style="margin-top:4px">Capture one box</h2>
-      <p class="muted">Point at the box you think holds tonight's essentials. One photo, one sentence — that's the whole capture.</p>
+      <p class="muted">Point at the box you think holds tonight's essentials. One photo, one line — that's the whole capture.</p>
+      <p class="privacy-pre">🔒 Your photo stays <strong>on this device</strong> by default. Only you can see it, and you can delete it anytime.</p>
       <div class="snap" id="snap">📷 Tap to photograph the box</div>
       <label>Say what's inside (rough is fine — precision comes later)</label>
-      <textarea id="snapText" placeholder="e.g. bedroom essentials: charger, lamp, meds, socks"></textarea>
+      <textarea id="snapText" placeholder="e.g. charger, lamp, meds, socks"></textarea>
       <div class="chiprow" id="destRow">
         <span class="muted" style="width:100%">Destination room:</span>
         ${["Bedroom","Living room","Kitchen","Unsure"].map(r=>`<span class="chip" data-dest="${r}">${r}</span>`).join("")}
       </div>
       <div style="margin-top:16px"><button class="primary" id="snapBuild" disabled>Build contents proposal →</button></div>`;
     const snap=$("#snap");
-    snap.addEventListener("click",()=>{ tap(); snap.classList.add("captured"); snap.textContent="✓ Photo captured — stored as evidence (photo_note)"; maybeEnable(); });
+    snap.addEventListener("click",()=>{ tap(); snap.classList.add("captured"); snap.textContent="✓ Photo captured — kept privately on your device"; maybeEnable(); });
     $("#snapText").addEventListener("input",()=>maybeEnable());
     document.querySelectorAll("[data-dest]").forEach(c=>c.addEventListener("click",()=>{
       tap(); document.querySelectorAll("[data-dest]").forEach(x=>x.classList.remove("on")); c.classList.add("on"); maybeEnable();
@@ -298,40 +307,74 @@ const RUN = {
 };
 
 // ---- proposal review (snapshot path) → commit -------------------------------
+// Parser: keep multi-word items, strip room/filler words, never silently drop.
+const FILLER = new Set(["the","and","a","an","some","few","of","in","to","my","box","stuff","things","essentials","bedroom","kitchen","living","room","bathroom","misc"]);
+function parseItems(text){
+  return text
+    .split(/[,，;；\n]|(?:\band\b)/i)           // split on real separators, not spaces (keeps "phone cable")
+    .map(s => s.replace(/^[\s:：-]+|[\s:：-]+$/g,"").trim())
+    .map(s => s.replace(/^(essentials?|contents?)\s*[:：]?\s*/i,"")) // drop leading "essentials:" label
+    .filter(s => s.length > 1)
+    .filter(s => !FILLER.has(s.toLowerCase()))
+    .filter((s,i,a) => a.indexOf(s)===i);        // dedupe, no cap
+}
 function reviewSnapshot(){
   const dest=(document.querySelector("[data-dest].on")||{}).dataset?.dest || "Unsure";
   const text=$("#snapText").value.trim();
-  const guessed = text.split(/[,，\s]+/).filter(w=>w.length>2).slice(0,5);
+  // items live in mutable state so the chip editor is real, not a stub.
+  state.items = parseItems(text);
   state.chosenContainer = "the box you photographed"+(dest!=="Unsure"?` · ${dest}`:"");
+  const renderChips = () => state.items.length
+    ? state.items.map((g,i)=>`<span class="pill" data-chip="${i}">${g} <button class="chip-x" data-remove="${i}" aria-label="Remove ${g}">×</button></span>`).join(" ")
+    : '<span class="muted">no items parsed — add more words below</span>';
   $("#runCard").innerHTML = `
     <div class="eyebrow">Review · nothing is trusted until you confirm</div>
     <h2 class="sec" style="margin-top:4px">Proposed contents</h2>
-    <p class="muted">Your photo + sentence became a <strong>proposal</strong>, not a fact. Check it, then commit.</p>
+    <p class="muted">Your photo + note became a <strong>proposal</strong>, not a fact. Fix any item, then commit.</p>
     <div class="proposal">
       <strong>Box → ${dest}</strong>
-      <div style="margin-top:6px">${guessed.map(g=>`<span class="pill">${g}</span>`).join(" ")||'<span class="muted">no items parsed — add more words</span>'}</div>
-      <div class="src">Evidence: 1 photo (photo_note) + your note · confidence 0.72 · unknown items stay unknown</div>
+      <div id="chips" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">${renderChips()}</div>
+      <div style="margin-top:8px;display:flex;gap:6px"><input type="text" id="addChip" placeholder="add an item…" style="flex:1"><button class="ghost" id="addChipBtn">+ add</button></div>
+      <div class="src">Your photo, stored privately on this device · pretty sure · unknown items stay unknown</div>
     </div>
-    <p class="muted">Unknown/unphotographed parts of the box remain <em>unknown</em> — the prototype will not invent contents to fill the flow.</p>
+    <p class="muted">Unknown / unphotographed parts of the box stay <em>unknown</em> — nothing is invented to fill the flow.</p>
     <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
       <button class="primary" id="commit">✓ Commit — this becomes trusted memory</button>
-      <button class="ghost" id="editFirst">Edit an item first</button>
     </div>`;
-  $("#editFirst").addEventListener("click",()=>{ tap(); state.corrections++; alert("(prototype) you'd tweak an item here — counts as pre-commit correction, cheaper than a wrong write."); });
-  $("#commit").addEventListener("click",()=>{ tap(); toOutcome(0.72, "your photo + confirmation", true); });
+  const refresh = () => { $("#chips").innerHTML = renderChips(); wireChips(); };
+  function wireChips(){
+    document.querySelectorAll("[data-remove]").forEach(b=>b.addEventListener("click",()=>{
+      tap(); state.corrections++; state.items.splice(Number(b.dataset.remove),1); refresh();
+    }));
+  }
+  wireChips();
+  const add = () => { const v=$("#addChip").value.trim(); if(v){ tap(); state.corrections++; state.items.push(v); $("#addChip").value=""; refresh(); } };
+  $("#addChipBtn").addEventListener("click",add);
+  $("#addChip").addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); add(); } });
+  $("#commit").addEventListener("click",()=>{ tap(); toOutcome(0.72, "your photo + confirmation", true, true); });
 }
 
 // paths that commit directly (operation/product/roomscan) skip the inbox
-function commitDirect(item, place, conf, evidence){ toOutcome(conf, evidence, false); }
+function commitDirect(item, place, conf, evidence){ toOutcome(conf, evidence, false, false); }
 
-function toOutcome(conf, evidence, viaReview){
+function toOutcome(conf, evidence, viaReview, hasPhoto){
   state._conf=conf; state._evidence=evidence; state._viaReview=viaReview;
   const place = state.chosenContainer || "the place you recorded";
-  const staleWarn = conf<0.7 ? " It may be stale or low-confidence — treat as a candidate." : "";
+  // Non-circular retrieval: 1-in-3 the charger is NOT in the box the user just
+  // captured — because in real life it often isn't. This is what makes the
+  // "not there → correct" path reachable and the answer more than a receipt.
+  const wrong = (state.taps % 3 === 0) && viaReview; // deterministic-but-not-always-right
+  state._wrong = wrong;
+  const conflabel = conf>=0.8 ? "pretty sure" : conf>=0.65 ? "a good guess" : "just a guess";
+  const photoTag = hasPhoto ? `<div class="answer-photo" aria-label="box photo">📷<span>your box photo</span></div>` : "";
+  const body = wrong
+    ? `Your <strong>phone charger</strong> is probably in <strong>${place}</strong> — but this is ${conflabel}, and the note didn't clearly list it. If it's not there, tell me.`
+    : `Your <strong>phone charger</strong> is probably in <strong>${place}</strong>.`;
   $("#answerBox").innerHTML = `
     <div class="answer">
-      <div>Your <strong>phone charger</strong> is probably in <strong>${place}</strong>.${staleWarn}</div>
-      <div class="conf">Evidence: ${evidence}. Confidence: ${conf.toFixed(2)}. ${viaReview?"Passed through Review before it was trusted.":"Committed directly from your structured entry."}</div>
+      ${photoTag}
+      <div>${body}</div>
+      <div class="conf">Evidence: ${evidence}. Confidence: ${conflabel} (${conf.toFixed(2)}). ${viaReview?"Passed through Review before it was trusted.":"Committed directly from your structured entry."}</div>
     </div>`;
   $("#privacyNote").className="privacy"+(state.privacyHit?" show":"");
   if(state.privacyHit) $("#privacyNote").textContent="You met a privacy surprise on this path (raw room video). A lighter path never raised it.";

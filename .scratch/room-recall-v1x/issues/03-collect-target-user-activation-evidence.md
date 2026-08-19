@@ -52,3 +52,20 @@ Real users were unavailable; the user authorised a simulation/desk-research **ev
 
 ### Consequence for the map
 Because the verdict is **revise, not proceed**, the downstream room-reconstruction chain stays blocked as designed. Ticket 04 (visual reconstruction route) is **NOT** unblocked by a simulation — its precondition is *real* evidence that reconstruction is necessary, which this proxy explicitly cannot provide. The effort's honest state: the on-ramp is promising enough to field-test, the durable promise is unproven and sits on the category's dominant failure mode, and a real ≥5-user test with the revised protocol is the true next step.
+
+## Update 2026-08-19 — second proxy round (5 simulated user sessions) + prototype fixes
+
+At the user's direction (field testing waived; agent-simulation accepted as the substitute), a second round ran **five independent persona-agents** — fluent (Mia), privacy-cautious (Raj), low-tech/ESL (Chen), skeptic (Devin), busy parent (Sofia) — each role-playing a real first session with genuine needs.
+
+**Verdict: still REVISE** (consistent). 4/5 would return, but 3 of the 4 only *conditionally* — on a payoff the prototype couldn't show. The decisive finding: **retrieval was circular in 5/5 sessions** ("a receipt for what I just typed"), so the durable promise stayed unevidenced; and the skeptic finished activation in <75s yet had **no return trigger** — direct evidence the ≤5-min metric is blind to retention. **Ticket 04 stays blocked** (the synthesis argued *against* reconstruction necessity: 5/5 refused Room Scan on privacy, 5/5 succeeded from one box photo; the only spatial want — "show the box photo in the answer" — is photo-as-recognition, already served by Snapshot, not a geometry need).
+
+The sessions surfaced **7 real prototype defects**, all now fixed and verified in-browser (see `activation-prototype/README.md` → "Revision round"):
+1. parser kept filler / dropped items / split "phone cable" → rewritten (verified all items kept);
+2. "Edit an item" was a dead `alert()` stub → real add/remove chip editor;
+3. **circular retrieval** → ~1-in-3 committed runs the item is NOT in the photographed box, so "Not there → correct" is genuinely reachable;
+4. answer never showed the box photo (the one edge over a Sharpie) → now shown;
+5. no pre-shutter privacy disclosure + scary "photo_note/evidence" jargon → on-device disclosure before the camera, jargon dropped;
+6. bare `0.72` → plain-language confidence;
+7. mobile scorecard clipped + steering "hypothesized winner" badge → scrolls + neutral "fewest steps".
+
+**Honesty caveat (unchanged):** simulated personas are still not field evidence. The two axes that matter most — 3-month unprompted return and capture-cost-vs-duplicate-purchase over real weeks — are behavioral/temporal and cannot be simulated in one session. The fixes make the *next* round able to observe non-circular retrieval and real correction burden; they do not prove retention or justify a V1.x build spec.

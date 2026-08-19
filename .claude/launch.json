@@ -4,8 +4,8 @@
     {
       "name": "activation-prototype",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8793"],
-      "port": 8793
+      "runtimeArgs": ["-m", "http.server", "8811"],
+      "port": 8811
     }
   ]
 }
