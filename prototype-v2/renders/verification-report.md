@@ -1,14 +1,14 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-19T14:19:12.618Z
+Generated: 2026-08-19T16:23:09.056Z
 Runtime: node v26.3.1 · typescript strict
-- Assertions: 481
-- Passed: 481
-- Failed: 0
+- Assertions: 489
+- Passed: 487
+- Failed: 2
 - Browser smoke: ran
-- UI DOM-commit p95: 3.200 ms
-- Household UI DOM-commit p95: 6.900 ms
+- UI DOM-commit p95: 3.300 ms
+- Household UI DOM-commit p95: 7.100 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
-- Settled spatial RAF callbacks observed: 0
+- Settled spatial RAF callbacks observed: 1
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
 ## typescript gate
 - ✓ `tsc-typecheck-and-emit`
@@ -237,12 +237,20 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `ask-ownership-intent`
 - ✓ `ask-ownership-none-is-honest`
 - ✓ `ask-ownership-does-not-hijack-locate`
+- ✓ `ask-declutter-intent`
 - ✓ `ask-help-fallback`
 ## ownership recall (durable loop)
 - ✓ `ownership-owned-cites-place-and-confidence`
 - ✓ `ownership-none-stays-honest`
 - ✓ `ownership-unavailable-is-flagged`
 - ✓ `ownership-tool-dispatches`
+## declutter review (release)
+- ✓ `declutter-surfaces-duplicates`
+- ✓ `declutter-every-candidate-has-observed-reason`
+- ✓ `declutter-essentials-never-offered-for-disposal`
+- ✓ `declutter-is-decision-support-not-disposal`
+- ✓ `declutter-is-read-only`
+- ✓ `declutter-tool-dispatches`
 ## P0.10 sync service
 - ✓ `srv-corrupt-file-fails-closed`
 - ✓ `srv-health`
@@ -373,7 +381,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `spatial-furnished-scene-stays-within-gpu-budget`
 - ✓ `spatial-labels-render-only-in-accessible-html-inspector`
 - ✓ `unrelated-update-preserves-spatial-canvas`
-- ✓ `settled-spatial-scene-has-zero-continuous-raf`
+- ✗ `settled-spatial-scene-has-zero-continuous-raf` — 1
 - ✓ `spatial-selection-from-scene-updates-inspector`
 - ✓ `spatial-selection-does-not-remount-canvas`
 - ✓ `spatial-selection-uses-fitted-outline`
@@ -419,6 +427,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `dom-ask-shows-tool-call`
 - ✓ `ask-answer-is-announced-through-persistent-region`
 - ✓ `dom-ask-ownership-recall`
+- ✓ `dom-ask-declutter-review`
 - ✓ `mobile-nav-reaches-home`
 - ✓ `mobile-nav-reaches-ask`
 - ✓ `mobile-nav-reaches-capture`
@@ -505,7 +514,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `household-belongings-dom-is-bounded`
 - ✓ `household-belongings-shows-window-status`
 - ✓ `household-filter-searches-beyond-first-window`
-- ✓ `household-belongings-next-page-replaces-window`
+- ✗ `household-belongings-next-page-replaces-window` — 
 - ✓ `household-belongings-pagination-keeps-hard-dom-cap`
 - ✓ `household-container-modal-dom-is-bounded`
 - ✓ `household-container-filter-searches-full-truth`

@@ -1056,6 +1056,19 @@ function askBubble(entry: AskLogEntry): string {
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${o.ownedCount} owned · ${o.substituteCount} substitute(s) · ${o.availableCount} available now</span></div>
       ${rows || '<div class="muted">Nothing recorded in this category yet.</div>'}
     </div>`;
+  } else if (reply?.declutter) {
+    const d = reply.declutter;
+    const groups = d.groups.map((g) => `<div style="margin-top:8px">
+      <div class="proposal-section-label">${esc(g.label)}</div>
+      ${g.items.map((c) => `<div class="attention-row">
+        <span class="grow"><strong>${esc(c.item)}</strong><div class="place">${esc(c.because)}${c.placeKnown ? ` · ${esc(c.chainText)}` : ""}</div></span>
+        <span class="chip">${c.options.length} option${c.options.length === 1 ? "" : "s"}</span>
+      </div>`).join("")}
+    </div>`).join("");
+    extra = `<div class="card" style="box-shadow:none;margin-top:8px">
+      ${groups || '<div class="muted">Nothing flagged for review right now.</div>'}
+      <div class="trust-note" style="margin-top:12px"><i data-lucide="shield-check"></i> ${esc(d.note)}</div>
+    </div>`;
   }
   return `<div class="ask-row"><div class="ask-bubble nestory">
     ${reply?.answer?.ok ? "" : `<div>${esc(entry.text)}</div>`}
@@ -1076,7 +1089,7 @@ function renderAsk(): string {
     <div class="ask-console">
       <div class="ask-console-head"><span><i data-lucide="sparkles"></i> Nestory</span><span><span class="live-dot"></span> Home memory ready</span></div>
       <div class="ask-log" role="log" aria-label="Conversation" data-testid="ask-log">
-        ${ui.askLog.map(askBubble).join("") || `<div class="ask-starters"><span>Try asking</span>${["Where is my water bottle?", "Do I already have a charger?", "Which box has my winter jacket?", "Prepare my gym kit", "What needs attention?"].map((prompt) => `<button data-action="ask-prompt" data-prompt="${esc(prompt)}"><i data-lucide="arrow-up-right"></i>${esc(prompt)}</button>`).join("")}</div>`}
+        ${ui.askLog.map(askBubble).join("") || `<div class="ask-starters"><span>Try asking</span>${["Where is my water bottle?", "Do I already have a charger?", "Which box has my winter jacket?", "Prepare my gym kit", "What can I declutter?", "What needs attention?"].map((prompt) => `<button data-action="ask-prompt" data-prompt="${esc(prompt)}"><i data-lucide="arrow-up-right"></i>${esc(prompt)}</button>`).join("")}</div>`}
       </div>
       <div class="ask-composer">
         <i data-lucide="sparkles"></i><input type="text" id="ask-input" aria-label="Ask Nestory" data-enter="ask-send" placeholder="Ask where something is, whether you already own it, or what needs attention…">

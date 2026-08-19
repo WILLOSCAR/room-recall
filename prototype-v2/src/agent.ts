@@ -115,6 +115,14 @@ export function createAgentToolkit(store: Store): AgentToolkit {
     },
     {
       descriptor: {
+        name: "declutter_review",
+        description: "Decision support for letting go (Release): belongings worth a fresh decision, each with an observed reason (duplicate kind, long-unconfirmed placement, user-flagged state) and the user's options (keep / re-home / reuse / sell / donate / recycle / discard / defer). Takes NO action, never disposes, never infers 'unused' from a blank usage history.",
+        parameters: { type: "object", properties: {}, required: [] }
+      },
+      run: () => store.declutterReview()
+    },
+    {
+      descriptor: {
         name: "start_operation",
         description: "Start an operation from a template (move, gym, travel). Kit templates expand into a merged checklist against real belongings.",
         parameters: { type: "object", properties: { template_id: { type: "string", description: "Operation template id.", enum: ["move", "gym", "travel"] } }, required: ["template_id"] }

@@ -11,7 +11,7 @@ import type {
   CreateRoomInput, DerivedState, ReadonlyDerivedState,
   EvidenceKind, EvidenceRecord, ExportDump, Kit, KitReadiness, KitRow, KitRowView,
   LifecycleState, LocateAnswer, LocateSuccess, MoveReadiness, ObservationRecord,
-  OperationData, OperationStatus, OperationView, OwnershipRecallAnswer, OwnershipMatch, PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
+  OperationData, OperationStatus, OperationView, OwnershipRecallAnswer, OwnershipMatch, DeclutterReviewResult, DeclutterCandidate, DeclutterReason, DeclutterOption, PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
   PlanPin, PlanRect, ProposalRecord, ProposalStatus, ProposalView, Relation, RetrievalPlanGroup,
   RetrievalPlanItem, Room, RowStatus,
   ScoredBelongingView, StorageLike, Store, StoreOptions, UnpackPriorityEntry,
@@ -1179,6 +1179,67 @@ export function createStore(options: StoreOptions): Store {
     return attentionCache;
   }
 
+  // Declutter Review (Release) — decision SUPPORT only. Surfaces belongings worth
+  // a fresh decision with an observed REASON; never infers "unused" from absence
+  // of a usage record, never disposes, never shames.
+  const DECLUTTER_GONE: readonly LifecycleState[] = ["consumed", "retired"];
+  const FLAGGED_STATES: readonly LifecycleState[] = ["missing", "lent_out"];
+  function declutterReview(): DeclutterReviewResult {
+    ensureTemporalCacheFresh();
+    const all = searchBelongings("").filter((v) => !v.mergedInto && !DECLUTTER_GONE.includes(v.state));
+    // group by kind to detect duplicates (2+ sharing a primary kind)
+    const byKind = new Map<string, typeof all>();
+    for (const v of all) {
+      const k = v.kinds[0];
+      if (!k) continue;
+      const bucket = byKind.get(k);
+      if (bucket) bucket.push(v); else byKind.set(k, [v]);
+    }
+    const candidates: DeclutterCandidate[] = [];
+    const seen = new Set<string>();
+    const baseOptions: DeclutterOption[] = ["keep", "re_home", "reuse", "sell", "donate", "recycle", "discard", "defer"];
+    const push = (v: (typeof all)[number], reason: DeclutterReason, because: string, duplicateOf: string[] = []) => {
+      if (seen.has(v.id)) return;
+      seen.add(v.id);
+      candidates.push({
+        itemId: v.id, item: v.name, reason, because,
+        kind: v.kinds[0] ?? v.name, state: v.state, chainText: v.chainText,
+        placeKnown: !!v.placement, daysSinceUpdate: v.daysSinceUpdate, importance: v.importance,
+        duplicateOf,
+        // essentials are never nudged toward disposal — only keep/re-home/defer.
+        options: v.importance === "essential" ? ["keep", "re_home", "defer"] : baseOptions
+      });
+    };
+    // 1) duplicate kinds — an observed fact (two things of the same kind), not a value judgment.
+    for (const [kind, items] of byKind) {
+      if (items.length < 2) continue;
+      for (const v of items) push(v, "duplicate_kind", `You have ${items.length} of kind “${kind.replace(/-/g, " ")}”.`, items.filter((o) => o.id !== v.id).map((o) => o.name));
+    }
+    // 2) long-unconfirmed placements — the record is old; worth reconfirming or re-homing.
+    for (const v of all) {
+      if ((v.daysSinceUpdate ?? 0) > 45 && v.placement) push(v, "long_unconfirmed", `Its place hasn't been confirmed in ${v.daysSinceUpdate} days.`);
+    }
+    // 3) user-flagged lifecycle states (missing / lent out) — facts the user set, not inferred.
+    for (const v of all) {
+      if (FLAGGED_STATES.includes(v.state)) push(v, "flagged_state", `You marked it “${v.state.replace(/_/g, " ")}”.`);
+    }
+    const groupDefs: { reason: DeclutterReason; label: string }[] = [
+      { reason: "duplicate_kind", label: "Possible duplicates" },
+      { reason: "long_unconfirmed", label: "Not confirmed in a while" },
+      { reason: "flagged_state", label: "You flagged these" }
+    ];
+    const groups = groupDefs
+      .map((g) => ({ ...g, items: candidates.filter((c) => c.reason === g.reason) }))
+      .filter((g) => g.items.length > 0);
+    const sentence = candidates.length
+      ? `${candidates.length} belonging${candidates.length === 1 ? "" : "s"} worth a fresh decision — you decide, I won't act on my own.`
+      : "Nothing is flagged for review. I only surface an item when there's an observed reason.";
+    return deepFreeze({
+      ok: true, candidates, groups, sentence,
+      note: "Decision support only: no item is discarded, hidden, or judged automatically. A blank usage history is never read as “unused”."
+    });
+  }
+
   // PRD §8 activation metric, derived live from the graph.
   function activation(): ActivationSummary {
     const belongingCount = [...state.belongings.values()].filter((b) => !b.mergedInto).length;
@@ -1741,7 +1802,7 @@ export function createStore(options: StoreOptions): Store {
     get revision() { return revision; },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     // read
-    searchBelongings, searchBelongingsPage, belongingView, locate, locateById, ownershipRecall,
+    searchBelongings, searchBelongingsPage, belongingView, locate, locateById, ownershipRecall, declutterReview,
     containerContents, containersView, staleContainers, whichContainerHas,
     attention, activation, operationsView, operationView, retrievalPlan, unpackPriority,
     proposals, commitsView, exportJson, exportJsonText, planPinFor, chainFor, chainText,

@@ -426,6 +426,38 @@ export interface OwnershipRecallAnswer {
   nextAction: "reuse" | "locate" | "consider_buy" | "add_belonging";
 }
 
+// Declutter Review (Release, vision §5.5): decision SUPPORT, never disposal. It
+// surfaces belongings worth a fresh decision and always says WHY, then offers the
+// user-controlled options. Hard rules: no shame, no streaks, no auto-dispose, and
+// it must NEVER infer "unused" from the absence of a usage record — the reason is
+// always an observed fact (a duplicate kind, a long-unconfirmed placement, a
+// broken/expired state the user set), not a judgment of value.
+export type DeclutterReason = "duplicate_kind" | "long_unconfirmed" | "flagged_state";
+export type DeclutterOption = "keep" | "re_home" | "reuse" | "sell" | "donate" | "recycle" | "discard" | "defer";
+
+export interface DeclutterCandidate {
+  itemId: string;
+  item: string;
+  reason: DeclutterReason;
+  because: string;             // the observed fact, in plain language — never "you don't use it"
+  kind: string;
+  state: LifecycleState;
+  chainText: string;
+  placeKnown: boolean;
+  daysSinceUpdate: number | null;
+  importance: Importance;
+  duplicateOf: string[];       // other item names sharing the kind (for duplicate_kind)
+  options: DeclutterOption[];  // the user-controlled choices; the system takes none of them
+}
+
+export interface DeclutterReviewResult {
+  ok: true;
+  candidates: DeclutterCandidate[];
+  groups: { reason: DeclutterReason; label: string; items: DeclutterCandidate[] }[];
+  sentence: string;            // e.g. "3 belongings worth a fresh decision — you decide, I won't."
+  note: string;                // the standing guarantee (no shame / no auto-dispose / unused≠no-record)
+}
+
 
 export interface ContainerContentsView {
   container: ContainerEntity;
@@ -600,6 +632,7 @@ export interface Store {
   locate(query: string): DeepReadonly<LocateAnswer>;
   locateById(itemId: string, ctx?: { query?: string | null; alternates?: DeepReadonly<ScoredBelongingView[]> }): DeepReadonly<LocateAnswer>;
   ownershipRecall(query: string): DeepReadonly<OwnershipRecallAnswer>;
+  declutterReview(): DeepReadonly<DeclutterReviewResult>;
   containerContents(containerId: string): DeepReadonly<ContainerContentsView> | null;
   containersView(): DeepReadonly<ContainerView[]>;
   staleContainers(): DeepReadonly<ContainerView[]>;

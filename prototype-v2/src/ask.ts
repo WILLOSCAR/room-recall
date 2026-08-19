@@ -5,7 +5,7 @@
 
 import type { AgentToolkit } from "./agent.ts";
 import type {
-  AttentionSummary, ContainerContentsView, LocateAnswer, OwnershipRecallAnswer, RetrievalPlanGroup,
+  AttentionSummary, ContainerContentsView, DeclutterReviewResult, LocateAnswer, OwnershipRecallAnswer, RetrievalPlanGroup,
   Store, UnpackPriorityEntry, WhichContainerHit
 } from "./types.ts";
 
@@ -15,11 +15,12 @@ export interface AskToolCall {
 }
 
 export interface AskReply {
-  intent: "locate" | "ownership" | "which_container" | "container_contents" | "kit" | "unpack" | "attention" | "help";
+  intent: "locate" | "ownership" | "declutter" | "which_container" | "container_contents" | "kit" | "unpack" | "attention" | "help";
   toolCalls: AskToolCall[];
   text: string;
   answer?: LocateAnswer;
   ownership?: OwnershipRecallAnswer;
+  declutter?: DeclutterReviewResult;
   hits?: WhichContainerHit[];
   contents?: ContainerContentsView;
   plan?: RetrievalPlanGroup[];
@@ -129,6 +130,13 @@ export function ask(store: Store, toolkit: AgentToolkit, raw: string): AskReply 
         ? `Unpack ${top.box.box?.label ?? top.box.name} first${top.essentials.length ? ` — it has essentials: ${top.essentials.join(", ")}` : ""}. ${priority.length - 1 > 0 ? `${priority.length - 1} more box${priority.length - 1 > 1 ? "es" : ""} after that.` : ""}`.trim()
         : "No boxes are waiting to be unpacked."
     };
+  }
+
+  // "declutter / what can I get rid of / clean out / let go / sell / donate"
+  // — Declutter Review (Release): decision support, never disposal.
+  if (/\b(declutter|get rid of|clean out|let go|throw (out|away)|too much stuff|what can i (sell|donate|toss|throw)|review( my)? (clutter|stuff|belongings for))\b/.test(lower)) {
+    const declutter = call<DeclutterReviewResult>("declutter_review", {});
+    return { intent: "declutter", toolCalls, declutter, text: declutter.sentence };
   }
 
   // "do I already have / own a ___?", "do I need to buy ___?", "before I buy ___"

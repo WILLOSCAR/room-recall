@@ -1279,6 +1279,9 @@ section("ask router", () => {
   const stillLocate = ask(store, toolkit, "Where is my water bottle?");
   assert("ask-ownership-does-not-hijack-locate", stillLocate.intent === "locate", stillLocate.intent);
 
+  const declutter = ask(store, toolkit, "What can I declutter?");
+  assert("ask-declutter-intent", declutter.intent === "declutter" && declutter.toolCalls[0]?.name === "declutter_review" && (declutter.declutter?.candidates.length ?? 0) >= 1, declutter.text);
+
   const help = ask(store, toolkit, "???");
   assert("ask-help-fallback", help.intent === "help" && help.toolCalls.length === 0);
 });
@@ -1305,6 +1308,27 @@ section("ownership recall (durable loop)", () => {
   const tk = createAgentToolkit(store);
   const viaTool = tk.dispatch("ownership_recall", { query: "water bottle" }) as { ok: boolean; verdict: string };
   assert("ownership-tool-dispatches", viaTool.ok === true && viaTool.verdict === "own_available", JSON.stringify(viaTool).slice(0, 80));
+});
+
+section("declutter review (release)", () => {
+  const store = fresh();
+  const r = store.declutterReview();
+  assert("declutter-surfaces-duplicates",
+    r.ok && r.groups.some((g) => g.reason === "duplicate_kind")
+    && r.candidates.some((c) => c.reason === "duplicate_kind" && c.duplicateOf.length >= 1), r.sentence);
+  assert("declutter-every-candidate-has-observed-reason",
+    r.candidates.length > 0 && r.candidates.every((c) => c.because.length > 0 && !/unused|don'?t use/i.test(c.because)), `n=${r.candidates.length}`);
+  assert("declutter-essentials-never-offered-for-disposal",
+    r.candidates.filter((c) => c.importance === "essential").every((c) => !c.options.includes("discard") && !c.options.includes("sell")), "essential got a disposal option");
+  assert("declutter-is-decision-support-not-disposal",
+    /you decide/i.test(r.sentence) && /never|no item|not/i.test(r.note), r.note);
+  // read-only: calling it changes nothing about the graph.
+  const before = store.searchBelongings("").length;
+  store.declutterReview();
+  assert("declutter-is-read-only", store.searchBelongings("").length === before);
+  const tk = createAgentToolkit(store);
+  const viaTool = tk.dispatch("declutter_review", {}) as { ok: boolean; candidates: unknown[] };
+  assert("declutter-tool-dispatches", viaTool.ok === true && Array.isArray(viaTool.candidates), JSON.stringify(viaTool).slice(0, 60));
 });
 
 // =====================================================================
@@ -2496,6 +2520,11 @@ async function runBrowserSmoke(): Promise<void> {
     assert("dom-ask-ownership-recall", await evalPage<boolean>(`(() => {
       const t = document.querySelector('[data-testid="ask-log"]')?.textContent ?? '';
       return t.includes("already own") && t.includes("ownership_recall");
+    })()`));
+    await evalPage(`window.nestory.ask("what can I declutter?")`);
+    assert("dom-ask-declutter-review", await evalPage<boolean>(`(() => {
+      const t = document.querySelector('[data-testid="ask-log"]')?.textContent ?? '';
+      return t.includes("declutter_review") && /you decide/i.test(t) && /duplicate/i.test(t);
     })()`));
     await shot("nestory-ask.png");
 
