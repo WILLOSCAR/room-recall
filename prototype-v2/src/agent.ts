@@ -71,6 +71,14 @@ export function createAgentToolkit(store: Store): AgentToolkit {
     },
     {
       descriptor: {
+        name: "ownership_recall",
+        description: "Pre-purchase / ownership recall: 'do I already own X — or a usable substitute — before buying another?' Category-level (not one named item). Returns owned count, each match's place/state/confidence/freshness, usable substitutes, and an honest 'no memory' when nothing matches. The durable retention loop.",
+        parameters: { type: "object", properties: { query: { type: "string", description: "Category or item you're about to buy, e.g. 'charger', 'tape', 'umbrella'." } }, required: ["query"] }
+      },
+      run: (args) => store.ownershipRecall(str(args, "query"))
+    },
+    {
+      descriptor: {
         name: "which_container_has",
         description: "Find which container (including moving boxes) holds a belonging.",
         parameters: { type: "object", properties: { query: { type: "string", description: "Item name or kind." } }, required: ["query"] }

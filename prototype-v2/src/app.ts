@@ -1040,12 +1040,22 @@ function askBubble(entry: AskLogEntry): string {
     extra = `<div class="card" style="box-shadow:none;margin-top:8px">
       ${reply.plan.map((g) => `<div class="priority-item"><span class="grow"><strong>${esc(g.label)}</strong>${g.needsReview ? ' <span class="chip amber">needs review</span>' : ""}<div class="place">${g.items.map((i) => esc(i.name)).join(" · ")}</div></span></div>`).join("")}
     </div>`;
-  } else if (reply?.attention) {
-    const rows = [
-      ...reply.attention.staleContainers.slice(0, 3).map((c) => `<div class="attention-row"><span class="chip amber">stale</span><span class="grow">${esc(c.name)}</span></div>`),
-      ...(reply.attention.pendingProposals ? [`<div class="attention-row"><span class="chip amber">review</span><span class="grow">${reply.attention.pendingProposals} pending proposal(s)</span><button class="small ghost" data-action="nav" data-view="review">Open</button></div>`] : [])
-    ].join("");
-    if (rows) extra = `<div class="card" style="box-shadow:none;margin-top:8px">${rows}</div>`;
+  } else if (reply?.ownership) {
+    const o = reply.ownership;
+    const verdictChip = o.verdict === "own_available" ? '<span class="chip sage">already owned</span>'
+      : o.verdict === "own_unavailable" ? '<span class="chip amber">owned · not handy</span>'
+      : o.verdict === "substitute_only" ? '<span class="chip blue">substitute available</span>'
+      : '<span class="chip">no memory</span>';
+    const rows = o.matches.map((m) => `<div class="attention-row">
+      <span class="chip ${m.exact ? "sage" : "blue"}">${m.exact ? "match" : "substitute"}</span>
+      <span class="grow"><strong>${esc(m.item)}</strong><div class="place">${m.placeKnown ? esc(m.chainText) : "place not confirmed — stays unknown"}${m.available ? "" : ` · ${esc(m.state.replace(/_/g, " "))}`}</div></span>
+      <span class="chip ${m.confidence < 0.45 || m.stale ? "amber" : ""}">${m.stale ? "stale · " : ""}conf ${m.confidence.toFixed(2)}</span>
+      ${m.placeKnown ? `<button class="small ghost" data-action="ask-prompt" data-prompt="Where is my ${esc(m.item)}?">Find</button>` : ""}
+    </div>`).join("");
+    extra = `<div class="card" style="box-shadow:none;margin-top:8px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${o.ownedCount} owned · ${o.substituteCount} substitute(s) · ${o.availableCount} available now</span></div>
+      ${rows || '<div class="muted">Nothing recorded in this category yet.</div>'}
+    </div>`;
   }
   return `<div class="ask-row"><div class="ask-bubble nestory">
     ${reply?.answer?.ok ? "" : `<div>${esc(entry.text)}</div>`}
@@ -1066,10 +1076,10 @@ function renderAsk(): string {
     <div class="ask-console">
       <div class="ask-console-head"><span><i data-lucide="sparkles"></i> Nestory</span><span><span class="live-dot"></span> Home memory ready</span></div>
       <div class="ask-log" role="log" aria-label="Conversation" data-testid="ask-log">
-        ${ui.askLog.map(askBubble).join("") || `<div class="ask-starters"><span>Try asking</span>${["Where is my water bottle?", "Which box has my winter jacket?", "Prepare my gym kit", "What needs attention?"].map((prompt) => `<button data-action="ask-prompt" data-prompt="${esc(prompt)}"><i data-lucide="arrow-up-right"></i>${esc(prompt)}</button>`).join("")}</div>`}
+        ${ui.askLog.map(askBubble).join("") || `<div class="ask-starters"><span>Try asking</span>${["Where is my water bottle?", "Do I already have a charger?", "Which box has my winter jacket?", "Prepare my gym kit", "What needs attention?"].map((prompt) => `<button data-action="ask-prompt" data-prompt="${esc(prompt)}"><i data-lucide="arrow-up-right"></i>${esc(prompt)}</button>`).join("")}</div>`}
       </div>
       <div class="ask-composer">
-        <i data-lucide="sparkles"></i><input type="text" id="ask-input" aria-label="Ask Nestory" data-enter="ask-send" placeholder="Ask about belongings, boxes, kits, or what needs attention…">
+        <i data-lucide="sparkles"></i><input type="text" id="ask-input" aria-label="Ask Nestory" data-enter="ask-send" placeholder="Ask where something is, whether you already own it, or what needs attention…">
         <button class="primary" data-action="ask-send" data-testid="btn-ask" aria-label="Ask Nestory"><i data-lucide="arrow-up"></i></button>
       </div>
     </div>

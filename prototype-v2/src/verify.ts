@@ -1271,8 +1271,40 @@ section("ask router", () => {
   const unknown = ask(store, toolkit, "Where is my quantum flux capacitor?");
   assert("ask-unknown-admits", unknown.intent === "locate" && unknown.answer?.ok === false && /no memory/.test(unknown.text), unknown.text);
 
+  // Ownership / pre-purchase recall — the durable retention loop.
+  const own = ask(store, toolkit, "Do I already have a water bottle?");
+  assert("ask-ownership-intent", own.intent === "ownership" && own.toolCalls[0]?.name === "ownership_recall" && own.ownership?.verdict === "own_available" && (own.ownership?.ownedCount ?? 0) >= 1, own.text);
+  const buy = ask(store, toolkit, "Should I buy another quantum flux capacitor?");
+  assert("ask-ownership-none-is-honest", buy.intent === "ownership" && buy.ownership?.verdict === "none" && /no memory/i.test(buy.text) && (buy.ownership?.matches.length ?? 1) === 0, buy.text);
+  const stillLocate = ask(store, toolkit, "Where is my water bottle?");
+  assert("ask-ownership-does-not-hijack-locate", stillLocate.intent === "locate", stillLocate.intent);
+
   const help = ask(store, toolkit, "???");
   assert("ask-help-fallback", help.intent === "help" && help.toolCalls.length === 0);
+});
+
+section("ownership recall (durable loop)", () => {
+  const store = fresh();
+  const owned = store.ownershipRecall("water bottle");
+  assert("ownership-owned-cites-place-and-confidence",
+    owned.ok && owned.verdict === "own_available" && owned.ownedCount >= 1
+    && owned.matches[0]?.exact === true && owned.matches[0]?.placeKnown === true
+    && owned.matches[0]!.confidence > 0 && /reuse/i.test(owned.sentence), owned.sentence);
+  const none = store.ownershipRecall("quantum flux capacitor");
+  assert("ownership-none-stays-honest",
+    none.ok && none.verdict === "none" && none.ownedCount === 0 && none.matches.length === 0
+    && /only speak to what/i.test(none.sentence), none.sentence);
+  // gone items (consumed/retired) are not "owned"; a lent/laundry item is owned-but-unavailable.
+  const lent = fresh();
+  const jacketId = lent.searchBelongings("winter jacket")[0]?.id;
+  if (jacketId) lent.setItemState(jacketId, "lent_out");
+  const afterLent = lent.ownershipRecall("winter jacket");
+  assert("ownership-unavailable-is-flagged",
+    afterLent.ok && afterLent.matches.some((m) => m.item.toLowerCase().includes("jacket") && !m.available), afterLent.sentence);
+  // agent tool exposes it and strips nothing sensitive (no media field on ownership).
+  const tk = createAgentToolkit(store);
+  const viaTool = tk.dispatch("ownership_recall", { query: "water bottle" }) as { ok: boolean; verdict: string };
+  assert("ownership-tool-dispatches", viaTool.ok === true && viaTool.verdict === "own_available", JSON.stringify(viaTool).slice(0, 80));
 });
 
 // =====================================================================
@@ -2460,6 +2492,11 @@ async function runBrowserSmoke(): Promise<void> {
     })()`));
     assert("dom-ask-shows-tool-call", await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="ask-log"]')?.textContent?.includes("locate_item"))`));
     assert("ask-answer-is-announced-through-persistent-region", await evalPage<boolean>(`new Promise((resolve) => queueMicrotask(() => resolve(document.getElementById('answer-announcer')?.textContent?.includes('Water bottle') ?? false)))`));
+    await evalPage(`window.nestory.ask("do I already have a water bottle?")`);
+    assert("dom-ask-ownership-recall", await evalPage<boolean>(`(() => {
+      const t = document.querySelector('[data-testid="ask-log"]')?.textContent ?? '';
+      return t.includes("already own") && t.includes("ownership_recall");
+    })()`));
     await shot("nestory-ask.png");
 
     const responsiveViews = majorViews;

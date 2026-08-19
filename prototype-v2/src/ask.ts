@@ -5,7 +5,7 @@
 
 import type { AgentToolkit } from "./agent.ts";
 import type {
-  AttentionSummary, ContainerContentsView, LocateAnswer, RetrievalPlanGroup,
+  AttentionSummary, ContainerContentsView, LocateAnswer, OwnershipRecallAnswer, RetrievalPlanGroup,
   Store, UnpackPriorityEntry, WhichContainerHit
 } from "./types.ts";
 
@@ -15,10 +15,11 @@ export interface AskToolCall {
 }
 
 export interface AskReply {
-  intent: "locate" | "which_container" | "container_contents" | "kit" | "unpack" | "attention" | "help";
+  intent: "locate" | "ownership" | "which_container" | "container_contents" | "kit" | "unpack" | "attention" | "help";
   toolCalls: AskToolCall[];
   text: string;
   answer?: LocateAnswer;
+  ownership?: OwnershipRecallAnswer;
   hits?: WhichContainerHit[];
   contents?: ContainerContentsView;
   plan?: RetrievalPlanGroup[];
@@ -28,6 +29,8 @@ export interface AskReply {
 }
 
 const FILLER = new Set(["where", "wheres", "where's", "is", "are", "my", "the", "a", "an", "please", "now", "again", "find", "locate", "whats", "what's", "what", "in", "of"]);
+// Extra fillers to strip when the phrasing is a pre-purchase / ownership question.
+const OWNERSHIP_FILLER = new Set(["do", "i", "already", "own", "have", "any", "another", "second", "spare", "extra", "more", "need", "to", "buy", "should", "get", "before", "purchasing", "purchase", "buying", "some"]);
 
 function cleanQuery(raw: string): string {
   return raw
@@ -126,6 +129,21 @@ export function ask(store: Store, toolkit: AgentToolkit, raw: string): AskReply 
         ? `Unpack ${top.box.box?.label ?? top.box.name} first${top.essentials.length ? ` — it has essentials: ${top.essentials.join(", ")}` : ""}. ${priority.length - 1 > 0 ? `${priority.length - 1} more box${priority.length - 1 > 1 ? "es" : ""} after that.` : ""}`.trim()
         : "No boxes are waiting to be unpacked."
     };
+  }
+
+  // "do I already have / own a ___?", "do I need to buy ___?", "before I buy ___"
+  // — pre-purchase / ownership recall, the durable retention loop.
+  if (/\b(do i (already )?(have|own)|already (have|own)|need to buy|should i buy|before i buy|another|a spare|a second)\b/.test(lower)) {
+    const query = lower
+      .replace(/[?!.,;:"'`]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t && !OWNERSHIP_FILLER.has(t) && !FILLER.has(t))
+      .join(" ")
+      .trim();
+    if (query) {
+      const ownership = call<OwnershipRecallAnswer>("ownership_recall", { query });
+      return { intent: "ownership", toolCalls, ownership, text: ownership.sentence };
+    }
   }
 
   // Default: locate.

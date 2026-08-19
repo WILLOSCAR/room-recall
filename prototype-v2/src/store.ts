@@ -11,7 +11,7 @@ import type {
   CreateRoomInput, DerivedState, ReadonlyDerivedState,
   EvidenceKind, EvidenceRecord, ExportDump, Kit, KitReadiness, KitRow, KitRowView,
   LifecycleState, LocateAnswer, LocateSuccess, MoveReadiness, ObservationRecord,
-  OperationData, OperationStatus, OperationView, PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
+  OperationData, OperationStatus, OperationView, OwnershipRecallAnswer, OwnershipMatch, PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
   PlanPin, PlanRect, ProposalRecord, ProposalStatus, ProposalView, Relation, RetrievalPlanGroup,
   RetrievalPlanItem, Room, RowStatus,
   ScoredBelongingView, StorageLike, Store, StoreOptions, UnpackPriorityEntry,
@@ -1086,6 +1086,86 @@ export function createStore(options: StoreOptions): Store {
     return hits;
   }
 
+  // Ownership / pre-purchase recall — the durable retention loop. "Do I already
+  // own <category>, or a usable substitute, before I buy another?" Category-level
+  // over kinds (not one named item), following the same evidence/confidence/
+  // freshness contract as locate, and staying honest: owned-but-place-unknown is
+  // surfaced, gone items (consumed/retired) are excluded, and an empty result is
+  // "no memory", never a fabricated "you don't own one".
+  const GONE_STATES: readonly LifecycleState[] = ["consumed", "retired"];
+  const NOT_HANDY_STATES: readonly LifecycleState[] = ["laundry", "drying", "lent_out", "missing", "in_transit", "packed"];
+  function ownershipRecall(query: string): OwnershipRecallAnswer {
+    const q = query.trim();
+    const scored = searchBelongings(q);            // ranked over name + kinds
+    const qTokens = q.toLowerCase().split(/[\s,]+/).filter((t) => t.length > 1);
+    const kindOf = (v: ScoredBelongingView): { matchedKind: string; exact: boolean } => {
+      // exact = a kind or the name literally contains a query token; else substitute.
+      const hay = [v.name, ...v.kinds].map((s) => s.toLowerCase());
+      const exact = qTokens.length > 0 && qTokens.some((t) => hay.some((h) => h.includes(t)));
+      const matchedKind = v.kinds[0] ?? v.name;
+      return { matchedKind, exact };
+    };
+    const seen = new Set<string>();
+    const matches: OwnershipMatch[] = [];
+    for (const v of scored) {
+      if (v.mergedInto || seen.has(v.id)) continue;
+      if (GONE_STATES.includes(v.state)) continue;      // no longer owned
+      seen.add(v.id);
+      const { matchedKind, exact } = kindOf(v);
+      const stale = v.daysSinceUpdate !== null && v.daysSinceUpdate > 30;
+      matches.push({
+        itemId: v.id,
+        item: v.name,
+        matchedKind,
+        exact,
+        state: v.state,
+        available: !NOT_HANDY_STATES.includes(v.state),
+        chainText: v.chainText,
+        placeKnown: !!v.placement,
+        confidence: v.confidence,
+        daysSinceUpdate: v.daysSinceUpdate,
+        stale
+      });
+    }
+    // exact matches first, then substitutes; available before unavailable within each.
+    matches.sort((a, b) => (Number(b.exact) - Number(a.exact)) || (Number(b.available) - Number(a.available)) || (b.confidence - a.confidence));
+    const exacts = matches.filter((m) => m.exact);
+    const substitutes = matches.filter((m) => !m.exact);
+    const ownedCount = exacts.length;
+    const substituteCount = substitutes.length;
+    const availableCount = matches.filter((m) => m.available).length;
+
+    let verdict: OwnershipRecallAnswer["verdict"];
+    let sentence: string;
+    let nextAction: OwnershipRecallAnswer["nextAction"];
+    if (ownedCount > 0 && exacts.some((m) => m.available)) {
+      verdict = "own_available";
+      const top = exacts.find((m) => m.available)!;
+      const where = top.placeKnown ? top.chainText : "somewhere in your home (place not confirmed)";
+      sentence = `You already own ${ownedCount === 1 ? "one" : `${ownedCount}`} — ${top.item} is ${top.available ? "available" : "recorded"} in ${where}. Reuse it before buying${top.stale ? " (worth reconfirming — the record is a bit old)" : ""}.`;
+      nextAction = "reuse";
+    } else if (ownedCount > 0) {
+      verdict = "own_unavailable";
+      const top = exacts[0]!;
+      sentence = `You own ${ownedCount === 1 ? "one" : `${ownedCount}`}, but ${ownedCount === 1 ? "it is" : "none are"} handy right now (${top.state.replace(/_/g, " ")}). Check before buying another.`;
+      nextAction = "locate";
+    } else if (substituteCount > 0) {
+      verdict = "substitute_only";
+      const top = substitutes[0]!;
+      const where = top.placeKnown ? top.chainText : "somewhere in your home";
+      sentence = `No exact match, but you have ${substituteCount} possible substitute${substituteCount === 1 ? "" : "s"} — e.g. ${top.item} in ${where}. See if one works before buying.`;
+      nextAction = "reuse";
+    } else {
+      verdict = "none";
+      sentence = `No memory of owning “${q}” or a substitute. If you're about to buy, you probably don't already have one — but I can only speak to what's been recorded.`;
+      nextAction = "consider_buy";
+    }
+    return deepFreeze({
+      ok: true, query: q, ownedCount, substituteCount, availableCount,
+      matches: matches.slice(0, 8), verdict, sentence, nextAction
+    });
+  }
+
   function attention(): AttentionSummary {
     ensureTemporalCacheFresh();
     if (attentionCache) return attentionCache;
@@ -1661,7 +1741,7 @@ export function createStore(options: StoreOptions): Store {
     get revision() { return revision; },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     // read
-    searchBelongings, searchBelongingsPage, belongingView, locate, locateById,
+    searchBelongings, searchBelongingsPage, belongingView, locate, locateById, ownershipRecall,
     containerContents, containersView, staleContainers, whichContainerHas,
     attention, activation, operationsView, operationView, retrievalPlan, unpackPriority,
     proposals, commitsView, exportJson, exportJsonText, planPinFor, chainFor, chainText,

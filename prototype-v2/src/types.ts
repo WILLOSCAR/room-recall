@@ -395,6 +395,38 @@ export interface LocateFailure {
 
 export type LocateAnswer = LocateSuccess | LocateFailure;
 
+// Ownership / pre-purchase recall (the durable retention loop): "do I already own
+// one — or a usable substitute — before I buy another?" Category-level, unlike
+// locate() which finds one named item. Each match carries the same place/state/
+// confidence/freshness contract as locate so the answer is trustworthy, and an
+// empty result stays an honest "no memory", never a fabricated "you don't own one".
+export interface OwnershipMatch {
+  itemId: string;
+  item: string;
+  matchedKind: string;
+  exact: boolean;              // true = same kind asked for; false = a usable substitute
+  state: LifecycleState;
+  available: boolean;          // present & usable now (not missing/consumed/lent/packed away)
+  chainText: string;
+  placeKnown: boolean;         // false → owned but current place is unknown (stays unknown)
+  confidence: number;
+  daysSinceUpdate: number | null;
+  stale: boolean;
+}
+
+export interface OwnershipRecallAnswer {
+  ok: true;
+  query: string;
+  ownedCount: number;          // exact-kind matches
+  substituteCount: number;     // usable substitutes when no/for-few exact
+  availableCount: number;      // matches usable right now
+  matches: OwnershipMatch[];   // exact first, then substitutes; each with evidence contract
+  verdict: "own_available" | "own_unavailable" | "substitute_only" | "none";
+  sentence: string;
+  nextAction: "reuse" | "locate" | "consider_buy" | "add_belonging";
+}
+
+
 export interface ContainerContentsView {
   container: ContainerEntity;
   items: BelongingView[];
@@ -567,6 +599,7 @@ export interface Store {
   belongingView(itemId: string): DeepReadonly<BelongingView> | null;
   locate(query: string): DeepReadonly<LocateAnswer>;
   locateById(itemId: string, ctx?: { query?: string | null; alternates?: DeepReadonly<ScoredBelongingView[]> }): DeepReadonly<LocateAnswer>;
+  ownershipRecall(query: string): DeepReadonly<OwnershipRecallAnswer>;
   containerContents(containerId: string): DeepReadonly<ContainerContentsView> | null;
   containersView(): DeepReadonly<ContainerView[]>;
   staleContainers(): DeepReadonly<ContainerView[]>;
