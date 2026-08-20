@@ -2716,6 +2716,19 @@ async function runBrowserSmoke(): Promise<void> {
       const t = document.querySelector('[data-testid="ownership-result"]')?.textContent ?? '';
       return /already own|owned/i.test(t);
     })()`));
+    // "Show on map" links a Recall result into the spatial view; the located pin
+    // renders on the 2D plan (the plan defaults to 3D, so switch to 2D to see it).
+    assert("dom-recall-show-on-map-lands-on-plan", await evalPage<boolean>(`(() => {
+      const btn = document.querySelector('[data-testid="ownership-result"] [data-action="locate-on-map"]');
+      if (!(btn instanceof HTMLElement)) return false;
+      btn.click();
+      if (!document.querySelector('[data-testid="view-plan"]')) return false;
+      const answer = window.nestory?.ui?.lastAnswer;
+      if (!answer || !answer.ok || !/charger/i.test(answer.item)) return false;
+      document.querySelector('[data-action="plan-mode"][data-mode="2d"]')?.click();
+      return Boolean(document.querySelector('[data-testid="plan-pin"] .plan-pin'));
+    })()`));
+    await evalPage(`window.nestory.setView("recall")`);
     // Ready: switch tab, run a capability check with honest gaps.
     assert("dom-recall-ready-runs", await evalPage<boolean>(`(() => {
       document.querySelector('[data-testid="recall-tab-ready"]')?.click();
