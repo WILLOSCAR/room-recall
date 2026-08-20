@@ -569,7 +569,7 @@ export interface HomeCapabilityResult {
   substituteInUse: boolean;        // any required need covered only by a substitute
   sentence: string;                // the single honest verdict summary
   suggestions: string[];           // e.g. profile labels to try when unmatched
-  nextAction: "reuse" | "locate" | "consider_buy" | "add_belonging" | "none";
+  nextAction: "reuse" | "locate" | "consider_buy" | "none";
 }
 
 

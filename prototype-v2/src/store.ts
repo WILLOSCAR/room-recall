@@ -1254,17 +1254,19 @@ export function createStore(options: StoreOptions): Store {
   function matchCapabilityProfile(intent: string): CapabilityProfile | null {
     const norm = intent.toLowerCase().replace(/[?!.,;:"'`]/g, " ").replace(/\s+/g, " ").trim();
     if (!norm) return null;
-    // Phrase match ONLY (bidirectional substring). No fuzzy token-overlap path —
-    // an intent that isn't clearly one of these profiles must fall through to the
-    // honest "no profile" answer rather than be forced onto the nearest label.
+    // The user's phrasing must CONTAIN a full trigger phrase (or equal it). We do NOT
+    // match a trigger that merely contains the query — that would force a short
+    // fragment ("work", "camp") onto a profile and fabricate a verdict, which
+    // violates "an unrecognized intent returns an honest 'no profile', never a
+    // fabricated verdict." Longer matched trigger = more specific; ties keep
+    // registry order (stable).
     let best: { profile: CapabilityProfile; score: number } | null = null;
     for (const profile of catalog.capabilityProfiles ?? []) {
       for (const trigger of profile.triggers) {
         const t = trigger.toLowerCase().trim();
         if (!t) continue;
-        if (norm === t || norm.includes(t) || t.includes(norm)) {
-          // longer matched trigger = more specific; ties keep registry order (stable).
-          const score = Math.min(norm.length, t.length);
+        if (norm === t || norm.includes(t)) {
+          const score = t.length;
           if (!best || score > best.score) best = { profile, score };
         }
       }
@@ -1272,8 +1274,11 @@ export function createStore(options: StoreOptions): Store {
     return best?.profile ?? null;
   }
 
-  function resolveCapabilityNeed(need: CapabilityNeed): CapabilityNeedResult {
-    const candidates = candidatesForKinds(need.kindsAny);
+  function resolveCapabilityNeed(need: CapabilityNeed, usedIds: ReadonlySet<string>): CapabilityNeedResult {
+    // Exclude belongings already claimed by an earlier need, so two needs sharing a
+    // kind cannot both be "covered" by the same lone item (mirrors resolveKit's
+    // `used` map — a false "ready" otherwise).
+    const candidates = candidatesForKinds(need.kindsAny).filter((c) => !usedIds.has(c.b.id));
     const idealKind = need.kindsAny[0];
     const isExact = (b: BelongingEntity): boolean => !!idealKind && b.kinds.includes(idealKind);
     // Prefer, in order: available exact → available substitute → any exact → any.
@@ -1349,7 +1354,19 @@ export function createStore(options: StoreOptions): Store {
       });
     }
 
-    const needs = profile.needs.map(resolveCapabilityNeed);
+    // Resolve needs in order, claiming each matched belonging so a later need can't
+    // reuse it — required needs first, so a scarce shared item covers an essential
+    // over a nice-to-have.
+    const usedIds = new Set<string>();
+    const orderedNeeds = [...profile.needs].sort((a, b) => (a.level === b.level ? 0 : a.level === "required" ? -1 : 1));
+    const byNeedId = new Map<string, CapabilityNeedResult>();
+    for (const need of orderedNeeds) {
+      const resolved = resolveCapabilityNeed(need, usedIds);
+      if (resolved.itemId) usedIds.add(resolved.itemId);
+      byNeedId.set(need.id, resolved);
+    }
+    // Preserve the profile's declared need order for display.
+    const needs = profile.needs.map((n) => byNeedId.get(n.id)!);
     const required = needs.filter((n) => n.level === "required");
     const requiredTotal = required.length;
     const covered = (n: CapabilityNeedResult): boolean => n.status === "have_available" || n.status === "substitute";

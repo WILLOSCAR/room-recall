@@ -105,12 +105,19 @@ export function ask(store: Store, toolkit: AgentToolkit, raw: string): AskReply 
   }
 
   // A bare capability activity ("home workout", "camping", "fix a wobbly chair",
-  // "remote work", "host a guest") → Home Capability (Ready). Gated on the concrete
-  // ACTIVITY keywords, never on bare "can I …" phrasing, so it can't collide with
-  // "can I declutter?" (declutter) or "should I buy …?" (ownership). Placed before
-  // the kit block so activities route here; plain "prepare my gym kit" still falls
-  // through to the kit checklist.
-  const capabilityActivity = /\b(home ?workout|work ?out|exercise at home|camping|camp trip|outdoors trip|quick repair|repair something|fix (a|my|the|something)|wobbly chair|loose screw|remote work|work from home|wfh|work from (a )?caf[eé]|host (a|an) (guest|overnight)|overnight guest|guest (staying|sleeping)|guest room)\b/.test(lower);
+  // "remote work", "host a guest") → Home Capability (Ready). The gate is derived
+  // from the profiles' OWN triggers (single source of truth — it can never drift
+  // from what matchCapabilityProfile will actually resolve), and keyed on the
+  // concrete activity phrase, never on bare "can I …" phrasing, so it can't collide
+  // with "can I declutter?" (declutter) or "should I buy …?" (ownership). Placed
+  // before the kit block so activities route here; plain "prepare my gym kit" still
+  // falls through to the kit checklist.
+  const capabilityActivity = (store.catalog.capabilityProfiles ?? []).some((p) =>
+    p.triggers.some((trigger) => {
+      const t = trigger.toLowerCase().trim();
+      return t.length > 0 && (lower === t || lower.includes(t));
+    })
+  );
   if (capabilityActivity && !/\bkit\b/.test(lower)) {
     const capability = call<HomeCapabilityResult>("home_capability", { intent: text });
     return { intent: "capability", toolCalls, capability, text: capability.sentence };

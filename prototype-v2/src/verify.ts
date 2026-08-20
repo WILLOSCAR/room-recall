@@ -1480,6 +1480,26 @@ section("home capability verdict edges", () => {
     assert("capability-not-ready-does-not-falsely-claim-rest-covered",
       r.verdict === "not_ready" && /lent out/i.test(r.sentence) && !/everything else essential is covered/i.test(r.sentence), r.sentence);
   }
+  // Fragment intent must NOT force-match a profile (honesty: no fabricated verdict).
+  {
+    const { store } = build([{ id: "p", label: "home workout", triggers: ["home workout", "work out at home"], needs: [req("n-mat", ["yoga-mat"])] }]);
+    const frag = store.homeCapability("work");     // substring of a trigger — must not match
+    assert("capability-fragment-intent-does-not-force-match",
+      !frag.matched && frag.verdict === "unknown" && /won't guess/i.test(frag.sentence), frag.sentence);
+    const full = store.homeCapability("can I work out at home today?"); // contains a full trigger
+    assert("capability-full-phrase-still-matches", full.matched && full.profileId === "p", full.sentence);
+  }
+  // Two needs sharing a kind must NOT both be covered by the SAME lone item.
+  {
+    const { store } = build([{ id: "p", label: "do the thing", triggers: ["do the thing"], needs: [req("n-a", ["towel"]), req("n-b", ["towel"])] }]);
+    const roomId = store.createRoom({ name: "Room" });
+    const contId = store.createContainer({ name: "Basket", kind: "basket", roomId });
+    store.createBelonging({ name: "Only towel", kinds: ["towel"], defaultHome: { type: "container", id: contId }, currentPlace: { type: "container", id: contId } });
+    const r = store.homeCapability("do the thing");
+    const covered = r.needs.filter((n) => n.status === "have_available" || n.status === "substitute");
+    assert("capability-shared-item-not-double-counted",
+      covered.length === 1 && r.gaps.requiredMissing.length === 1 && r.verdict === "not_ready", `covered=${covered.length} verdict=${r.verdict}`);
+  }
 });
 
 // =====================================================================
