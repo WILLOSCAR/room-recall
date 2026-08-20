@@ -287,6 +287,10 @@ function applySpatialSelection(id: string | null, opts: { dispatchToScene?: bool
   const detail = document.querySelector<HTMLElement>("[data-spatial-selection-detail]");
   if (title) title.textContent = object?.name ?? "Choose an anchor";
   if (detail) detail.textContent = object ? (roomName ?? "Home") : "Select a furniture anchor to inspect it.";
+  // Refresh the "what's inside" panel in place (a full re-render would tear down
+  // the live 3D scene), then re-run icon decoration so its lucide icons render.
+  const contentsHost = document.querySelector<HTMLElement>("[data-spatial-contents-host]");
+  if (contentsHost) { contentsHost.innerHTML = spatialAnchorContentsHtml(id); decorateIcons(); }
   // Announce only on a real change: a DOM click dispatches to the scene, which
   // echoes spatial-selection back into this same function — announcing twice into
   // the one live region otherwise.
@@ -420,6 +424,35 @@ function resolveSpatialObject(id: string): { name: string; roomId: string | null
   const box = store.containersView().find((c) => c.kind === "box" && c.id === id);
   if (box) return { name: box.box?.label ?? box.name, roomId: box.parent.id };
   return null;
+}
+
+// What a selected spatial anchor holds, as inspector HTML. A furniture anchor
+// holds child containers (drawers/shelves/surfaces), each with belongings; a box
+// is itself a container. Read-only projection: freshness and "unknown is not
+// empty" are surfaced, never hidden. Returns "" when there's nothing to show.
+function spatialAnchorContentsHtml(id: string | null): string {
+  if (!id) return "";
+  const furniture = store.catalog.furniture.find((f) => f.id === id);
+  const containers = furniture
+    ? store.containersView().filter((c) => c.parent.type === "furniture" && c.parent.id === id)
+    : store.containersView().filter((c) => c.id === id);
+  if (!containers.length) return "";
+  const blocks = containers.map((c) => {
+    const contents = store.containerContents(c.id);
+    const items = contents?.items ?? [];
+    const rows = items.length
+      ? items.map((i) => `<div class="attention-row">
+          <span class="grow"><strong>${esc(i.name)}</strong><div class="place">${i.state !== "at_home" ? `${esc(i.state.replace(/_/g, " "))} · ` : ""}conf ${i.confidence.toFixed(2)}</div></span>
+          <button class="small ghost" data-action="locate-on-map" data-q="${esc(i.name)}" title="Show ${esc(i.name)} on the map">Locate</button>
+        </div>`).join("")
+      : `<div class="muted" style="padding:4px 0">No recorded contents.</div>`;
+    const staleNote = contents?.unknownNote ? `<div class="place" style="margin-top:2px">${esc(contents.unknownNote)}</div>` : "";
+    return `<div style="margin-top:8px">
+      <div class="proposal-section-label">${esc(c.name)}${contents?.stale ? ' <span class="chip amber">stale</span>' : ""}</div>
+      ${rows}${staleNote}
+    </div>`;
+  }).join("");
+  return `<div class="spatial-anchor-contents" data-spatial-selection-contents>${blocks}</div>`;
 }
 
 // The scene object a located item rests on/in: the nearest furniture or box in
@@ -2098,6 +2131,7 @@ function renderPlan(): string {
         <div class="step-kicker">Inspect the room</div>
         <h3 data-spatial-selection-title>${esc(selectedFurniture?.name ?? "Choose an anchor")}</h3>
         <p data-spatial-selection-detail>${esc(selectedRoom?.name ?? "Select a furniture anchor to inspect it.")}</p>
+        <div data-spatial-contents-host>${spatialAnchorContentsHtml(ui.spatialSelectedId)}</div>
         <div class="spatial-anchor-list" role="list" aria-label="Furniture anchors">
           ${store.catalog.furniture.map((item) => {
             const room = store.state.rooms.get(item.room);

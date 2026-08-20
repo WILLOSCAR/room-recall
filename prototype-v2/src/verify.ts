@@ -2236,6 +2236,19 @@ async function runBrowserSmoke(): Promise<void> {
         && document.querySelector('[data-spatial-selection-title]')?.textContent?.includes('Desk') === true
         && document.querySelector('[data-spatial-selection-detail]')?.textContent?.includes('Bedroom') === true), 120);
     })`));
+    // Selecting an anchor reveals what it holds (its child containers + belongings),
+    // in place — no full re-render, so the live 3D scene isn't torn down.
+    assert("spatial-selection-reveals-anchor-contents", await evalPage<boolean>(`new Promise((resolve) => {
+      const button = document.querySelector('[data-action="spatial-select"][data-id="desk"]');
+      if (!(button instanceof HTMLButtonElement)) { resolve(false); return; }
+      button.click();
+      setTimeout(() => {
+        const host = document.querySelector('[data-spatial-contents-host]');
+        const t = host?.textContent ?? '';
+        // Desk holds desk-drawer + desk-top → USB-C charger / water bottle live here.
+        resolve(/desk drawer/i.test(t) && (/charger/i.test(t) || /water bottle/i.test(t)) && Boolean(host?.querySelector('[data-action="locate-on-map"]')));
+      }, 140);
+    })`));
     const spatialBudget = await evalPage<{ labelSize: string; roomTriangles: number; drawCalls: number; triangles: number; textures: number }>(`(() => {
       const canvas = document.querySelector('[data-testid="plan-3d"] canvas');
       return {
