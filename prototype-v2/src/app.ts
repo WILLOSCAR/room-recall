@@ -16,7 +16,8 @@ import { decorateIcons } from "../lucide-lite.js";
 import type { SpatialObject, SpatialSceneData } from "./spatial.ts";
 import type {
   BoxStatus, CommitOp, ContainerView, DeepReadonly, LifecycleState, LocateAnswer,
-  ObservationRecord, OperationView, PhotoMedia, ProposalView, RowStatus, StorageLike, Store
+  ObservationRecord, OperationView, PhotoMedia, ProposalView, RowStatus, StorageLike, Store,
+  OwnershipRecallAnswer, DeclutterReviewResult, HomeCapabilityResult
 } from "./types.ts";
 import { BOX_STATUSES, LIFECYCLE_STATES, ROW_STATUSES } from "./types.ts";
 
@@ -61,6 +62,7 @@ function chooseMode(next: HomeMode): void {
 const VIEWS = [
   { id: "home", label: "Home", icon: "house", group: "overview" },
   { id: "ask", label: "Ask Nestory", icon: "sparkles", group: "memory" },
+  { id: "recall", label: "Recall", icon: "history", group: "memory" },
   { id: "capture", label: "Capture", icon: "scan-line", group: "memory" },
   { id: "setup", label: "Setup", icon: "wand-sparkles", group: "memory" },
   { id: "spaces", label: "Spaces", icon: "panels-top-left", group: "memory" },
@@ -179,6 +181,11 @@ interface UIState {
   containerItemsQuery: string;
   containerItemsOffset: number;
   mediaPending: { room: boolean; container: boolean; snapshot: boolean };
+  recallTab: "reuse" | "ready" | "release";
+  ownershipQuery: string;
+  ownershipResult: DeepReadonly<OwnershipRecallAnswer> | null;
+  capabilityQuery: string;
+  capabilityResult: DeepReadonly<HomeCapabilityResult> | null;
 }
 
 const ui: UIState = {
@@ -211,7 +218,12 @@ const ui: UIState = {
   ledgerOffset: 0,
   containerItemsQuery: "",
   containerItemsOffset: 0,
-  mediaPending: { room: false, container: false, snapshot: false }
+  mediaPending: { room: false, container: false, snapshot: false },
+  recallTab: "reuse",
+  ownershipQuery: "",
+  ownershipResult: null,
+  capabilityQuery: "",
+  capabilityResult: null
 };
 
 const compactHomeQuery = window.matchMedia("(max-width: 760px)");
@@ -734,7 +746,7 @@ function renderNow(): void {
     return;
   }
   const renderer: Record<ViewId, () => string> = {
-    home: renderHome, ask: renderAsk, capture: renderCapture, setup: renderSetup, spaces: renderSpaces, belongings: renderBelongings,
+    home: renderHome, ask: renderAsk, recall: renderRecall, capture: renderCapture, setup: renderSetup, spaces: renderSpaces, belongings: renderBelongings,
     operations: renderOperations, review: renderReview, plan: renderPlan, ledger: renderLedger
   };
   must<HTMLElement>("view").innerHTML = renderer[ui.view]() + renderModal();
@@ -1027,6 +1039,77 @@ function renderSetup(): string {
 
 // -------------------------------------------------------------------- ask
 
+// Result cards, shared verbatim between the Ask conversation and the Recall hub —
+// one renderer per loop so both surfaces stay identical (no second renderer).
+function ownershipCard(o: DeepReadonly<OwnershipRecallAnswer>): string {
+  const verdictChip = o.verdict === "own_available" ? '<span class="chip sage">already owned</span>'
+    : o.verdict === "own_unavailable" ? '<span class="chip amber">owned · not handy</span>'
+      : o.verdict === "substitute_only" ? '<span class="chip blue">substitute available</span>'
+        : '<span class="chip">no memory</span>';
+  const rows = o.matches.map((m) => `<div class="attention-row">
+    <span class="chip ${m.exact ? "sage" : "blue"}">${m.exact ? "match" : "substitute"}</span>
+    <span class="grow"><strong>${esc(m.item)}</strong><div class="place">${m.placeKnown ? esc(m.chainText) : "place not confirmed — stays unknown"}${m.available ? "" : ` · ${esc(m.state.replace(/_/g, " "))}`}</div></span>
+    <span class="chip ${m.confidence < 0.45 || m.stale ? "amber" : ""}">${m.stale ? "stale · " : ""}conf ${m.confidence.toFixed(2)}</span>
+    ${m.placeKnown ? `<button class="small ghost" data-action="ask-prompt" data-prompt="Where is my ${esc(m.item)}?">Find</button>` : ""}
+  </div>`).join("");
+  return `<div class="card" style="box-shadow:none;margin-top:8px">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${o.ownedCount} owned · ${o.substituteCount} substitute(s) · ${o.availableCount} available now</span></div>
+    ${rows || '<div class="muted">Nothing recorded in this category yet.</div>'}
+  </div>`;
+}
+
+function declutterCard(d: DeepReadonly<DeclutterReviewResult>): string {
+  const groups = d.groups.map((g) => `<div style="margin-top:8px">
+    <div class="proposal-section-label">${esc(g.label)}</div>
+    ${g.items.map((c) => `<div class="attention-row">
+      <span class="grow"><strong>${esc(c.item)}</strong><div class="place">${esc(c.because)}${c.placeKnown ? ` · ${esc(c.chainText)}` : ""}</div></span>
+      <span class="chip">${c.options.length} option${c.options.length === 1 ? "" : "s"}</span>
+    </div>`).join("")}
+  </div>`).join("");
+  return `<div class="card" style="box-shadow:none;margin-top:8px">
+    ${groups || '<div class="muted">Nothing flagged for review right now.</div>'}
+    <div class="trust-note" style="margin-top:12px"><i data-lucide="shield-check"></i> ${esc(d.note)}</div>
+  </div>`;
+}
+
+function capabilityCard(c: DeepReadonly<HomeCapabilityResult>): string {
+  const verdictChip = !c.matched ? '<span class="chip">no profile</span>'
+    : c.verdict === "ready" ? '<span class="chip sage">ready</span>'
+      : c.verdict === "almost" ? '<span class="chip amber">almost ready</span>'
+        : c.verdict === "not_ready" ? '<span class="chip red">not ready yet</span>'
+          : '<span class="chip">needs a profile</span>';
+  const stops = c.stops.map((g) => `<div style="margin-top:8px">
+    <div class="proposal-section-label">${esc(g.label)}</div>
+    ${g.items.map((i) => `<div class="attention-row">
+      <span class="chip ${i.status === "substitute" ? "blue" : "sage"}">${i.status === "substitute" ? "substitute" : "have"}</span>
+      <span class="grow"><strong>${esc(i.name)}</strong><div class="place">${esc(i.chainText)}</div></span>
+    </div>`).join("")}
+  </div>`).join("");
+  const notHandy = c.notHandy.length ? `<div style="margin-top:8px">
+    <div class="proposal-section-label">Owned · not to hand</div>
+    ${c.notHandy.map((n) => `<div class="attention-row">
+      <span class="chip amber">${esc((n.state ?? "").replace(/_/g, " "))}</span>
+      <span class="grow"><strong>${esc(n.item ?? n.label)}</strong><div class="place">${esc(n.note ?? "")}</div></span>
+    </div>`).join("")}
+  </div>` : "";
+  const gapRows = (gaps: DeepReadonly<HomeCapabilityResult>["gaps"]["requiredMissing"], tone: string): string => gaps.map((g) => `<div class="attention-row">
+    <span class="chip ${tone}">${tone === "red" ? "missing" : "optional"}</span>
+    <span class="grow"><strong>${esc(g.label)}</strong><div class="place">no memory of owning this · ${esc(g.because)}</div></span>
+  </div>`).join("");
+  const gaps = (c.gaps.requiredMissing.length || c.gaps.optionalMissing.length) ? `<div style="margin-top:8px">
+    <div class="proposal-section-label">Gaps — you decide whether to get these</div>
+    ${gapRows(c.gaps.requiredMissing, "red")}
+    ${gapRows(c.gaps.optionalMissing, "")}
+  </div>` : "";
+  return c.matched ? `<div class="card" style="box-shadow:none;margin-top:8px">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${c.requiredHave}/${c.requiredTotal} essentials covered${c.confidence != null ? ` · conf ${c.confidence.toFixed(2)}` : ""}${c.stale ? " · worth reconfirming" : ""}</span></div>
+    ${stops}${notHandy}${gaps}
+  </div>` : `<div class="card" style="box-shadow:none;margin-top:8px">
+    <div style="display:flex;gap:8px;align-items:center">${verdictChip}<span class="muted">I won't guess what an unknown activity needs.</span></div>
+    ${c.suggestions.length ? `<div class="place" style="margin-top:6px">Try: ${c.suggestions.map((s) => esc(s)).join(", ")}</div>` : ""}
+  </div>`;
+}
+
 function askBubble(entry: AskLogEntry): string {
   if (entry.who === "you") {
     return `<div class="ask-row you"><div class="ask-bubble you">${esc(entry.text)}</div></div>`;
@@ -1041,71 +1124,11 @@ function askBubble(entry: AskLogEntry): string {
       ${reply.plan.map((g) => `<div class="priority-item"><span class="grow"><strong>${esc(g.label)}</strong>${g.needsReview ? ' <span class="chip amber">needs review</span>' : ""}<div class="place">${g.items.map((i) => esc(i.name)).join(" · ")}</div></span></div>`).join("")}
     </div>`;
   } else if (reply?.ownership) {
-    const o = reply.ownership;
-    const verdictChip = o.verdict === "own_available" ? '<span class="chip sage">already owned</span>'
-      : o.verdict === "own_unavailable" ? '<span class="chip amber">owned · not handy</span>'
-      : o.verdict === "substitute_only" ? '<span class="chip blue">substitute available</span>'
-      : '<span class="chip">no memory</span>';
-    const rows = o.matches.map((m) => `<div class="attention-row">
-      <span class="chip ${m.exact ? "sage" : "blue"}">${m.exact ? "match" : "substitute"}</span>
-      <span class="grow"><strong>${esc(m.item)}</strong><div class="place">${m.placeKnown ? esc(m.chainText) : "place not confirmed — stays unknown"}${m.available ? "" : ` · ${esc(m.state.replace(/_/g, " "))}`}</div></span>
-      <span class="chip ${m.confidence < 0.45 || m.stale ? "amber" : ""}">${m.stale ? "stale · " : ""}conf ${m.confidence.toFixed(2)}</span>
-      ${m.placeKnown ? `<button class="small ghost" data-action="ask-prompt" data-prompt="Where is my ${esc(m.item)}?">Find</button>` : ""}
-    </div>`).join("");
-    extra = `<div class="card" style="box-shadow:none;margin-top:8px">
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${o.ownedCount} owned · ${o.substituteCount} substitute(s) · ${o.availableCount} available now</span></div>
-      ${rows || '<div class="muted">Nothing recorded in this category yet.</div>'}
-    </div>`;
+    extra = ownershipCard(reply.ownership);
   } else if (reply?.declutter) {
-    const d = reply.declutter;
-    const groups = d.groups.map((g) => `<div style="margin-top:8px">
-      <div class="proposal-section-label">${esc(g.label)}</div>
-      ${g.items.map((c) => `<div class="attention-row">
-        <span class="grow"><strong>${esc(c.item)}</strong><div class="place">${esc(c.because)}${c.placeKnown ? ` · ${esc(c.chainText)}` : ""}</div></span>
-        <span class="chip">${c.options.length} option${c.options.length === 1 ? "" : "s"}</span>
-      </div>`).join("")}
-    </div>`).join("");
-    extra = `<div class="card" style="box-shadow:none;margin-top:8px">
-      ${groups || '<div class="muted">Nothing flagged for review right now.</div>'}
-      <div class="trust-note" style="margin-top:12px"><i data-lucide="shield-check"></i> ${esc(d.note)}</div>
-    </div>`;
+    extra = declutterCard(reply.declutter);
   } else if (reply?.capability) {
-    const c = reply.capability;
-    const verdictChip = !c.matched ? '<span class="chip">no profile</span>'
-      : c.verdict === "ready" ? '<span class="chip sage">ready</span>'
-        : c.verdict === "almost" ? '<span class="chip amber">almost ready</span>'
-          : c.verdict === "not_ready" ? '<span class="chip red">not ready yet</span>'
-            : '<span class="chip">needs a profile</span>';
-    const stops = c.stops.map((g) => `<div style="margin-top:8px">
-      <div class="proposal-section-label">${esc(g.label)}</div>
-      ${g.items.map((i) => `<div class="attention-row">
-        <span class="chip ${i.status === "substitute" ? "blue" : "sage"}">${i.status === "substitute" ? "substitute" : "have"}</span>
-        <span class="grow"><strong>${esc(i.name)}</strong><div class="place">${esc(i.chainText)}</div></span>
-      </div>`).join("")}
-    </div>`).join("");
-    const notHandy = c.notHandy.length ? `<div style="margin-top:8px">
-      <div class="proposal-section-label">Owned · not to hand</div>
-      ${c.notHandy.map((n) => `<div class="attention-row">
-        <span class="chip amber">${esc((n.state ?? "").replace(/_/g, " "))}</span>
-        <span class="grow"><strong>${esc(n.item ?? n.label)}</strong><div class="place">${esc(n.note ?? "")}</div></span>
-      </div>`).join("")}
-    </div>` : "";
-    const gapRows = (gaps: typeof c.gaps.requiredMissing, tone: string): string => gaps.map((g) => `<div class="attention-row">
-      <span class="chip ${tone}">${tone === "red" ? "missing" : "optional"}</span>
-      <span class="grow"><strong>${esc(g.label)}</strong><div class="place">no memory of owning this · ${esc(g.because)}</div></span>
-    </div>`).join("");
-    const gaps = (c.gaps.requiredMissing.length || c.gaps.optionalMissing.length) ? `<div style="margin-top:8px">
-      <div class="proposal-section-label">Gaps — you decide whether to get these</div>
-      ${gapRows(c.gaps.requiredMissing, "red")}
-      ${gapRows(c.gaps.optionalMissing, "")}
-    </div>` : "";
-    extra = c.matched ? `<div class="card" style="box-shadow:none;margin-top:8px">
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${c.requiredHave}/${c.requiredTotal} essentials covered${c.confidence != null ? ` · conf ${c.confidence.toFixed(2)}` : ""}${c.stale ? " · worth reconfirming" : ""}</span></div>
-      ${stops}${notHandy}${gaps}
-    </div>` : `<div class="card" style="box-shadow:none;margin-top:8px">
-      <div style="display:flex;gap:8px;align-items:center">${verdictChip}<span class="muted">I won't guess what an unknown activity needs.</span></div>
-      ${c.suggestions.length ? `<div class="place" style="margin-top:6px">Try: ${c.suggestions.map((s) => esc(s)).join(", ")}</div>` : ""}
-    </div>`;
+    extra = capabilityCard(reply.capability);
   }
   return `<div class="ask-row"><div class="ask-bubble nestory">
     ${reply?.answer?.ok ? "" : `<div>${esc(entry.text)}</div>`}
@@ -1151,7 +1174,93 @@ function doAsk(raw: string): AskReply | null {
   return reply;
 }
 
-// --------------------------------------------------------------- capture
+// ---------------------------------------------------------------- recall
+// The Recall hub gives the three durable retention loops (vision §5) a home of
+// their own instead of living only inside the Ask chat: Reuse (Ownership Recall),
+// Ready (Home Capability), Release (Declutter Review). Each panel is fully
+// interactive and renders the SAME result card the Ask surface uses.
+
+const RECALL_TABS: ReadonlyArray<{ id: UIState["recallTab"]; icon: string; label: string; blurb: string }> = [
+  { id: "reuse", icon: "recycle", label: "Reuse", blurb: "Before you buy — do you already own one, or a usable substitute?" },
+  { id: "ready", icon: "circle-check-big", label: "Ready", blurb: "Can your home do this right now, with what you already own?" },
+  { id: "release", icon: "package-minus", label: "Release", blurb: "Belongings worth a fresh decision — you decide, nothing is auto-disposed." }
+];
+
+function doOwnershipRecall(query: string): void {
+  const q = query.trim();
+  ui.ownershipQuery = q;
+  ui.ownershipResult = q ? act(() => store.ownershipRecall(q), null) : null;
+  render();
+  if (ui.ownershipResult) announce(ui.ownershipResult.sentence);
+}
+
+function doCapabilityCheck(query: string): void {
+  const q = query.trim();
+  ui.capabilityQuery = q;
+  ui.capabilityResult = q ? act(() => store.homeCapability(q), null) : null;
+  render();
+  if (ui.capabilityResult) announce(ui.capabilityResult.sentence);
+}
+
+function recallReusePanel(): string {
+  const o = ui.ownershipResult;
+  const examples = ["charger", "umbrella", "tape", "water bottle", "towel"];
+  return `<div class="recall-panel" data-testid="recall-reuse">
+    <div class="ask-composer">
+      <i data-lucide="search"></i>
+      <input type="text" id="ownership-input" aria-label="Category you're about to buy" data-enter="ownership-check" value="${esc(ui.ownershipQuery)}" placeholder="A category you're about to buy — charger, umbrella, tape…">
+      <button class="primary" data-action="ownership-check" data-testid="btn-ownership"><span>Check</span><i data-lucide="arrow-up-right"></i></button>
+    </div>
+    <div class="recall-chips">${examples.map((e) => `<button data-action="ownership-example" data-q="${esc(e)}">${esc(e)}</button>`).join("")}</div>
+    ${o ? `<div data-testid="ownership-result"><p class="recall-sentence">${esc(o.sentence)}</p>${ownershipCard(o)}</div>`
+      : `<div class="empty-inline light"><i data-lucide="recycle"></i><span>Name a category to see if you already own one — reuse beats re-buying.</span></div>`}
+  </div>`;
+}
+
+function recallReadyPanel(): string {
+  const c = ui.capabilityResult;
+  const profiles = store.catalog.capabilityProfiles ?? [];
+  return `<div class="recall-panel" data-testid="recall-ready">
+    <div class="ask-composer">
+      <i data-lucide="circle-check-big"></i>
+      <input type="text" id="capability-input" aria-label="An activity to check" data-enter="capability-check" value="${esc(ui.capabilityQuery)}" placeholder="An activity — work out at home, go camping, fix a wobbly chair…">
+      <button class="primary" data-action="capability-check" data-testid="btn-capability"><span>Check</span><i data-lucide="arrow-up-right"></i></button>
+    </div>
+    <div class="recall-chips">${profiles.map((p) => `<button data-action="capability-example" data-q="${esc(p.triggers[0] ?? p.label)}">${esc(p.label)}</button>`).join("")}</div>
+    ${c ? `<div data-testid="capability-result"><p class="recall-sentence">${esc(c.sentence)}</p>${capabilityCard(c)}</div>`
+      : `<div class="empty-inline light"><i data-lucide="circle-check-big"></i><span>Pick an activity to see what you already own for it — and the honest gaps.</span></div>`}
+  </div>`;
+}
+
+function recallReleasePanel(): string {
+  const d = store.declutterReview();
+  return `<div class="recall-panel" data-testid="recall-release">
+    <p class="recall-sentence">${esc(d.sentence)}</p>
+    ${declutterCard(d)}
+  </div>`;
+}
+
+function renderRecall(): string {
+  const tab = ui.recallTab;
+  const active = RECALL_TABS.find((t) => t.id === tab) ?? RECALL_TABS[0]!;
+  const body = tab === "reuse" ? recallReusePanel() : tab === "ready" ? recallReadyPanel() : recallReleasePanel();
+  return `<section data-testid="view-recall">
+    ${renderPageIntro({
+      eyebrow: "The durable promise",
+      title: "Recall what you own — before you buy, pack, or let go.",
+      description: "Three memory loops over your home records: reuse what you already have, check if you're ready for an activity, and decide what to release. Every answer carries evidence, confidence, and freshness — and never acts on its own.",
+      className: "recall-intro",
+      aside: `<div class="ask-contract"><span class="live-dot"></span><span><strong>Read-only</strong><small>decisions stay yours</small></span></div>`
+    })}
+    <div class="segmented recall-tabs" role="group" aria-label="Recall loop">
+      ${RECALL_TABS.map((t) => `<button type="button" aria-pressed="${tab === t.id}" class="${tab === t.id ? "active" : ""}" data-action="recall-tab" data-tab="${t.id}" data-testid="recall-tab-${t.id}"><i data-lucide="${t.icon}"></i>${t.label}</button>`).join("")}
+    </div>
+    <p class="recall-blurb">${esc(active.blurb)}</p>
+    ${body}
+  </section>`;
+}
+
+
 
 function captureTabs(): string {
   const tabs: Array<[CaptureMode, string, string]> = [
@@ -1349,7 +1458,7 @@ function renderHome(): string {
         </div>
         <div class="quick-actions">
           <button data-action="nav" data-view="capture"><i data-lucide="scan-line"></i><span>Capture</span></button>
-          <button data-action="ask-prompt" data-prompt="Can I work out at home?"><i data-lucide="circle-check-big"></i><span>Ready check</span></button>
+          <button data-action="recall-open" data-tab="ready"><i data-lucide="circle-check-big"></i><span>Ready check</span></button>
           <button data-action="nav" data-view="plan"><i data-lucide="cuboid"></i><span>Spatial view</span></button>
         </div>
       </div>
@@ -2393,6 +2502,12 @@ document.addEventListener("click", (e) => {
     case "hero-locate": doLocate(inputValue("hero-search-input"), "hero-search-input"); break;
     case "ask-send": doAsk(inputValue("ask-input")); break;
     case "ask-prompt": if (t.dataset.prompt) { if (ui.view !== "ask") navigate("ask"); doAsk(t.dataset.prompt); } break;
+    case "recall-tab": if (t.dataset.tab === "reuse" || t.dataset.tab === "ready" || t.dataset.tab === "release") { ui.recallTab = t.dataset.tab; render(); } break;
+    case "recall-open": if (t.dataset.tab === "reuse" || t.dataset.tab === "ready" || t.dataset.tab === "release") ui.recallTab = t.dataset.tab; navigate("recall"); break;
+    case "ownership-check": doOwnershipRecall(inputValue("ownership-input")); break;
+    case "ownership-example": if (t.dataset.q) doOwnershipRecall(t.dataset.q); break;
+    case "capability-check": doCapabilityCheck(inputValue("capability-input")); break;
+    case "capability-example": if (t.dataset.q) doCapabilityCheck(t.dataset.q); break;
     case "answer-not-there": {
       const itemId = t.dataset.item;
       if (!itemId) break;
@@ -2826,6 +2941,8 @@ document.addEventListener("keydown", (e) => {
   const enter = target.dataset.enter;
   if (enter === "top-locate" || enter === "hero-locate") doLocate(target.value, target.id);
   if (enter === "ask-send") doAsk(target.value);
+  if (enter === "ownership-check") doOwnershipRecall(target.value);
+  if (enter === "capability-check") doCapabilityCheck(target.value);
   if (enter === "box-search") { ui.boxQuery = target.value; render(); }
   if (enter === "setup-add-room-custom" || enter === "setup-add-container" || enter === "setup-add-belonging") {
     const btn = document.querySelector<HTMLElement>(`[data-action="${enter}"]`);

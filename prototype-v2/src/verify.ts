@@ -2063,7 +2063,7 @@ async function runBrowserSmoke(): Promise<void> {
       requestAnimationFrame(() => resolve(icon === document.querySelector('[data-testid="nav-home"] svg')));
     })`));
 
-    const majorViews = ["home", "ask", "capture", "spaces", "belongings", "operations", "review", "plan", "ledger"];
+    const majorViews = ["home", "ask", "recall", "capture", "spaces", "belongings", "operations", "review", "plan", "ledger"];
     for (const view of majorViews) {
       await evalPage(`window.nestory.setView(${JSON.stringify(view)})`);
       assert(`view-renders-${view}`, await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="view-${view}"]'))`));
@@ -2703,6 +2703,35 @@ async function runBrowserSmoke(): Promise<void> {
       return t.includes("home_capability") && /no memory of owning/i.test(t) && /essential/i.test(t);
     })()`));
     await shot("nestory-ask.png");
+
+    // Recall hub — the three retention loops migrated out of Ask into a dedicated,
+    // interactive view. Drive each tab and assert its live result card renders.
+    await evalPage(`window.nestory.setView("recall")`);
+    assert("dom-recall-view-renders", await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="view-recall"]'))`));
+    // Reuse: type a category, run ownership recall.
+    assert("dom-recall-reuse-runs", await evalPage<boolean>(`(() => {
+      const input = document.getElementById('ownership-input'); if (!(input instanceof HTMLInputElement)) return false;
+      input.value = 'charger';
+      document.querySelector('[data-testid="btn-ownership"]')?.click();
+      const t = document.querySelector('[data-testid="ownership-result"]')?.textContent ?? '';
+      return /already own|owned/i.test(t);
+    })()`));
+    // Ready: switch tab, run a capability check with honest gaps.
+    assert("dom-recall-ready-runs", await evalPage<boolean>(`(() => {
+      document.querySelector('[data-testid="recall-tab-ready"]')?.click();
+      const input = document.getElementById('capability-input'); if (!(input instanceof HTMLInputElement)) return false;
+      input.value = 'can I work out at home?';
+      document.querySelector('[data-testid="btn-capability"]')?.click();
+      const t = document.querySelector('[data-testid="capability-result"]')?.textContent ?? '';
+      return /no memory of owning/i.test(t) && /essential/i.test(t);
+    })()`));
+    // Release: switch tab, declutter review renders with its standing guarantee.
+    assert("dom-recall-release-runs", await evalPage<boolean>(`(() => {
+      document.querySelector('[data-testid="recall-tab-release"]')?.click();
+      const t = document.querySelector('[data-testid="recall-release"]')?.textContent ?? '';
+      return /you decide/i.test(t) && /duplicate/i.test(t);
+    })()`));
+    await shot("nestory-recall.png");
 
     const responsiveViews = majorViews;
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });

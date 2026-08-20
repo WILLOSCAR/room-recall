@@ -1,15 +1,15 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-20T03:55:03.742Z
+Generated: 2026-08-20T04:55:47.300Z
 Runtime: node v26.3.1 · typescript strict
-- Assertions: 515
-- Passed: 515
-- Failed: 0
+- Assertions: 529
+- Passed: 527
+- Failed: 2
 - Browser smoke: ran
-- UI DOM-commit p95: 3.300 ms
-- Household UI DOM-commit p95: 6.900 ms
+- UI DOM-commit p95: 3.700 ms
+- Household UI DOM-commit p95: 7.100 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
-- Settled spatial RAF callbacks observed: 0
-- Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
+- Settled spatial RAF callbacks observed: 2
+- Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
 ## typescript gate
 - ✓ `tsc-typecheck-and-emit`
 - ✓ `dist-app-emitted`
@@ -348,6 +348,9 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `view-renders-ask`
 - ✓ `form-controls-named-ask`
 - ✓ `buttons-named-ask`
+- ✓ `view-renders-recall`
+- ✓ `form-controls-named-recall`
+- ✓ `buttons-named-recall`
 - ✓ `view-renders-capture`
 - ✓ `form-controls-named-capture`
 - ✓ `buttons-named-capture`
@@ -408,7 +411,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `spatial-furnished-scene-stays-within-gpu-budget`
 - ✓ `spatial-labels-render-only-in-accessible-html-inspector`
 - ✓ `unrelated-update-preserves-spatial-canvas`
-- ✓ `settled-spatial-scene-has-zero-continuous-raf`
+- ✗ `settled-spatial-scene-has-zero-continuous-raf` — 2
 - ✓ `spatial-selection-from-scene-updates-inspector`
 - ✓ `spatial-selection-does-not-remount-canvas`
 - ✓ `spatial-selection-uses-fitted-outline`
@@ -446,7 +449,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `snapshot-persistence-failure-keeps-dialog-text-and-photo`
 - ✓ `late-snapshot-photo-cannot-cross-modal-context`
 - ✓ `dom-proposal-photo`
-- ✓ `review-decision-focuses-next-action`
+- ✗ `review-decision-focuses-next-action` — 
 - ✓ `dom-retrieval-plan`
 - ✓ `dom-ask-view`
 - ✓ `dom-ask-answer`
@@ -456,8 +459,13 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `dom-ask-ownership-recall`
 - ✓ `dom-ask-declutter-review`
 - ✓ `dom-ask-home-capability`
+- ✓ `dom-recall-view-renders`
+- ✓ `dom-recall-reuse-runs`
+- ✓ `dom-recall-ready-runs`
+- ✓ `dom-recall-release-runs`
 - ✓ `mobile-nav-reaches-home`
 - ✓ `mobile-nav-reaches-ask`
+- ✓ `mobile-nav-reaches-recall`
 - ✓ `mobile-nav-reaches-capture`
 - ✓ `mobile-nav-reaches-spaces`
 - ✓ `mobile-nav-reaches-belongings`
@@ -475,6 +483,8 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `responsive-320-critical-content-visible-home`
 - ✓ `responsive-320-no-document-overflow-ask`
 - ✓ `responsive-320-critical-content-visible-ask`
+- ✓ `responsive-320-no-document-overflow-recall`
+- ✓ `responsive-320-critical-content-visible-recall`
 - ✓ `responsive-320-no-document-overflow-capture`
 - ✓ `responsive-320-critical-content-visible-capture`
 - ✓ `responsive-320-no-document-overflow-spaces`
@@ -493,6 +503,8 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `responsive-390-critical-content-visible-home`
 - ✓ `responsive-390-no-document-overflow-ask`
 - ✓ `responsive-390-critical-content-visible-ask`
+- ✓ `responsive-390-no-document-overflow-recall`
+- ✓ `responsive-390-critical-content-visible-recall`
 - ✓ `responsive-390-no-document-overflow-capture`
 - ✓ `responsive-390-critical-content-visible-capture`
 - ✓ `responsive-390-no-document-overflow-spaces`
@@ -511,6 +523,8 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `responsive-761-critical-content-visible-home`
 - ✓ `responsive-761-no-document-overflow-ask`
 - ✓ `responsive-761-critical-content-visible-ask`
+- ✓ `responsive-761-no-document-overflow-recall`
+- ✓ `responsive-761-critical-content-visible-recall`
 - ✓ `responsive-761-no-document-overflow-capture`
 - ✓ `responsive-761-critical-content-visible-capture`
 - ✓ `responsive-761-no-document-overflow-spaces`

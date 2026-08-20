@@ -1002,6 +1002,16 @@ input::placeholder, textarea::placeholder { color: #68736e; opacity: 1; }
 .technical-details summary { cursor: pointer; font-weight: 650; }
 .technical-details .cops { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 
+/* ---------------------------------------------------------------- recall */
+.recall-tabs { margin-bottom: 6px; }
+.recall-blurb { margin: 0 0 14px; color: var(--ink-soft); font-size: 12px; line-height: 1.55; }
+.recall-panel { max-width: 720px; }
+.recall-panel .ask-composer { margin: 0 0 12px; }
+.recall-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+.recall-chips button { border: 1px solid var(--line); background: var(--paper-2); color: var(--ink-soft); border-radius: 999px; padding: 5px 12px; font-size: 11px; font-weight: 600; }
+.recall-chips button:hover { background: var(--card); color: var(--ink); }
+.recall-sentence { margin: 0 0 6px; font-size: 14px; font-weight: 650; line-height: 1.5; letter-spacing: -.01em; }
+
 /* ------------------------------------------------------------ responsive */
 
 @media (max-width: 1180px) {
