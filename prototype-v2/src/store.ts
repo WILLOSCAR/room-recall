@@ -11,7 +11,9 @@ import type {
   CreateRoomInput, DerivedState, ReadonlyDerivedState,
   EvidenceKind, EvidenceRecord, ExportDump, Kit, KitReadiness, KitRow, KitRowView,
   LifecycleState, LocateAnswer, LocateSuccess, MoveReadiness, ObservationRecord,
-  OperationData, OperationStatus, OperationView, OwnershipRecallAnswer, OwnershipMatch, DeclutterReviewResult, DeclutterCandidate, DeclutterReason, DeclutterOption, PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
+  OperationData, OperationStatus, OperationView, OwnershipRecallAnswer, OwnershipMatch, DeclutterReviewResult, DeclutterCandidate, DeclutterReason, DeclutterOption,
+  CapabilityProfile, CapabilityNeed, CapabilityNeedResult, CapabilityNeedStatus, CapabilityStop, CapabilityStopItem, CapabilityGapEntry, HomeCapabilityResult, CapabilityVerdict,
+  PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
   PlanPin, PlanRect, ProposalRecord, ProposalStatus, ProposalView, Relation, RetrievalPlanGroup,
   RetrievalPlanItem, Room, RowStatus,
   ScoredBelongingView, StorageLike, Store, StoreOptions, UnpackPriorityEntry,
@@ -1240,6 +1242,192 @@ export function createStore(options: StoreOptions): Store {
     });
   }
 
+  // Home Capability (Ready loop, vision §5.4) — "can I do X at home right now with
+  // what I already own?" A pure READ: it resolves a capability profile against
+  // inventory using the shared candidatesForKinds primitive (the same kind→
+  // belongings map resolveKit uses) and the shared groupByPlace grouping
+  // (retrievalPlan's), but creates NO operation and appends NO records. Honest by
+  // construction: an unrecognized intent returns a stated "no profile" (never a
+  // fabricated verdict); a missing need is "no memory of owning this" (never "you
+  // don't have one"); owned-but-place-unknown stays a have; staleness, substitutes
+  // and not-handy required items are all surfaced in the one-sentence verdict.
+  function matchCapabilityProfile(intent: string): CapabilityProfile | null {
+    const norm = intent.toLowerCase().replace(/[?!.,;:"'`]/g, " ").replace(/\s+/g, " ").trim();
+    if (!norm) return null;
+    // Phrase match ONLY (bidirectional substring). No fuzzy token-overlap path —
+    // an intent that isn't clearly one of these profiles must fall through to the
+    // honest "no profile" answer rather than be forced onto the nearest label.
+    let best: { profile: CapabilityProfile; score: number } | null = null;
+    for (const profile of catalog.capabilityProfiles ?? []) {
+      for (const trigger of profile.triggers) {
+        const t = trigger.toLowerCase().trim();
+        if (!t) continue;
+        if (norm === t || norm.includes(t) || t.includes(norm)) {
+          // longer matched trigger = more specific; ties keep registry order (stable).
+          const score = Math.min(norm.length, t.length);
+          if (!best || score > best.score) best = { profile, score };
+        }
+      }
+    }
+    return best?.profile ?? null;
+  }
+
+  function resolveCapabilityNeed(need: CapabilityNeed): CapabilityNeedResult {
+    const candidates = candidatesForKinds(need.kindsAny);
+    const idealKind = need.kindsAny[0];
+    const isExact = (b: BelongingEntity): boolean => !!idealKind && b.kinds.includes(idealKind);
+    // Prefer, in order: available exact → available substitute → any exact → any.
+    const available = candidates.filter((c) => !NOT_HANDY_STATES.includes(c.lifecycle));
+    const pick =
+      available.find((c) => isExact(c.b))
+      ?? available[0]
+      ?? candidates.find((c) => isExact(c.b))
+      ?? candidates[0]
+      ?? null;
+
+    const base = {
+      needId: need.id, label: need.label, level: need.level, because: need.because,
+      kindsAny: [...need.kindsAny], alternativesOwned: Math.max(0, candidates.length - (pick ? 1 : 0))
+    };
+
+    if (!pick) {
+      // No belonging of ANY listed kind — honestly "no memory of owning this".
+      return {
+        ...base, status: "missing", itemId: null, item: null, matchedKind: null,
+        exact: false, state: null, available: false, placeKnown: false, chainText: "",
+        confidence: null, daysSinceUpdate: null, stale: false, note: null
+      };
+    }
+
+    const view = belongingView(pick.b.id);
+    const exact = isExact(pick.b);
+    const matchedKind = (exact ? idealKind : need.kindsAny.find((k) => pick.b.kinds.includes(k))) ?? pick.b.kinds[0] ?? null;
+    const isAvailable = !NOT_HANDY_STATES.includes(pick.lifecycle);
+    const placeKnown = !!view?.placement;
+    const stale = view?.daysSinceUpdate != null && view.daysSinceUpdate > 30;
+
+    let status: CapabilityNeedStatus;
+    let note: string | null = null;
+    if (!isAvailable) {
+      status = "have_unavailable";                       // owned, but not to hand right now
+      note = `${pick.b.name} is ${pick.lifecycle.replace(/_/g, " ")}`;
+    } else if (!exact) {
+      status = "substitute";                             // usable, but via a broader/fallback kind
+      note = idealKind ? `Stands in for ${idealKind.replace(/-/g, " ")}, which isn't on record` : null;
+    } else {
+      status = "have_available";
+    }
+
+    return {
+      ...base, status,
+      itemId: pick.b.id, item: pick.b.name, matchedKind, exact,
+      state: pick.lifecycle, available: isAvailable, placeKnown,
+      chainText: placeKnown ? (view?.chainText ?? "") : "somewhere in your home (place not confirmed)",
+      confidence: view?.confidence ?? null,
+      daysSinceUpdate: view?.daysSinceUpdate ?? null,
+      stale, note
+    };
+  }
+
+  function homeCapability(intent: string): HomeCapabilityResult {
+    ensureTemporalCacheFresh();
+    const raw = intent.trim();
+    const checkedAt = nowIso();
+    const profile = matchCapabilityProfile(raw);
+
+    if (!profile) {
+      const suggestions = (catalog.capabilityProfiles ?? []).map((p) => p.label);
+      return deepFreeze({
+        ok: true, matched: false, intent: raw, profileId: null, label: null,
+        verdict: "unknown" as CapabilityVerdict, needs: [], stops: [], notHandy: [],
+        gaps: { requiredMissing: [], optionalMissing: [] },
+        requiredTotal: 0, requiredHave: 0, confidence: null, checkedAt, stale: false, substituteInUse: false,
+        sentence: raw
+          ? `I don't have a capability profile for “${raw}” yet, so I can't tell you what you'd need — I won't guess.${suggestions.length ? ` I can check: ${suggestions.join(", ")}.` : ""}`
+          : `Tell me what you want to do (e.g. ${suggestions.slice(0, 3).join(", ") || "a home activity"}) and I'll check whether you already own what it needs.`,
+        suggestions, nextAction: "none" as const
+      });
+    }
+
+    const needs = profile.needs.map(resolveCapabilityNeed);
+    const required = needs.filter((n) => n.level === "required");
+    const requiredTotal = required.length;
+    const covered = (n: CapabilityNeedResult): boolean => n.status === "have_available" || n.status === "substitute";
+    const requiredHave = required.filter(covered).length;
+
+    // What you HAVE (available + substitute) → pickup stops, grouped by place,
+    // via the SAME groupByPlace walk retrievalPlan uses.
+    const haveNeeds = needs.filter(covered);
+    const stopEntries = haveNeeds.map((n) => {
+      const view = n.itemId ? belongingView(n.itemId) : null;
+      const item: CapabilityStopItem = { name: n.item ?? n.label, status: n.status, chainText: n.chainText };
+      return { chain: (view?.chain ?? []) as PlaceNode[], needsReview: !n.placeKnown, item };
+    });
+    const stops: CapabilityStop[] = groupByPlace(stopEntries)
+      .map((g) => ({ key: g.key, label: g.label, roomName: g.roomName, items: g.items }));
+
+    const notHandy = needs.filter((n) => n.status === "have_unavailable");
+    const requiredNotHandy = notHandy.filter((n) => n.level === "required");
+    const missing = needs.filter((n) => n.status === "missing");
+    const gapOf = (n: CapabilityNeedResult): CapabilityGapEntry => ({ needId: n.needId, label: n.label, level: n.level, kindsAny: n.kindsAny, because: n.because });
+    const requiredMissing = missing.filter((n) => n.level === "required").map(gapOf);
+    const optionalMissing = missing.filter((n) => n.level === "optional").map(gapOf);
+
+    const requiredHaves = required.filter(covered);
+    const confidences = requiredHaves.map((n) => n.confidence).filter((c): c is number => c != null);
+    const confidence = confidences.length ? Math.min(...confidences) : null;
+    const stale = requiredHaves.some((n) => n.stale);
+    const substituteInUse = requiredHaves.some((n) => n.status === "substitute");
+    const placeUnknown = requiredHaves.filter((n) => !n.placeKnown);
+
+    // Honesty clauses shared across ready-ish verdicts.
+    const placeClause = placeUnknown.length === 0 ? ""
+      : placeUnknown.length === 1 ? ` I'm not sure exactly where your ${placeUnknown[0]!.item} is — owned, place not confirmed.`
+        : ` A few are owned but place-unconfirmed: ${placeUnknown.map((n) => n.item).join(", ")}.`;
+    const staleClause = stale ? ` Worth reconfirming — some records are a bit old.` : "";
+    const subClause = substituteInUse
+      ? ` Using ${requiredHaves.filter((n) => n.status === "substitute").map((n) => `${n.item} for ${n.label}`).join(", ")}.`
+      : "";
+    const optionalClause = optionalMissing.length ? ` Optional extras not on record: ${optionalMissing.map((g) => g.label).join(", ")}.` : "";
+
+    let verdict: CapabilityVerdict;
+    let sentence: string;
+    let nextAction: HomeCapabilityResult["nextAction"];
+
+    if (requiredTotal === 0) {
+      // A profile that gates on nothing must never report a vacuous "ready".
+      verdict = "unknown";
+      const optionalHave = needs.filter((n) => covered(n)).length;
+      sentence = optionalHave
+        ? `“${profile.label}” has no must-have items on record — you own ${optionalHave} of the nice-to-haves.${optionalClause}`
+        : `“${profile.label}” has no must-have items defined, and I have no memory of the optional ones.${optionalClause}`;
+      nextAction = optionalHave ? "reuse" : "consider_buy";
+    } else if (requiredMissing.length > 0) {
+      verdict = "not_ready";
+      const otherEssentialClause = requiredNotHandy.length
+        ? ` Also, your ${requiredNotHandy.map((n) => `${n.item} is ${n.state?.replace(/_/g, " ")}`).join(", ")}.`
+        : (requiredHave === requiredTotal - requiredMissing.length && requiredHave > 0 ? ` Everything else essential is covered.` : "");
+      sentence = `Not ready for ${profile.label.toLowerCase()} yet — no memory of owning ${requiredMissing.map((g) => g.label.toLowerCase()).join(", ")}.${otherEssentialClause}${subClause}`;
+      nextAction = "consider_buy";
+    } else if (requiredNotHandy.length > 0) {
+      verdict = "almost";
+      sentence = `Almost ready for ${profile.label.toLowerCase()} — you own everything essential, but ${requiredNotHandy.map((n) => `your ${n.item} is ${n.state?.replace(/_/g, " ")}`).join(", ")}, so ${requiredNotHandy.length === 1 ? "it isn't" : "they aren't"} to hand.${subClause}${optionalClause}`;
+      nextAction = "locate";
+    } else {
+      verdict = "ready";
+      sentence = `You're ready for ${profile.label.toLowerCase()} — all ${requiredTotal} essential${requiredTotal === 1 ? "" : "s"} ${requiredTotal === 1 ? "is" : "are"} covered.${subClause}${placeClause}${staleClause}${optionalClause}`;
+      nextAction = "reuse";
+    }
+
+    return deepFreeze({
+      ok: true, matched: true, intent: raw, profileId: profile.id, label: profile.label,
+      verdict, needs, stops, notHandy,
+      gaps: { requiredMissing, optionalMissing },
+      requiredTotal, requiredHave, confidence, checkedAt, stale, substituteInUse,
+      sentence, suggestions: [], nextAction
+    });
+  }
+
   // PRD §8 activation metric, derived live from the graph.
   function activation(): ActivationSummary {
     const belongingCount = [...state.belongings.values()].filter((b) => !b.mergedInto).length;
@@ -1292,41 +1480,49 @@ export function createStore(options: StoreOptions): Store {
   }
 
   // Kit checklist compiled into pickup stops, grouped by furniture (or room).
-  function retrievalPlan(opId: string): RetrievalPlanGroup[] {
-    const op = operationView(opId);
-    if (!op || op.type !== "kit") return [];
-    const groups = new Map<string, RetrievalPlanGroup>();
-    const push = (key: string, label: string, roomName: string | null, needsReview: boolean, item: RetrievalPlanItem): void => {
+  // Shared place-grouping: the ONE furniture→room→needs-review walk + review-last
+  // sort. Callers keep their own status vocabulary (they compute `needsReview` and
+  // pass their own item payload), so retrievalPlan (operation rows) and
+  // homeCapability (read-only stops) build identical stops without forking.
+  function groupByPlace<TItem>(
+    entries: Array<{ chain: PlaceNode[]; needsReview: boolean; item: TItem }>
+  ): Array<{ key: string; label: string; roomName: string | null; needsReview: boolean; items: TItem[] }> {
+    type Group = { key: string; label: string; roomName: string | null; needsReview: boolean; items: TItem[] };
+    const groups = new Map<string, Group>();
+    const push = (key: string, label: string, roomName: string | null, needsReview: boolean, item: TItem): void => {
       let group = groups.get(key);
       if (!group) { group = { key, label, roomName, needsReview, items: [] }; groups.set(key, group); }
       group.items.push(item);
     };
-    for (const row of op.rows) {
-      const item: RetrievalPlanItem = {
+    for (const entry of entries) {
+      const furniture = findNode(entry.chain, "furniture");
+      const room = findNode(entry.chain, "room");
+      if (entry.needsReview) push("needs-review", "Needs review", null, true, entry.item);
+      else if (furniture) push(`furniture:${furniture.id}`, `${furniture.name}${room ? ` · ${room.name}` : ""}`, room?.name ?? null, false, entry.item);
+      else if (room) push(`room:${room.id}`, room.name, room.name, false, entry.item);
+      else push("needs-review", "Needs review", null, true, entry.item);
+    }
+    return [...groups.values()].sort((a, b) => {
+      if (a.needsReview !== b.needsReview) return a.needsReview ? 1 : -1;
+      return a.label.localeCompare(b.label);
+    });
+  }
+
+  function retrievalPlan(opId: string): RetrievalPlanGroup[] {
+    const op = operationView(opId);
+    if (!op || op.type !== "kit") return [];
+    const entries = op.rows.map((row) => ({
+      chain: row.item?.chain ?? [],
+      needsReview: !row.item || !row.item.placement || row.status === "missing" || row.status === "uncertain",
+      item: {
         rowId: row.id,
         itemId: row.itemId,
         name: row.item?.name ?? row.reqLabels.join(" + "),
         status: row.status,
         note: row.note
-      };
-      const chain = row.item?.chain ?? [];
-      const furniture = findNode(chain, "furniture");
-      const room = findNode(chain, "room");
-      if (!row.item || !row.item.placement || row.status === "missing" || row.status === "uncertain") {
-        push("needs-review", "Needs review", null, true, item);
-      } else if (furniture) {
-        push(`furniture:${furniture.id}`, `${furniture.name}${room ? ` · ${room.name}` : ""}`, room?.name ?? null, false, item);
-      } else if (room) {
-        push(`room:${room.id}`, room.name, room.name, false, item);
-      } else {
-        push("needs-review", "Needs review", null, true, item);
-      }
-    }
-    const ordered = [...groups.values()].sort((a, b) => {
-      if (a.needsReview !== b.needsReview) return a.needsReview ? 1 : -1;
-      return a.label.localeCompare(b.label);
-    });
-    return ordered;
+      } satisfies RetrievalPlanItem
+    }));
+    return groupByPlace(entries).map((g) => ({ key: g.key, label: g.label, roomName: g.roomName, needsReview: g.needsReview, items: g.items }));
   }
 
   function unpackPriority(opId: string | null = null): UnpackPriorityEntry[] {
@@ -1635,17 +1831,29 @@ export function createStore(options: StoreOptions): Store {
     return opId;
   }
 
+  // Shared kind→belongings primitive: the ONE place that maps an any-of kind set
+  // to owned candidates (retired/consumed excluded — "no longer owned"). Both the
+  // kit write path (resolveKit) and the Home Capability read path use this, so
+  // there is a single source of truth for "what do I own of these kinds?". Each
+  // caller applies its OWN availability constant afterwards (resolveKit keeps
+  // UNAVAILABLE_STATES; homeCapability uses NOT_HANDY_STATES) — deliberately not
+  // baked in here, so refactoring one path cannot silently change the other.
+  function candidatesForKinds(kindsAny: readonly string[]): Array<{ b: BelongingEntity; lifecycle: LifecycleState }> {
+    const candidates: Array<{ b: BelongingEntity; lifecycle: LifecycleState }> = [];
+    for (const b of state.belongings.values()) {
+      if (b.mergedInto) continue;
+      const lifecycle = lifecycleOf(b.id);
+      if (lifecycle === "retired" || lifecycle === "consumed") continue;
+      if (b.kinds.some((k) => kindsAny.includes(k))) candidates.push({ b, lifecycle });
+    }
+    return candidates;
+  }
+
   function resolveKit(kit: Kit): KitRow[] {
     const rows: KitRow[] = [];
     const used = new Map<string, KitRow>();
     for (const req of kit.requirements) {
-      const candidates: Array<{ b: BelongingEntity; lifecycle: LifecycleState }> = [];
-      for (const b of state.belongings.values()) {
-        if (b.mergedInto) continue;
-        const lifecycle = lifecycleOf(b.id);
-        if (lifecycle === "retired" || lifecycle === "consumed") continue;
-        if (b.kinds.some((k) => req.kindsAny.includes(k))) candidates.push({ b, lifecycle });
-      }
+      const candidates = candidatesForKinds(req.kindsAny);
       const available = candidates.filter((c) => !UNAVAILABLE_STATES.includes(c.lifecycle));
       const pick = available[0] ?? null;
       const first = candidates[0] ?? null;
@@ -1802,7 +2010,7 @@ export function createStore(options: StoreOptions): Store {
     get revision() { return revision; },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     // read
-    searchBelongings, searchBelongingsPage, belongingView, locate, locateById, ownershipRecall, declutterReview,
+    searchBelongings, searchBelongingsPage, belongingView, locate, locateById, ownershipRecall, declutterReview, homeCapability,
     containerContents, containersView, staleContainers, whichContainerHas,
     attention, activation, operationsView, operationView, retrievalPlan, unpackPriority,
     proposals, commitsView, exportJson, exportJsonText, planPinFor, chainFor, chainText,

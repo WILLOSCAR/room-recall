@@ -3,10 +3,89 @@
 // history live in append-only records built by buildSeedRecords(now).
 
 import type {
-  AnyRecord, Catalog, CommitOp, ContainerKind, EvidenceKind, ObservationRecord, PlaceRef, Relation
+  AnyRecord, CapabilityProfile, Catalog, CommitOp, ContainerKind, EvidenceKind, ObservationRecord, PlaceRef, Relation
 } from "./types.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
+
+// Home Capability profiles (vision §5.4): named activities described as the
+// belongings they need. Each need's kindsAny is ideal-kind-first; a match on a
+// later kind is a substitute. These are grounded in the seed catalog's real
+// kinds — some needs the home genuinely owns, others are honest gaps (a tent, a
+// screwdriver, a laptop) so the capability check reports a true have/missing
+// split. This is config, not graph state; a real product swaps it for an
+// LLM-driven intent→needs expansion behind the same shape.
+export const capabilityProfiles: CapabilityProfile[] = [
+  {
+    id: "home-workout",
+    label: "Home workout",
+    triggers: ["home workout", "work out at home", "workout at home", "exercise at home", "home exercise", "workout without the gym"],
+    needs: [
+      { id: "need-sports-clothing", label: "Comfortable sports clothing", kindsAny: ["training-shirt", "sports-top", "training-shorts", "clothing"], level: "required", because: "You need breathable training clothes you can move and sweat in." },
+      { id: "need-towel", label: "Sweat towel", kindsAny: ["towel"], level: "required", because: "A towel to wipe sweat and cover the mat keeps the session comfortable." },
+      { id: "need-water", label: "Water bottle", kindsAny: ["water-bottle"], level: "required", because: "Staying hydrated during the workout means a bottle within reach." },
+      { id: "need-workout-mat", label: "Exercise / yoga mat", kindsAny: ["yoga-mat", "exercise-mat", "workout-mat"], level: "required", because: "Floor exercises and stretching need a cushioned mat so you are not on bare floor." },
+      { id: "need-resistance-band", label: "Resistance band", kindsAny: ["resistance-band", "gym-gear"], level: "optional", because: "A band adds resistance for strength work when you have no machines at home." },
+      { id: "need-shoes", label: "Athletic shoes", kindsAny: ["gym-shoes", "shoes"], level: "optional", because: "Supportive shoes help for jumping or cardio, though some floor routines are barefoot." },
+      { id: "need-free-weights", label: "Dumbbells / free weights", kindsAny: ["dumbbell", "kettlebell", "free-weights"], level: "optional", because: "Free weights let you progress strength training." }
+    ]
+  },
+  {
+    id: "remote-work",
+    label: "Remote work",
+    triggers: ["remote work", "wfh", "work from home", "work from a cafe", "work from a café", "working remotely today"],
+    needs: [
+      { id: "need-laptop", label: "Laptop", kindsAny: ["laptop", "computer"], level: "required", because: "You can't work remotely without a laptop." },
+      { id: "need-charger", label: "Charger", kindsAny: ["charger"], level: "required", because: "A charger keeps your laptop and phone powered through a full day away from your desk." },
+      { id: "need-earphones", label: "Earphones", kindsAny: ["earphones"], level: "required", because: "Video calls and focus in a shared café or home space need earphones." },
+      { id: "need-water-bottle", label: "Water bottle", kindsAny: ["water-bottle"], level: "optional", because: "A refillable bottle keeps you hydrated through the day." },
+      { id: "need-power-strip", label: "Power strip", kindsAny: ["power-strip"], level: "optional", because: "A power strip lets you charge several devices from one café or hot-desk outlet." },
+      { id: "need-notebook", label: "Notepad and pen", kindsAny: ["notebook", "notepad"], level: "optional", because: "A paper notepad for jotting notes during calls." }
+    ]
+  },
+  {
+    id: "camping-outdoors",
+    label: "Camping trip",
+    triggers: ["camping", "camping trip", "outdoors trip", "go camping", "going camping", "overnight camping trip"],
+    needs: [
+      { id: "need-warm-layer", label: "Warm jacket", kindsAny: ["jacket"], level: "required", because: "Overnight outdoors gets cold, so a warm jacket is essential." },
+      { id: "need-water", label: "Water bottle", kindsAny: ["water-bottle"], level: "required", because: "Staying hydrated on the trail matters." },
+      { id: "need-first-aid", label: "First-aid / medicine kit", kindsAny: ["medicine"], level: "required", because: "Being away from help makes a medicine kit essential." },
+      { id: "need-tent", label: "Tent", kindsAny: ["tent"], level: "required", because: "An overnight trip needs shelter." },
+      { id: "need-sleeping-bag", label: "Sleeping bag", kindsAny: ["sleeping-bag"], level: "required", because: "Sleeping outside needs a sleeping bag." },
+      { id: "need-towel", label: "Towel", kindsAny: ["towel"], level: "optional", because: "A towel is handy for drying off at camp." },
+      { id: "need-light", label: "Flashlight / headlamp", kindsAny: ["flashlight", "headlamp"], level: "optional", because: "A portable light is useful after dark." }
+    ]
+  },
+  {
+    id: "quick-repair",
+    label: "Quick repair around the home",
+    triggers: ["quick repair", "fix a wobbly chair", "wobbly chair", "tighten a loose screw", "repair something", "fix something around the house"],
+    needs: [
+      { id: "need-screwdriver", label: "Screwdriver", kindsAny: ["screwdriver", "tool"], level: "required", because: "Tightening a wobbly joint or a loose screw needs a screwdriver in hand." },
+      { id: "need-spare-screws", label: "Spare screws / fasteners", kindsAny: ["screws", "fasteners"], level: "required", because: "A stripped or missing screw usually has to be replaced with a spare of the right size." },
+      { id: "need-tape", label: "Tape", kindsAny: ["tape", "duct-tape"], level: "optional", because: "A quick temporary hold or bundling a wire is easiest with a roll of tape." },
+      { id: "need-glue", label: "Glue / adhesive", kindsAny: ["glue", "adhesive"], level: "optional", because: "A loose wooden joint can be re-bonded with glue instead of a screw." },
+      { id: "need-work-light", label: "Work light", kindsAny: ["lamp"], level: "optional", because: "A movable lamp lets you see the fixings you are working on." },
+      { id: "need-protective-cloth", label: "Protective cloth", kindsAny: ["towel"], level: "optional", because: "A towel protects the floor or surface and catches debris." }
+    ]
+  },
+  {
+    id: "host-a-guest",
+    label: "Host an overnight guest",
+    triggers: ["host a guest", "overnight guest", "guest staying over", "guest sleeping over", "set up the guest bed", "guest room"],
+    needs: [
+      { id: "need-spare-towel", label: "Spare towel", kindsAny: ["towel"], level: "required", because: "A guest needs a clean towel of their own for the shower." },
+      { id: "need-spare-toiletries", label: "Spare toiletries", kindsAny: ["toiletries"], level: "required", because: "Travellers often arrive without their own toothbrush or soap." },
+      { id: "need-spare-bedding", label: "Spare bedding / sheets", kindsAny: ["bedding", "linens", "duvet"], level: "required", because: "A made-up bed needs a fresh set of sheets and a cover for the guest." },
+      { id: "need-spare-pillow", label: "Extra pillow", kindsAny: ["pillow"], level: "required", because: "An overnight guest needs at least one pillow to sleep on." },
+      { id: "need-sleeping-surface", label: "Air mattress / spare bed", kindsAny: ["air-mattress", "sleeping-pad", "folding-bed"], level: "optional", because: "Without a spare room, a guest still needs somewhere to sleep." },
+      { id: "need-bedside-water", label: "Bedside water", kindsAny: ["water-bottle"], level: "optional", because: "A bottle of water by the bed is a small comfort for anyone staying the night." },
+      { id: "need-bedside-lamp", label: "Reading / bedside lamp", kindsAny: ["lamp"], level: "optional", because: "A lamp lets the guest read and find the switch in an unfamiliar room." },
+      { id: "need-guest-charger", label: "Phone charger", kindsAny: ["charger"], level: "optional", because: "A guest may forget their charger and need to top up overnight." }
+    ]
+  }
+];
 
 export const catalog: Catalog = {
   rooms: [
@@ -103,7 +182,9 @@ export const catalog: Catalog = {
     { id: "gym", name: "Gym", type: "kit", kitId: "fitness", description: "Prepare the fitness kit." },
     { id: "travel", name: "Travel", type: "kit", kitId: "travel", description: "Pack for a trip." },
     { id: "cleaning", name: "Cleaning", type: "kit", kitId: null, description: "Reset a space (placeholder checklist in V1)." }
-  ]
+  ],
+
+  capabilityProfiles
 };
 
 // Seed records: append-only history that the store folds into current state.
@@ -318,7 +399,8 @@ export const emptyCatalog: Catalog = {
   containers: [],
   belongings: [],
   kits: catalog.kits,
-  operationTemplates: catalog.operationTemplates
+  operationTemplates: catalog.operationTemplates,
+  capabilityProfiles: catalog.capabilityProfiles
 };
 
 // Onboarding quick-add templates (Setup view).

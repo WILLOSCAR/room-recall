@@ -1069,6 +1069,43 @@ function askBubble(entry: AskLogEntry): string {
       ${groups || '<div class="muted">Nothing flagged for review right now.</div>'}
       <div class="trust-note" style="margin-top:12px"><i data-lucide="shield-check"></i> ${esc(d.note)}</div>
     </div>`;
+  } else if (reply?.capability) {
+    const c = reply.capability;
+    const verdictChip = !c.matched ? '<span class="chip">no profile</span>'
+      : c.verdict === "ready" ? '<span class="chip sage">ready</span>'
+        : c.verdict === "almost" ? '<span class="chip amber">almost ready</span>'
+          : c.verdict === "not_ready" ? '<span class="chip red">not ready yet</span>'
+            : '<span class="chip">needs a profile</span>';
+    const stops = c.stops.map((g) => `<div style="margin-top:8px">
+      <div class="proposal-section-label">${esc(g.label)}</div>
+      ${g.items.map((i) => `<div class="attention-row">
+        <span class="chip ${i.status === "substitute" ? "blue" : "sage"}">${i.status === "substitute" ? "substitute" : "have"}</span>
+        <span class="grow"><strong>${esc(i.name)}</strong><div class="place">${esc(i.chainText)}</div></span>
+      </div>`).join("")}
+    </div>`).join("");
+    const notHandy = c.notHandy.length ? `<div style="margin-top:8px">
+      <div class="proposal-section-label">Owned · not to hand</div>
+      ${c.notHandy.map((n) => `<div class="attention-row">
+        <span class="chip amber">${esc((n.state ?? "").replace(/_/g, " "))}</span>
+        <span class="grow"><strong>${esc(n.item ?? n.label)}</strong><div class="place">${esc(n.note ?? "")}</div></span>
+      </div>`).join("")}
+    </div>` : "";
+    const gapRows = (gaps: typeof c.gaps.requiredMissing, tone: string): string => gaps.map((g) => `<div class="attention-row">
+      <span class="chip ${tone}">${tone === "red" ? "missing" : "optional"}</span>
+      <span class="grow"><strong>${esc(g.label)}</strong><div class="place">no memory of owning this · ${esc(g.because)}</div></span>
+    </div>`).join("");
+    const gaps = (c.gaps.requiredMissing.length || c.gaps.optionalMissing.length) ? `<div style="margin-top:8px">
+      <div class="proposal-section-label">Gaps — you decide whether to get these</div>
+      ${gapRows(c.gaps.requiredMissing, "red")}
+      ${gapRows(c.gaps.optionalMissing, "")}
+    </div>` : "";
+    extra = c.matched ? `<div class="card" style="box-shadow:none;margin-top:8px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${c.requiredHave}/${c.requiredTotal} essentials covered${c.confidence != null ? ` · conf ${c.confidence.toFixed(2)}` : ""}${c.stale ? " · worth reconfirming" : ""}</span></div>
+      ${stops}${notHandy}${gaps}
+    </div>` : `<div class="card" style="box-shadow:none;margin-top:8px">
+      <div style="display:flex;gap:8px;align-items:center">${verdictChip}<span class="muted">I won't guess what an unknown activity needs.</span></div>
+      ${c.suggestions.length ? `<div class="place" style="margin-top:6px">Try: ${c.suggestions.map((s) => esc(s)).join(", ")}</div>` : ""}
+    </div>`;
   }
   return `<div class="ask-row"><div class="ask-bubble nestory">
     ${reply?.answer?.ok ? "" : `<div>${esc(entry.text)}</div>`}
@@ -1089,7 +1126,7 @@ function renderAsk(): string {
     <div class="ask-console">
       <div class="ask-console-head"><span><i data-lucide="sparkles"></i> Nestory</span><span><span class="live-dot"></span> Home memory ready</span></div>
       <div class="ask-log" role="log" aria-label="Conversation" data-testid="ask-log">
-        ${ui.askLog.map(askBubble).join("") || `<div class="ask-starters"><span>Try asking</span>${["Where is my water bottle?", "Do I already have a charger?", "Which box has my winter jacket?", "Prepare my gym kit", "What can I declutter?", "What needs attention?"].map((prompt) => `<button data-action="ask-prompt" data-prompt="${esc(prompt)}"><i data-lucide="arrow-up-right"></i>${esc(prompt)}</button>`).join("")}</div>`}
+        ${ui.askLog.map(askBubble).join("") || `<div class="ask-starters"><span>Try asking</span>${["Where is my water bottle?", "Do I already have a charger?", "Can I work out at home?", "Am I ready to go camping?", "What can I declutter?", "What needs attention?"].map((prompt) => `<button data-action="ask-prompt" data-prompt="${esc(prompt)}"><i data-lucide="arrow-up-right"></i>${esc(prompt)}</button>`).join("")}</div>`}
       </div>
       <div class="ask-composer">
         <i data-lucide="sparkles"></i><input type="text" id="ask-input" aria-label="Ask Nestory" data-enter="ask-send" placeholder="Ask where something is, whether you already own it, or what needs attention…">
@@ -1312,7 +1349,7 @@ function renderHome(): string {
         </div>
         <div class="quick-actions">
           <button data-action="nav" data-view="capture"><i data-lucide="scan-line"></i><span>Capture</span></button>
-          <button data-action="start-op" data-template="gym"><i data-lucide="dumbbell"></i><span>Gym kit</span></button>
+          <button data-action="ask-prompt" data-prompt="Can I work out at home?"><i data-lucide="circle-check-big"></i><span>Ready check</span></button>
           <button data-action="nav" data-view="plan"><i data-lucide="cuboid"></i><span>Spatial view</span></button>
         </div>
       </div>
@@ -2355,7 +2392,7 @@ document.addEventListener("click", (e) => {
     case "top-locate": doLocate(inputValue("top-search-input"), "top-search-input"); break;
     case "hero-locate": doLocate(inputValue("hero-search-input"), "hero-search-input"); break;
     case "ask-send": doAsk(inputValue("ask-input")); break;
-    case "ask-prompt": if (t.dataset.prompt) doAsk(t.dataset.prompt); break;
+    case "ask-prompt": if (t.dataset.prompt) { if (ui.view !== "ask") navigate("ask"); doAsk(t.dataset.prompt); } break;
     case "answer-not-there": {
       const itemId = t.dataset.item;
       if (!itemId) break;

@@ -26,7 +26,7 @@ import { buildHouseholdRecords } from "./scale-fixture.ts";
 import { runAgentEval, formatEvalReport, EVAL_JOBS } from "./agent-eval.ts";
 import type { EvalJob } from "./agent-eval.ts";
 import type {
-  BelongingEntity, DeepReadonly, KitOperationView, LocateAnswer, LocateSuccess, StorageLike, Store, StoreOptions
+  BelongingEntity, Catalog, CapabilityProfile, DeepReadonly, KitOperationView, LocateAnswer, LocateSuccess, StorageLike, Store, StoreOptions
 } from "./types.ts";
 
 const pkgRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -1282,6 +1282,16 @@ section("ask router", () => {
   const declutter = ask(store, toolkit, "What can I declutter?");
   assert("ask-declutter-intent", declutter.intent === "declutter" && declutter.toolCalls[0]?.name === "declutter_review" && (declutter.declutter?.candidates.length ?? 0) >= 1, declutter.text);
 
+  // Home Capability (Ready) routing — activity intents reach home_capability.
+  const cap = ask(store, toolkit, "Can I work out at home?");
+  assert("ask-capability-intent", cap.intent === "capability" && cap.toolCalls[0]?.name === "home_capability" && cap.capability?.matched === true, cap.text);
+  const capBare = ask(store, toolkit, "going camping this weekend");
+  assert("ask-capability-bare-activity", capBare.intent === "capability" && capBare.capability?.profileId === "camping-outdoors", capBare.text);
+  const stillKit = ask(store, toolkit, "prepare my gym kit");
+  assert("ask-capability-does-not-hijack-kit", stillKit.intent === "kit", stillKit.intent);
+  const stillLocate2 = ask(store, toolkit, "where is my water bottle?");
+  assert("ask-capability-does-not-hijack-locate", stillLocate2.intent === "locate", stillLocate2.intent);
+
   const help = ask(store, toolkit, "???");
   assert("ask-help-fallback", help.intent === "help" && help.toolCalls.length === 0);
 });
@@ -1329,6 +1339,147 @@ section("declutter review (release)", () => {
   const tk = createAgentToolkit(store);
   const viaTool = tk.dispatch("declutter_review", {}) as { ok: boolean; candidates: unknown[] };
   assert("declutter-tool-dispatches", viaTool.ok === true && Array.isArray(viaTool.candidates), JSON.stringify(viaTool).slice(0, 60));
+});
+
+section("home capability (ready loop)", () => {
+  // --- integration over the REAL seed catalog: honest mixed results ---
+  const store = fresh();
+
+  // home-workout: sports clothing + towel + water are owned, but the yoga mat is a
+  // genuine gap → not_ready, and the gap is phrased as "no memory of owning", not
+  // "you don't have one".
+  const workout = store.homeCapability("can I work out at home?");
+  assert("capability-matches-profile", workout.matched && workout.profileId === "home-workout" && workout.label === "Home workout", `${workout.profileId}`);
+  assert("capability-not-ready-when-required-missing",
+    workout.verdict === "not_ready" && workout.gaps.requiredMissing.some((g) => g.needId === "need-workout-mat"), workout.sentence);
+  assert("capability-missing-is-honest-no-memory",
+    /no memory of owning/i.test(workout.sentence) && !/you don't have|you do not have/i.test(workout.sentence), workout.sentence);
+  assert("capability-have-needs-cite-place-and-confidence",
+    workout.needs.some((n) => n.needId === "need-water" && n.status === "have_available" && n.placeKnown && (n.confidence ?? 0) > 0), "water need should be a placed have");
+  assert("capability-stops-grouped-by-place",
+    workout.stops.length > 0 && workout.stops.every((s) => s.items.length > 0 && typeof s.label === "string"), `${workout.stops.length} stops`);
+  assert("capability-blank-usage-never-makes-missing",
+    // every missing need is missing purely for lack of a belonging of its kinds — no usage signal exists in the model at all.
+    workout.gaps.requiredMissing.concat(workout.gaps.optionalMissing).every((g) => g.because.length > 0), "gaps carry the profile reason");
+
+  // camping: jacket is owned but PACKED (have_unavailable), tent + sleeping bag are
+  // real gaps. Owned-but-not-handy must never be counted as missing.
+  const camping = store.homeCapability("am I ready to go camping?");
+  assert("capability-owned-unavailable-not-counted-missing",
+    camping.notHandy.some((n) => n.itemId === "winter-jacket" && n.state === "packed")
+    && !camping.gaps.requiredMissing.some((g) => g.kindsAny.includes("jacket")), camping.sentence);
+  assert("capability-camping-not-ready-lists-shelter-gaps",
+    camping.verdict === "not_ready" && camping.gaps.requiredMissing.some((g) => g.needId === "need-tent") && camping.gaps.requiredMissing.some((g) => g.needId === "need-sleeping-bag"), camping.sentence);
+
+  // Unrecognized intent → honest "no profile", never a fabricated verdict.
+  const unknown = store.homeCapability("can I perform open-heart surgery at home?");
+  assert("capability-unknown-intent-is-honest",
+    !unknown.matched && unknown.verdict === "unknown" && unknown.needs.length === 0
+    && /won't guess|can't tell you what/i.test(unknown.sentence) && unknown.suggestions.length > 0, unknown.sentence);
+
+  // Pure READ: calling it changes neither revision nor record count nor operations.
+  const revBefore = store.revision; const recBefore = store.recordCount; const opsBefore = store.operationsView().length;
+  store.homeCapability("home workout"); store.homeCapability("camping"); store.homeCapability("nonsense intent xyz");
+  assert("capability-is-pure-read",
+    store.revision === revBefore && store.recordCount === recBefore && store.operationsView().length === opsBefore,
+    `${revBefore}->${store.revision}, ${recBefore}->${store.recordCount}, ops ${opsBefore}->${store.operationsView().length}`);
+
+  const tk = createAgentToolkit(store);
+  const viaTool = tk.dispatch("home_capability", { intent: "work out at home" }) as { ok: boolean; matched: boolean; verdict: string };
+  assert("capability-tool-dispatches", viaTool.ok === true && viaTool.matched === true && typeof viaTool.verdict === "string", JSON.stringify(viaTool).slice(0, 80));
+});
+
+section("home capability verdict edges", () => {
+  // Purpose-built stores isolate each verdict edge the design's adversarial review
+  // flagged. Runtime-built inventory exercises the SAME matcher as the seed path.
+  const build = (profiles: CapabilityProfile[]): { store: Store; setClock: (t: number) => void } => {
+    let clock = NOW;
+    const cat: Catalog = { rooms: [], furniture: [], containers: [], belongings: [], kits: [], operationTemplates: [], capabilityProfiles: profiles };
+    const store = createStore({ catalog: cat, seedFactory: () => [], now: () => clock, storage: null });
+    return { store, setClock: (t) => { clock = t; } };
+  };
+  const req = (id: string, kindsAny: string[]) => ({ id, label: id, kindsAny, level: "required" as const, because: `need ${id}` });
+  const opt = (id: string, kindsAny: string[]) => ({ id, label: id, kindsAny, level: "optional" as const, because: `nice ${id}` });
+
+  // READY (all required have_available). Also verifies place-unknown stays a have.
+  {
+    const { store } = build([{ id: "p", label: "do the thing", triggers: ["do the thing"], needs: [req("n-water", ["water-bottle"])] }]);
+    const roomId = store.createRoom({ name: "Room" });
+    const contId = store.createContainer({ name: "Shelf", kind: "shelf", roomId });
+    store.createBelonging({ name: "My bottle", kinds: ["water-bottle"], defaultHome: { type: "container", id: contId }, currentPlace: { type: "container", id: contId } });
+    const r = store.homeCapability("do the thing");
+    assert("capability-ready-when-all-required-available",
+      r.verdict === "ready" && r.requiredHave === 1 && r.requiredTotal === 1 && /all 1 essential is covered/i.test(r.sentence), r.sentence);
+  }
+  // READY with place-unknown required have → still ready, but honesty clause names it.
+  // A catalog belonging with NO placement record is owned-but-place-unknown by
+  // construction (active placement null, state defaults to at_home = available).
+  {
+    const clock = NOW;
+    const cat: Catalog = {
+      rooms: [], furniture: [], containers: [],
+      belongings: [{ id: "bottle", name: "Bottle", kinds: ["water-bottle"], importance: "normal", defaultHome: { type: "room", id: "nowhere" } }],
+      kits: [], operationTemplates: [],
+      capabilityProfiles: [{ id: "p", label: "do the thing", triggers: ["do the thing"], needs: [req("n-water", ["water-bottle"])] }]
+    };
+    const store = createStore({ catalog: cat, seedFactory: () => [], now: () => clock, storage: null });
+    const r = store.homeCapability("do the thing");
+    assert("capability-ready-place-unknown-stays-have-and-is-disclosed",
+      r.verdict === "ready" && r.needs[0]?.status === "have_available" && r.needs[0]?.placeKnown === false
+      && /place not confirmed/i.test(r.sentence), `${r.needs[0]?.status}/${r.needs[0]?.placeKnown}: ${r.sentence}`);
+  }
+  // ALMOST (required owned but not to hand).
+  {
+    const { store } = build([{ id: "p", label: "do the thing", triggers: ["do the thing"], needs: [req("n-towel", ["towel"])] }]);
+    const roomId = store.createRoom({ name: "Room" });
+    const contId = store.createContainer({ name: "Basket", kind: "basket", roomId });
+    const id = store.createBelonging({ name: "Towel", kinds: ["towel"], defaultHome: { type: "container", id: contId }, currentPlace: { type: "container", id: contId } });
+    store.setItemState(id, "laundry");
+    const r = store.homeCapability("do the thing");
+    assert("capability-almost-when-required-not-handy",
+      r.verdict === "almost" && r.notHandy.some((n) => n.itemId === id) && /laundry/i.test(r.sentence) && !/no memory/i.test(r.sentence), r.sentence);
+  }
+  // SUBSTITUTE covering a required need → ready, but the stand-in is disclosed (never a flat "covered").
+  {
+    const { store } = build([{ id: "p", label: "do the thing", triggers: ["do the thing"], needs: [req("n-shirt", ["training-shirt", "clothing"])] }]);
+    const roomId = store.createRoom({ name: "Room" });
+    const contId = store.createContainer({ name: "Drawer", kind: "drawer", roomId });
+    // owns a generic "clothing" item but no "training-shirt" → substitute via fallback kind.
+    store.createBelonging({ name: "Winter jacket", kinds: ["jacket", "clothing"], defaultHome: { type: "container", id: contId }, currentPlace: { type: "container", id: contId } });
+    const r = store.homeCapability("do the thing");
+    assert("capability-substitute-covers-but-is-disclosed",
+      r.verdict === "ready" && r.substituteInUse && r.needs[0]?.status === "substitute" && r.needs[0]?.exact === false
+      && /using .*for/i.test(r.sentence), r.sentence);
+  }
+  // requiredTotal === 0 → never a vacuous "ready".
+  {
+    const { store } = build([{ id: "p", label: "do the thing", triggers: ["do the thing"], needs: [opt("n-water", ["water-bottle"])] }]);
+    const r = store.homeCapability("do the thing");
+    assert("capability-zero-required-is-never-vacuous-ready",
+      r.verdict !== "ready" && r.requiredTotal === 0 && !/all 0 essentials are covered/i.test(r.sentence), r.sentence);
+  }
+  // STALE required have → still ready, but the sentence flags reconfirming.
+  {
+    const { store, setClock } = build([{ id: "p", label: "do the thing", triggers: ["do the thing"], needs: [req("n-water", ["water-bottle"])] }]);
+    const roomId = store.createRoom({ name: "Room" });
+    const contId = store.createContainer({ name: "Shelf", kind: "shelf", roomId });
+    store.createBelonging({ name: "Bottle", kinds: ["water-bottle"], defaultHome: { type: "container", id: contId }, currentPlace: { type: "container", id: contId } });
+    setClock(NOW + 45 * 86400000);            // placement is now 45 days old
+    const r = store.homeCapability("do the thing");
+    assert("capability-ready-flags-stale-record",
+      r.verdict === "ready" && r.stale && /reconfirm/i.test(r.sentence), r.sentence);
+  }
+  // not_ready with a coexisting not-handy required → must NOT claim "everything else covered".
+  {
+    const { store } = build([{ id: "p", label: "do the thing", triggers: ["do the thing"], needs: [req("n-tent", ["tent"]), req("n-towel", ["towel"])] }]);
+    const roomId = store.createRoom({ name: "Room" });
+    const contId = store.createContainer({ name: "Basket", kind: "basket", roomId });
+    const towelId = store.createBelonging({ name: "Towel", kinds: ["towel"], defaultHome: { type: "container", id: contId }, currentPlace: { type: "container", id: contId } });
+    store.setItemState(towelId, "lent_out");   // owned but not handy
+    const r = store.homeCapability("do the thing");
+    assert("capability-not-ready-does-not-falsely-claim-rest-covered",
+      r.verdict === "not_ready" && /lent out/i.test(r.sentence) && !/everything else essential is covered/i.test(r.sentence), r.sentence);
+  }
 });
 
 // =====================================================================
@@ -2525,6 +2676,11 @@ async function runBrowserSmoke(): Promise<void> {
     assert("dom-ask-declutter-review", await evalPage<boolean>(`(() => {
       const t = document.querySelector('[data-testid="ask-log"]')?.textContent ?? '';
       return t.includes("declutter_review") && /you decide/i.test(t) && /duplicate/i.test(t);
+    })()`));
+    await evalPage(`window.nestory.ask("can I work out at home?")`);
+    assert("dom-ask-home-capability", await evalPage<boolean>(`(() => {
+      const t = document.querySelector('[data-testid="ask-log"]')?.textContent ?? '';
+      return t.includes("home_capability") && /no memory of owning/i.test(t) && /essential/i.test(t);
     })()`));
     await shot("nestory-ask.png");
 

@@ -107,6 +107,29 @@ export interface Kit {
   requirements: KitRequirement[];
 }
 
+// Home Capability (vision §5.4 / §7.4): a named activity ("home workout",
+// "camping", "quick repair") described as the belongings it needs. It is pure
+// config — the LLM-swappable analog of "expand an intent into required items" —
+// and the store resolves it against real inventory as a READ. `kindsAny[0]` is
+// the IDEAL kind for a need; later kinds are acceptable substitutes.
+export interface CapabilityNeed {
+  id: string;
+  label: string;
+  /** acceptable kinds, ideal-first: matching kindsAny[0] is exact, a later kind is a substitute. */
+  kindsAny: string[];
+  level: ReqLevel;
+  /** plain-language why the activity needs this — shown verbatim, never inferred. */
+  because: string;
+}
+
+export interface CapabilityProfile {
+  id: string;
+  label: string;
+  /** lowercase phrases that route free-text intent to this profile (phrase match only). */
+  triggers: string[];
+  needs: CapabilityNeed[];
+}
+
 export type OperationType = "move" | "kit";
 export type OperationStatus = "active" | "done" | "abandoned";
 
@@ -125,6 +148,8 @@ export interface Catalog {
   belongings: Belonging[];
   kits: Kit[];
   operationTemplates: OperationTemplate[];
+  /** Home Capability profiles (vision §5.4). Optional for backward-compatible catalogs. */
+  capabilityProfiles?: CapabilityProfile[];
 }
 
 // -------------------------------------------------------------- operations
@@ -458,6 +483,95 @@ export interface DeclutterReviewResult {
   note: string;                // the standing guarantee (no shame / no auto-dispose / unused≠no-record)
 }
 
+// Home Capability (Ready loop, vision §5.4 / §7.4): "can I do X at home right now
+// with what I already own?" A pure READ that resolves a capability profile against
+// inventory using the SAME kind→belongings matcher the kit checklist uses — but it
+// creates NO operation and appends NO records. Every need carries the same
+// place/confidence/freshness evidence contract as locate/ownership. Non-negotiables
+// enforced here: unknown is never empty (owned-but-place-unknown stays "have", and a
+// missing need is "no memory of owning this", never "you don't have one"); a blank
+// usage history never makes a need missing (only lifecycle + placement feed status);
+// an unrecognized intent is an honest "no profile", never a fabricated verdict.
+export type CapabilityNeedStatus =
+  | "have_available"    // owned + usable now (place may be unknown — still counts as have)
+  | "have_unavailable"  // owned but in a not-handy state (laundry/lent/packed/…): drives "almost"
+  | "substitute"        // usable, but via a broader/fallback kind, not the ideal kindsAny[0]
+  | "missing";          // no belonging of ANY listed kind — "no memory of owning this"
+
+/** One profile need resolved against inventory. Mirrors OwnershipMatch's evidence contract. */
+export interface CapabilityNeedResult {
+  needId: string;
+  label: string;
+  level: ReqLevel;
+  because: string;
+  kindsAny: string[];
+  status: CapabilityNeedStatus;
+  itemId: string | null;           // null iff status === "missing"
+  item: string | null;
+  matchedKind: string | null;      // which listed kind the belonging matched
+  exact: boolean;                  // true = matched the ideal kindsAny[0]; false for substitute
+  state: LifecycleState | null;
+  available: boolean;              // state ∉ NOT_HANDY_STATES (ownership "usable now" semantics)
+  placeKnown: boolean;             // false → owned, place unknown (never downgraded to missing)
+  chainText: string;               // place chain, or "somewhere in your home (place not confirmed)"
+  confidence: number | null;
+  daysSinceUpdate: number | null;
+  stale: boolean;                  // daysSinceUpdate > 30 — surfaced, never hidden
+  note: string | null;             // e.g. "Training tee is in laundry" / substitute explanation
+  alternativesOwned: number;       // other owned candidates of a listed kind (0+)
+}
+
+/** An honestly-absent need. Never fabricated, never phrased as certainty. */
+export interface CapabilityGapEntry {
+  needId: string;
+  label: string;
+  level: ReqLevel;
+  kindsAny: string[];
+  because: string;
+}
+
+/** One pickup-stop item — read-only sibling of RetrievalPlanItem (no rowId/RowStatus). */
+export interface CapabilityStopItem {
+  name: string;
+  status: CapabilityNeedStatus;
+  chainText: string;
+}
+
+/** Grouping shape reused from RetrievalPlanGroup: one stop per furniture (or room). */
+export interface CapabilityStop {
+  key: string;                     // "furniture:<id>" | "room:<id>" | "needs-review"
+  label: string;
+  roomName: string | null;
+  items: CapabilityStopItem[];
+}
+
+export type CapabilityVerdict = "ready" | "almost" | "not_ready" | "unknown";
+
+export interface HomeCapabilityResult {
+  ok: true;
+  matched: boolean;                // false → no profile matched (honest unknown)
+  intent: string;                  // echoed raw intent
+  profileId: string | null;
+  label: string | null;
+  verdict: CapabilityVerdict;      // "unknown" iff !matched
+  needs: CapabilityNeedResult[];   // every profile need, resolved ([] when unmatched)
+  stops: CapabilityStop[];         // what you HAVE (have_available + substitute), grouped by place
+  notHandy: CapabilityNeedResult[];// owned but not to hand — the "almost" set
+  gaps: {
+    requiredMissing: CapabilityGapEntry[];
+    optionalMissing: CapabilityGapEntry[];
+  };
+  requiredTotal: number;
+  requiredHave: number;            // required needs that are have_available or substitute
+  confidence: number | null;       // min confidence over required haves; null if none/unmatched
+  checkedAt: string;               // ISO — freshness of the read itself
+  stale: boolean;                  // any required have relied on a stale (>30d) record
+  substituteInUse: boolean;        // any required need covered only by a substitute
+  sentence: string;                // the single honest verdict summary
+  suggestions: string[];           // e.g. profile labels to try when unmatched
+  nextAction: "reuse" | "locate" | "consider_buy" | "add_belonging" | "none";
+}
+
 
 export interface ContainerContentsView {
   container: ContainerEntity;
@@ -633,6 +747,7 @@ export interface Store {
   locateById(itemId: string, ctx?: { query?: string | null; alternates?: DeepReadonly<ScoredBelongingView[]> }): DeepReadonly<LocateAnswer>;
   ownershipRecall(query: string): DeepReadonly<OwnershipRecallAnswer>;
   declutterReview(): DeepReadonly<DeclutterReviewResult>;
+  homeCapability(intent: string): DeepReadonly<HomeCapabilityResult>;
   containerContents(containerId: string): DeepReadonly<ContainerContentsView> | null;
   containersView(): DeepReadonly<ContainerView[]>;
   staleContainers(): DeepReadonly<ContainerView[]>;

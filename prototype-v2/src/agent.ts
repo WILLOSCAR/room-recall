@@ -123,6 +123,14 @@ export function createAgentToolkit(store: Store): AgentToolkit {
     },
     {
       descriptor: {
+        name: "home_capability",
+        description: "Home Capability (Ready): 'can I do X at home right now with what I already own?' Resolves an activity intent ('home workout', 'camping', 'quick repair', 'remote work', 'host a guest') into needed items, matches each against inventory (have/available, owned-but-not-handy, substitute, or missing), groups what you have by location, and lists the honest gaps. A pure READ — takes no action, creates no operation. An unrecognized intent returns an honest 'no profile', never a fabricated verdict.",
+        parameters: { type: "object", properties: { intent: { type: "string", description: "The activity, e.g. 'work out at home', 'go camping', 'fix a wobbly chair'." } }, required: ["intent"] }
+      },
+      run: (args) => store.homeCapability(str(args, "intent"))
+    },
+    {
+      descriptor: {
         name: "start_operation",
         description: "Start an operation from a template (move, gym, travel). Kit templates expand into a merged checklist against real belongings.",
         parameters: { type: "object", properties: { template_id: { type: "string", description: "Operation template id.", enum: ["move", "gym", "travel"] } }, required: ["template_id"] }

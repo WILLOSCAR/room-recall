@@ -1,14 +1,14 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-19T16:23:09.056Z
+Generated: 2026-08-20T03:36:00.687Z
 Runtime: node v26.3.1 · typescript strict
-- Assertions: 489
-- Passed: 487
-- Failed: 2
+- Assertions: 512
+- Passed: 511
+- Failed: 1
 - Browser smoke: ran
-- UI DOM-commit p95: 3.300 ms
-- Household UI DOM-commit p95: 7.100 ms
+- UI DOM-commit p95: 2.800 ms
+- Household UI DOM-commit p95: 6.700 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
-- Settled spatial RAF callbacks observed: 1
+- Settled spatial RAF callbacks observed: 2
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
 ## typescript gate
 - ✓ `tsc-typecheck-and-emit`
@@ -238,6 +238,10 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `ask-ownership-none-is-honest`
 - ✓ `ask-ownership-does-not-hijack-locate`
 - ✓ `ask-declutter-intent`
+- ✓ `ask-capability-intent`
+- ✓ `ask-capability-bare-activity`
+- ✓ `ask-capability-does-not-hijack-kit`
+- ✓ `ask-capability-does-not-hijack-locate`
 - ✓ `ask-help-fallback`
 ## ownership recall (durable loop)
 - ✓ `ownership-owned-cites-place-and-confidence`
@@ -251,6 +255,26 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `declutter-is-decision-support-not-disposal`
 - ✓ `declutter-is-read-only`
 - ✓ `declutter-tool-dispatches`
+## home capability (ready loop)
+- ✓ `capability-matches-profile`
+- ✓ `capability-not-ready-when-required-missing`
+- ✓ `capability-missing-is-honest-no-memory`
+- ✓ `capability-have-needs-cite-place-and-confidence`
+- ✓ `capability-stops-grouped-by-place`
+- ✓ `capability-blank-usage-never-makes-missing`
+- ✓ `capability-owned-unavailable-not-counted-missing`
+- ✓ `capability-camping-not-ready-lists-shelter-gaps`
+- ✓ `capability-unknown-intent-is-honest`
+- ✓ `capability-is-pure-read`
+- ✓ `capability-tool-dispatches`
+## home capability verdict edges
+- ✓ `capability-ready-when-all-required-available`
+- ✓ `capability-ready-place-unknown-stays-have-and-is-disclosed`
+- ✓ `capability-almost-when-required-not-handy`
+- ✓ `capability-substitute-covers-but-is-disclosed`
+- ✓ `capability-zero-required-is-never-vacuous-ready`
+- ✓ `capability-ready-flags-stale-record`
+- ✓ `capability-not-ready-does-not-falsely-claim-rest-covered`
 ## P0.10 sync service
 - ✓ `srv-corrupt-file-fails-closed`
 - ✓ `srv-health`
@@ -381,7 +405,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `spatial-furnished-scene-stays-within-gpu-budget`
 - ✓ `spatial-labels-render-only-in-accessible-html-inspector`
 - ✓ `unrelated-update-preserves-spatial-canvas`
-- ✗ `settled-spatial-scene-has-zero-continuous-raf` — 1
+- ✗ `settled-spatial-scene-has-zero-continuous-raf` — 2
 - ✓ `spatial-selection-from-scene-updates-inspector`
 - ✓ `spatial-selection-does-not-remount-canvas`
 - ✓ `spatial-selection-uses-fitted-outline`
@@ -428,6 +452,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `ask-answer-is-announced-through-persistent-region`
 - ✓ `dom-ask-ownership-recall`
 - ✓ `dom-ask-declutter-review`
+- ✓ `dom-ask-home-capability`
 - ✓ `mobile-nav-reaches-home`
 - ✓ `mobile-nav-reaches-ask`
 - ✓ `mobile-nav-reaches-capture`
@@ -514,7 +539,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `household-belongings-dom-is-bounded`
 - ✓ `household-belongings-shows-window-status`
 - ✓ `household-filter-searches-beyond-first-window`
-- ✗ `household-belongings-next-page-replaces-window` — 
+- ✓ `household-belongings-next-page-replaces-window`
 - ✓ `household-belongings-pagination-keeps-hard-dom-cap`
 - ✓ `household-container-modal-dom-is-bounded`
 - ✓ `household-container-filter-searches-full-truth`

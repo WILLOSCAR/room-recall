@@ -5,7 +5,7 @@
 
 import type { AgentToolkit } from "./agent.ts";
 import type {
-  AttentionSummary, ContainerContentsView, DeclutterReviewResult, LocateAnswer, OwnershipRecallAnswer, RetrievalPlanGroup,
+  AttentionSummary, ContainerContentsView, DeclutterReviewResult, HomeCapabilityResult, LocateAnswer, OwnershipRecallAnswer, RetrievalPlanGroup,
   Store, UnpackPriorityEntry, WhichContainerHit
 } from "./types.ts";
 
@@ -15,12 +15,13 @@ export interface AskToolCall {
 }
 
 export interface AskReply {
-  intent: "locate" | "ownership" | "declutter" | "which_container" | "container_contents" | "kit" | "unpack" | "attention" | "help";
+  intent: "locate" | "ownership" | "declutter" | "capability" | "which_container" | "container_contents" | "kit" | "unpack" | "attention" | "help";
   toolCalls: AskToolCall[];
   text: string;
   answer?: LocateAnswer;
   ownership?: OwnershipRecallAnswer;
   declutter?: DeclutterReviewResult;
+  capability?: HomeCapabilityResult;
   hits?: WhichContainerHit[];
   contents?: ContainerContentsView;
   plan?: RetrievalPlanGroup[];
@@ -101,6 +102,18 @@ export function ask(store: Store, toolkit: AgentToolkit, raw: string): AskReply 
       return { intent: "container_contents", toolCalls, contents, text: reply };
     }
     return { intent: "container_contents", toolCalls, text: `I do not know a container called “${target}”. Open Spaces to see what exists.` };
+  }
+
+  // A bare capability activity ("home workout", "camping", "fix a wobbly chair",
+  // "remote work", "host a guest") → Home Capability (Ready). Gated on the concrete
+  // ACTIVITY keywords, never on bare "can I …" phrasing, so it can't collide with
+  // "can I declutter?" (declutter) or "should I buy …?" (ownership). Placed before
+  // the kit block so activities route here; plain "prepare my gym kit" still falls
+  // through to the kit checklist.
+  const capabilityActivity = /\b(home ?workout|work ?out|exercise at home|camping|camp trip|outdoors trip|quick repair|repair something|fix (a|my|the|something)|wobbly chair|loose screw|remote work|work from home|wfh|work from (a )?caf[eé]|host (a|an) (guest|overnight)|overnight guest|guest (staying|sleeping)|guest room)\b/.test(lower);
+  if (capabilityActivity && !/\bkit\b/.test(lower)) {
+    const capability = call<HomeCapabilityResult>("home_capability", { intent: text });
+    return { intent: "capability", toolCalls, capability, text: capability.sentence };
   }
 
   // "prepare/pack the gym|travel kit", bare "gym"/"travel"
