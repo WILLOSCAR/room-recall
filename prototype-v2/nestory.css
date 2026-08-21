@@ -813,6 +813,9 @@ input::placeholder, textarea::placeholder { color: #68736e; opacity: 1; }
 .spatial-anchor-contents:empty { display: none; }
 .spatial-anchor-contents .attention-row { padding: 5px 0; }
 .spatial-anchor-contents .proposal-section-label { margin-top: 8px; }
+.spatial-tooltip { position: fixed; z-index: 60; display: none; pointer-events: none; max-width: 230px; padding: 7px 10px; border-radius: 10px; background: var(--ink); color: #fff; box-shadow: 0 10px 30px rgba(20,34,29,.28); font-size: 11px; line-height: 1.4; }
+.spatial-tooltip strong { display: block; font-weight: 700; font-size: 12px; margin-bottom: 1px; }
+.spatial-tooltip span { color: rgba(255,255,255,.82); }
 .spatial-anchor-icon { position: relative; display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; background: #eadbc9; }
 .spatial-anchor-icon::before, .spatial-anchor-icon::after { content: ""; position: absolute; border: 2px solid #7a563d; border-radius: 2px; }
 .spatial-anchor-icon.bed::before { width: 20px; height: 12px; }

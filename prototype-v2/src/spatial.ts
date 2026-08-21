@@ -1186,8 +1186,14 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   };
 
   // Hover is a lightweight, dimmer outline distinct from the committed selection.
-  const setHovered = (id: string | null): void => {
-    if (id === hoverId) return;
+  // It also emits a `spatial-hover` event (id + screen coords, or null) so the DOM
+  // can show a confidence tooltip — the scene stays ignorant of the Place Graph and
+  // just reports what's under the pointer and where.
+  const setHovered = (id: string | null, screen: { x: number; y: number } | null = null): void => {
+    if (id === hoverId) {
+      if (id && screen) container.dispatchEvent(new CustomEvent("spatial-hover", { bubbles: true, detail: { id, x: screen.x, y: screen.y } }));
+      return;
+    }
     hoverId = id;
     disposeOutline(hoverOutline);
     hoverOutline = null;
@@ -1197,6 +1203,7 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     }
     renderer.domElement.style.cursor = id ? "pointer" : "";
     renderer.domElement.dataset.spatialHovered = hoverOutline ? (hoverId ?? "") : "";
+    container.dispatchEvent(new CustomEvent("spatial-hover", { bubbles: true, detail: id && screen ? { id, x: screen.x, y: screen.y } : null }));
     scheduleRender();
   };
   cleanupStack.push(() => { disposeOutline(selectionOutline); disposeOutline(hoverOutline); });
@@ -1329,7 +1336,7 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     window.requestAnimationFrame(() => {
       hoverProbePending = false;
       if (!lastPointerEvent || !canRender()) return;
-      setHovered(pickObjectId(lastPointerEvent));
+      setHovered(pickObjectId(lastPointerEvent), { x: lastPointerEvent.clientX, y: lastPointerEvent.clientY });
     });
   };
   const onCanvasPointerLeave = (): void => setHovered(null);

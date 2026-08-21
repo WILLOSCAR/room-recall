@@ -318,6 +318,52 @@ document.addEventListener("spatial-selection", (event) => {
   applySpatialSelection(selection?.id ?? null);
 });
 
+// Hover confidence tooltip: the scene reports which anchor is under the pointer
+// (id + screen coords); the DOM owns the domain data and shows a small summary of
+// how trustworthy that anchor's memory is. Pure read; disappears on pointer-out.
+function spatialAnchorHoverSummary(id: string): { name: string; line: string } | null {
+  const furniture = store.catalog.furniture.find((f) => f.id === id);
+  const containers = furniture
+    ? store.containersView().filter((c) => c.parent.type === "furniture" && c.parent.id === id)
+    : store.containersView().filter((c) => c.id === id);
+  const name = furniture?.name ?? containers[0]?.name ?? resolveSpatialObject(id)?.name ?? "Anchor";
+  if (!containers.length) return { name, line: "No recorded contents." };
+  let items = 0; let confSum = 0; let stale = 0;
+  for (const c of containers) {
+    const contents = store.containerContents(c.id);
+    if (contents?.stale) stale += 1;
+    for (const item of contents?.items ?? []) { items += 1; confSum += item.confidence; }
+  }
+  if (!items) return { name, line: stale ? "Contents not confirmed recently." : "No items recorded here." };
+  const avg = confSum / items;
+  const staleNote = stale ? ` · ${stale} stale` : "";
+  return { name, line: `${items} item${items === 1 ? "" : "s"} · avg conf ${avg.toFixed(2)}${staleNote}` };
+}
+
+let spatialTooltipEl: HTMLElement | null = null;
+function hideSpatialTooltip(): void { if (spatialTooltipEl) spatialTooltipEl.style.display = "none"; }
+document.addEventListener("spatial-hover", (event) => {
+  const detail = (event as CustomEvent<{ id: string; x: number; y: number } | null>).detail;
+  if (!detail) { hideSpatialTooltip(); return; }
+  const summary = spatialAnchorHoverSummary(detail.id);
+  if (!summary) { hideSpatialTooltip(); return; }
+  if (!spatialTooltipEl) {
+    spatialTooltipEl = document.createElement("div");
+    spatialTooltipEl.className = "spatial-tooltip";
+    spatialTooltipEl.setAttribute("role", "tooltip");
+    document.body.appendChild(spatialTooltipEl);
+  }
+  spatialTooltipEl.innerHTML = `<strong>${esc(summary.name)}</strong><span>${esc(summary.line)}</span>`;
+  spatialTooltipEl.style.display = "block";
+  // Offset from the cursor; clamp to viewport so it never spills off-screen.
+  const pad = 14;
+  const w = spatialTooltipEl.offsetWidth, h = spatialTooltipEl.offsetHeight;
+  const left = Math.min(detail.x + pad, window.innerWidth - w - 8);
+  const top = Math.max(8, detail.y - h - pad);
+  spatialTooltipEl.style.left = `${left}px`;
+  spatialTooltipEl.style.top = `${top}px`;
+});
+
 interface ModalReturnFocus {
   elementId?: string;
   dataset: Record<string, string>;
@@ -2385,6 +2431,7 @@ function navigate(view: ViewId, { focus = true, cancelMedia = true }: { focus?: 
   ui.view = view;
   ui.modal = null;
   ui.pendingSnapshotPhoto = null;
+  hideSpatialTooltip();
   modalReturnFocus = null;
   controlReturnFocus = null;
   focusModalOnRender = false;

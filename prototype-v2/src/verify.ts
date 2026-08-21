@@ -2249,6 +2249,19 @@ async function runBrowserSmoke(): Promise<void> {
         resolve(/desk drawer/i.test(t) && (/charger/i.test(t) || /water bottle/i.test(t)) && Boolean(host?.querySelector('[data-action="locate-on-map"]')));
       }, 140);
     })`));
+    // Hover tooltip: a spatial-hover event (id + screen coords) shows a confidence
+    // summary for that anchor; a null detail hides it. (The raycast that produces
+    // real hover events isn't reliably simulable headless, so drive the DOM half.)
+    assert("spatial-hover-shows-confidence-tooltip", await evalPage<boolean>(`(() => {
+      const scene = document.querySelector('[data-spatial-scene], [data-testid="plan-3d"]') ?? document.body;
+      scene.dispatchEvent(new CustomEvent('spatial-hover', { bubbles: true, detail: { id: 'desk', x: 200, y: 200 } }));
+      const tip = document.querySelector('.spatial-tooltip');
+      const shown = tip instanceof HTMLElement && tip.style.display === 'block'
+        && /Desk/.test(tip.textContent ?? '') && /conf/i.test(tip.textContent ?? '');
+      scene.dispatchEvent(new CustomEvent('spatial-hover', { bubbles: true, detail: null }));
+      const hidden = document.querySelector('.spatial-tooltip')?.style.display === 'none';
+      return shown && hidden;
+    })()`));
     const spatialBudget = await evalPage<{ labelSize: string; roomTriangles: number; drawCalls: number; triangles: number; textures: number }>(`(() => {
       const canvas = document.querySelector('[data-testid="plan-3d"] canvas');
       return {
