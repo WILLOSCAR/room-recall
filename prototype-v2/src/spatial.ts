@@ -1343,10 +1343,15 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
   renderer.domElement.dataset.spatialPreset = "home";
   // Prefer auto-selecting the object the pin sits on/in so the located memory and
   // its selection outline reinforce each other; fall back to a room-level match.
-  const initial = (data.pin?.objectId && objectData.has(data.pin.objectId))
-    ? objectData.get(data.pin.objectId) ?? null
+  // When the selection came from an active locate pin (a "take me there" from
+  // Recall/Ask), frame the camera on it too so the answer is centred, not left for
+  // the user to hunt for. A plain plan visit (no pin, or only a room-level match)
+  // keeps the whole-home overview.
+  const pinnedObjectId = data.pin?.objectId && objectData.has(data.pin.objectId) ? data.pin.objectId : null;
+  const initial = pinnedObjectId
+    ? objectData.get(pinnedObjectId) ?? null
     : solidObjects.find((object) => data.pin && object.roomId === data.pin.roomId) ?? null;
-  if (initial) setSelected(initial.id);
+  if (initial) setSelected(initial.id, { focus: initial.id === pinnedObjectId });
 
   const onContextLost = (event: Event): void => {
     event.preventDefault();
