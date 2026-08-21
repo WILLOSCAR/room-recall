@@ -532,6 +532,7 @@ export interface CapabilityGapEntry {
 
 /** One pickup-stop item — read-only sibling of RetrievalPlanItem (no rowId/RowStatus). */
 export interface CapabilityStopItem {
+  itemId: string | null;           // the resolved belonging (null only if unresolved)
   name: string;
   status: CapabilityNeedStatus;
   chainText: string;

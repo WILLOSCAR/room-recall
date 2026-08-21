@@ -1500,6 +1500,25 @@ section("home capability verdict edges", () => {
     assert("capability-shared-item-not-double-counted",
       covered.length === 1 && r.gaps.requiredMissing.length === 1 && r.verdict === "not_ready", `covered=${covered.length} verdict=${r.verdict}`);
   }
+  // "Show on map" must pin the EXACT clicked belonging, not a fuzzy same-named one.
+  // Two "Charger"s in different rooms: locateById resolves each to its own place,
+  // whereas a name-based locate can only ever return one of them.
+  {
+    const { store } = build([]);
+    const a = store.createRoom({ name: "Study" });
+    const b = store.createRoom({ name: "Kitchen" });
+    const ca = store.createContainer({ name: "Study drawer", kind: "drawer", roomId: a });
+    const cb = store.createContainer({ name: "Kitchen drawer", kind: "drawer", roomId: b });
+    const id1 = store.createBelonging({ name: "Charger", kinds: ["charger"], defaultHome: { type: "container", id: ca }, currentPlace: { type: "container", id: ca } });
+    const id2 = store.createBelonging({ name: "Charger", kinds: ["charger"], defaultHome: { type: "container", id: cb }, currentPlace: { type: "container", id: cb } });
+    const byId1 = store.locateById(id1);
+    const byId2 = store.locateById(id2);
+    assert("locate-by-id-pins-exact-belonging",
+      byId1.ok && byId2.ok && byId1.itemId === id1 && byId2.itemId === id2
+      && /Study drawer/.test(byId1.chainText) && /Kitchen drawer/.test(byId2.chainText)
+      && byId1.chainText !== byId2.chainText,
+      `${byId1.ok ? byId1.chainText : "?"} vs ${byId2.ok ? byId2.chainText : "?"}`);
+  }
 });
 
 // =====================================================================

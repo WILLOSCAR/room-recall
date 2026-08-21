@@ -1377,7 +1377,7 @@ export function createStore(options: StoreOptions): Store {
     const haveNeeds = needs.filter(covered);
     const stopEntries = haveNeeds.map((n) => {
       const view = n.itemId ? belongingView(n.itemId) : null;
-      const item: CapabilityStopItem = { name: n.item ?? n.label, status: n.status, chainText: n.chainText };
+      const item: CapabilityStopItem = { itemId: n.itemId, name: n.item ?? n.label, status: n.status, chainText: n.chainText };
       return { chain: (view?.chain ?? []) as PlaceNode[], needsReview: !n.placeKnown, item };
     });
     const stops: CapabilityStop[] = groupByPlace(stopEntries)

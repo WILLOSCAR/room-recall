@@ -489,7 +489,7 @@ function spatialAnchorContentsHtml(id: string | null): string {
     const rows = items.length
       ? items.map((i) => `<div class="attention-row">
           <span class="grow"><strong>${esc(i.name)}</strong><div class="place">${i.state !== "at_home" ? `${esc(i.state.replace(/_/g, " "))} · ` : ""}conf ${i.confidence.toFixed(2)}</div></span>
-          <button class="small ghost" data-action="locate-on-map" data-q="${esc(i.name)}" title="Show ${esc(i.name)} on the map">Locate</button>
+          <button class="small ghost" data-action="locate-on-map" data-item="${esc(i.id)}" data-q="${esc(i.name)}" title="Show ${esc(i.name)} on the map">Locate</button>
         </div>`).join("")
       : `<div class="muted" style="padding:4px 0">No recorded contents.</div>`;
     const staleNote = contents?.unknownNote ? `<div class="place" style="margin-top:2px">${esc(contents.unknownNote)}</div>` : "";
@@ -1129,7 +1129,7 @@ function ownershipCard(o: DeepReadonly<OwnershipRecallAnswer>): string {
     <span class="chip ${m.exact ? "sage" : "blue"}">${m.exact ? "match" : "substitute"}</span>
     <span class="grow"><strong>${esc(m.item)}</strong><div class="place">${m.placeKnown ? esc(m.chainText) : "place not confirmed — stays unknown"}${m.available ? "" : ` · ${esc(m.state.replace(/_/g, " "))}`}</div></span>
     <span class="chip ${m.confidence < 0.45 || m.stale ? "amber" : ""}">${m.stale ? "stale · " : ""}conf ${m.confidence.toFixed(2)}</span>
-    ${m.placeKnown ? `<button class="small ghost" data-action="locate-on-map" data-q="${esc(m.item)}" title="Show ${esc(m.item)} on the map">Show on map</button>` : ""}
+    ${m.placeKnown ? `<button class="small ghost" data-action="locate-on-map" data-item="${esc(m.itemId)}" data-q="${esc(m.item)}" title="Show ${esc(m.item)} on the map">Show on map</button>` : ""}
   </div>`).join("");
   return `<div class="card" style="box-shadow:none;margin-top:8px">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${o.ownedCount} owned · ${o.substituteCount} substitute(s) · ${o.availableCount} available now</span></div>
@@ -1162,7 +1162,7 @@ function capabilityCard(c: DeepReadonly<HomeCapabilityResult>): string {
     ${g.items.map((i) => `<div class="attention-row">
       <span class="chip ${i.status === "substitute" ? "blue" : "sage"}">${i.status === "substitute" ? "substitute" : "have"}</span>
       <span class="grow"><strong>${esc(i.name)}</strong><div class="place">${esc(i.chainText)}</div></span>
-      ${i.chainText && !/not confirmed/i.test(i.chainText) ? `<button class="small ghost" data-action="locate-on-map" data-q="${esc(i.name)}" title="Show ${esc(i.name)} on the map">Show on map</button>` : ""}
+      ${i.itemId && i.chainText && !/not confirmed/i.test(i.chainText) ? `<button class="small ghost" data-action="locate-on-map" data-item="${esc(i.itemId)}" data-q="${esc(i.name)}" title="Show ${esc(i.name)} on the map">Show on map</button>` : ""}
     </div>`).join("")}
   </div>`).join("");
   const notHandy = c.notHandy.length ? `<div style="margin-top:8px">
@@ -2590,7 +2590,14 @@ document.addEventListener("click", (e) => {
     case "ownership-example": if (t.dataset.q) doOwnershipRecall(t.dataset.q); break;
     case "capability-check": doCapabilityCheck(inputValue("capability-input")); break;
     case "capability-example": if (t.dataset.q) doCapabilityCheck(t.dataset.q); break;
-    case "locate-on-map": if (t.dataset.q) { const ans = setLocateAnswer(store.locate(t.dataset.q)); navigate("plan"); announce(ans.sentence); } break;
+    case "locate-on-map": {
+      // Prefer the stable id (locateById) so the map pins the exact belonging the
+      // card named — a name-based locate could resolve to a different same-named
+      // item and contradict the card. Fall back to name only if no id is present.
+      const ans = t.dataset.item ? setLocateAnswer(store.locateById(t.dataset.item)) : t.dataset.q ? setLocateAnswer(store.locate(t.dataset.q)) : null;
+      if (ans) { navigate("plan"); announce(ans.sentence); }
+      break;
+    }
     case "answer-not-there": {
       const itemId = t.dataset.item;
       if (!itemId) break;

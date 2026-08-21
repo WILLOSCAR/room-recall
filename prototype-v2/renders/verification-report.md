@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-21T05:51:21.411Z
+Generated: 2026-08-21T06:05:31.010Z
 Runtime: node v26.3.1 · typescript strict
-- Assertions: 532
-- Passed: 531
+- Assertions: 533
+- Passed: 532
 - Failed: 1
 - Browser smoke: ran
-- UI DOM-commit p95: 2.400 ms
-- Household UI DOM-commit p95: 6.000 ms
+- UI DOM-commit p95: 2.600 ms
+- Household UI DOM-commit p95: 6.800 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 2
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -278,6 +278,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `capability-fragment-intent-does-not-force-match`
 - ✓ `capability-full-phrase-still-matches`
 - ✓ `capability-shared-item-not-double-counted`
+- ✓ `locate-by-id-pins-exact-belonging`
 ## P0.10 sync service
 - ✓ `srv-corrupt-file-fails-closed`
 - ✓ `srv-health`
