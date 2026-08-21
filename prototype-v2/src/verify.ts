@@ -2169,6 +2169,14 @@ async function runBrowserSmoke(): Promise<void> {
     assert("active-navigation-is-current-page", await evalPage<boolean>(`document.querySelector('[data-testid="nav-home"]')?.getAttribute('aria-current') === 'page'`));
     const sentence = await evalPage<string>(`window.nestory.locate("water bottle").sentence`);
     assert("dom-locate-answer", await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="answer-card"]')?.textContent?.includes("Desk top"))`), sentence);
+    // #8: a no-memory locate offers the add-belonging next action the store computed
+    // (prefilled with the query), not just a generic "Open belongings".
+    assert("dom-unknown-locate-offers-add-belonging", await evalPage<boolean>(`(() => {
+      window.nestory.locate("nonexistent gizmo 9000");
+      const btn = document.querySelector('[data-testid="btn-answer-add-belonging"]');
+      return btn instanceof HTMLElement && (btn.getAttribute('data-name') ?? '').toLowerCase().includes('gizmo');
+    })()`));
+    await evalPage(`window.nestory.locate("water bottle")`);   // restore the answer card for later assertions
     assert("home-locate-answer-precedes-spatial-cockpit", await evalPage<boolean>(`(() => {
       const answer = document.querySelector('[data-testid="answer-card"]');
       const cockpit = document.querySelector('[data-testid="home-memory-cockpit"]');
@@ -2798,8 +2806,15 @@ async function runBrowserSmoke(): Promise<void> {
     // Release: switch tab, declutter review renders with its standing guarantee.
     assert("dom-recall-release-runs", await evalPage<boolean>(`(() => {
       document.querySelector('[data-testid="recall-tab-release"]')?.click();
-      const t = document.querySelector('[data-testid="recall-release"]')?.textContent ?? '';
-      return /you decide/i.test(t) && /duplicate/i.test(t);
+      const panel = document.querySelector('[data-testid="recall-release"]');
+      const t = panel?.textContent ?? '';
+      // Release is no longer a dead end: rows carry an Open action (read-only
+      // cross-nav), and the decision options render as inert LABELS — never a
+      // state-mutating control (no-auto-dispose guardrail).
+      const hasOpen = Boolean(panel?.querySelector('[data-action="open-item"]'));
+      const optionChips = [...(panel?.querySelectorAll('.declutter-options .chip') ?? [])];
+      const optionsAreInert = optionChips.length > 0 && optionChips.every((c) => !c.hasAttribute('data-action'));
+      return /you decide/i.test(t) && /duplicate/i.test(t) && hasOpen && optionsAreInert;
     })()`));
     await shot("nestory-recall.png");
 

@@ -78,7 +78,7 @@ type ViewId = (typeof VIEWS)[number]["id"];
 type Modal =
   | { type: "container"; id: string }
   | { type: "item"; id: string }
-  | { type: "add-belonging" }
+  | { type: "add-belonging"; suggestedName?: string }
   | { type: "mobile-nav" };
 
 interface AskLogEntry {
@@ -1133,16 +1133,24 @@ function ownershipCard(o: DeepReadonly<OwnershipRecallAnswer>): string {
   </div>`).join("");
   return `<div class="card" style="box-shadow:none;margin-top:8px">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${o.ownedCount} owned · ${o.substituteCount} substitute(s) · ${o.availableCount} available now</span></div>
-    ${rows || '<div class="muted">Nothing recorded in this category yet.</div>'}
+    ${rows || `<div class="muted">Nothing recorded in this category yet.</div>${o.query ? `<div class="answer-actions" style="margin-top:8px"><button class="small" data-action="open-add-belonging" data-name="${esc(o.query)}">Add “${esc(o.query)}” as a belonging</button></div>` : ""}`}
   </div>`;
 }
 
 function declutterCard(d: DeepReadonly<DeclutterReviewResult>): string {
   const groups = d.groups.map((g) => `<div style="margin-top:8px">
     <div class="proposal-section-label">${esc(g.label)}</div>
-    ${g.items.map((c) => `<div class="attention-row">
-      <span class="grow"><strong>${esc(c.item)}</strong><div class="place">${esc(c.because)}${c.placeKnown ? ` · ${esc(c.chainText)}` : ""}</div></span>
-      <span class="chip">${c.options.length} option${c.options.length === 1 ? "" : "s"}</span>
+    ${g.items.map((c) => `<div class="attention-row declutter-row">
+      <span class="grow">
+        <strong>${esc(c.item)}</strong>
+        <div class="place">${esc(c.because)}${c.placeKnown ? ` · ${esc(c.chainText)}` : ""}${c.daysSinceUpdate != null ? ` · ${esc(daysLabel(c.daysSinceUpdate))}` : ""}</div>
+        ${c.duplicateOf.length ? `<div class="place faint">also: ${c.duplicateOf.map((n) => esc(n)).join(", ")}</div>` : ""}
+        <div class="declutter-options">${c.options.map((o) => `<span class="chip neutral">${esc(o.replace(/_/g, " "))}</span>`).join("")}</div>
+      </span>
+      <span class="declutter-row-actions">
+        <button class="small ghost" data-action="open-item" data-id="${esc(c.itemId)}" title="Open ${esc(c.item)}">Open</button>
+        ${c.placeKnown ? `<button class="small ghost" data-action="locate-on-map" data-item="${esc(c.itemId)}" data-q="${esc(c.item)}" title="Show ${esc(c.item)} on the map">Map</button>` : ""}
+      </span>
     </div>`).join("")}
   </div>`).join("");
   return `<div class="card" style="box-shadow:none;margin-top:8px">
@@ -1479,7 +1487,10 @@ function renderAnswerCard(a: DeepReadonly<LocateAnswer> | null): string {
   if (!a.ok) {
     return `<div class="card answer-card uncertain" data-testid="answer-card">
       <div class="sentence">${esc(a.sentence)}</div>
-      <div class="answer-actions"><button data-action="nav" data-view="belongings">Open belongings</button></div>
+      <div class="answer-actions">
+        ${a.nextAction === "add_belonging" && a.query ? `<button class="primary" data-action="open-add-belonging" data-name="${esc(a.query)}" data-testid="btn-answer-add-belonging">Add “${esc(a.query)}” as a belonging</button>` : ""}
+        <button data-action="nav" data-view="belongings">Open belongings</button>
+      </div>
     </div>`;
   }
   const ev = a.evidence.slice(-3).reverse()
@@ -2260,7 +2271,7 @@ function renderModal(): string {
   if (ui.modal.type === "mobile-nav") return mobileNavModal();
   if (ui.modal.type === "container") return containerModal(ui.modal.id);
   if (ui.modal.type === "item") return itemModal(ui.modal.id);
-  return addBelongingModal();
+  return addBelongingModal(ui.modal.suggestedName ?? "");
 }
 
 function mobileNavModal(): string {
@@ -2396,12 +2407,12 @@ function itemModal(id: string): string {
   </div>`;
 }
 
-function addBelongingModal(): string {
+function addBelongingModal(suggestedName = ""): string {
   return `<div class="modal-overlay" data-action="close-modal-overlay">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="add-belonging-modal-title" tabindex="-1" data-testid="add-belonging-modal">
       <div class="modal-head"><h3 id="add-belonging-modal-title">Add belonging</h3><button class="close" data-action="close-modal" aria-label="Close add belonging">✕</button></div>
       <div class="form-grid">
-        <div class="full"><label for="nb-name">Name</label><input type="text" id="nb-name" maxlength="200" placeholder="e.g. Kindle"></div>
+        <div class="full"><label for="nb-name">Name</label><input type="text" id="nb-name" maxlength="200" placeholder="e.g. Kindle" value="${esc(suggestedName)}"></div>
         <div><label for="nb-kinds">Kinds / tags (comma)</label><input type="text" id="nb-kinds" placeholder="e-reader, electronics"></div>
         <div><label for="nb-importance">Importance</label><select id="nb-importance" style="width:100%"><option value="normal">normal</option><option value="high">high</option><option value="essential">essential</option></select></div>
         <div><label for="nb-default">Default home</label><select id="nb-default" style="width:100%">${containerOptions(null, { includeBoxes: false })}</select></div>
@@ -2624,7 +2635,7 @@ document.addEventListener("click", (e) => {
       render();
     } break;
     case "open-item": if (t.dataset.id) { rememberModalTrigger(t); focusViewOnRender = false; focusModalOnRender = true; ui.modal = { type: "item", id: t.dataset.id }; render(); } break;
-    case "open-add-belonging": rememberModalTrigger(t); focusViewOnRender = false; focusModalOnRender = true; ui.modal = { type: "add-belonging" }; render(); break;
+    case "open-add-belonging": rememberModalTrigger(t); focusViewOnRender = false; focusModalOnRender = true; ui.modal = { type: "add-belonging", ...(t.dataset.name ? { suggestedName: t.dataset.name } : {}) }; render(); break;
     case "close-modal": closeModal(); break;
     case "close-modal-overlay": if (e.target === t) closeModal(); break;
     case "clear-snapshot-photo": snapshotPhotoReadToken += 1; controlReturnFocus = focusBookmark(t); ui.pendingSnapshotPhoto = null; ui.mediaPending.snapshot = false; render(); break;

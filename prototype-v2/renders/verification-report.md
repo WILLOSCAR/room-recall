@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-21T07:58:47.121Z
+Generated: 2026-08-21T08:12:52.249Z
 Runtime: node v26.3.1 · typescript strict
-- Assertions: 535
-- Passed: 534
+- Assertions: 536
+- Passed: 535
 - Failed: 1
 - Browser smoke: ran
 - UI DOM-commit p95: 2.600 ms
-- Household UI DOM-commit p95: 6.100 ms
+- Household UI DOM-commit p95: 7.300 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 2
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -384,6 +384,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `actions-use-native-controls`
 - ✓ `active-navigation-is-current-page`
 - ✓ `dom-locate-answer`
+- ✓ `dom-unknown-locate-offers-add-belonging`
 - ✓ `home-locate-answer-precedes-spatial-cockpit`
 - ✓ `locate-answer-is-announced-through-persistent-region`
 - ✓ `home-locate-preserves-mounted-spatial-context`
