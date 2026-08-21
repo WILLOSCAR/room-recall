@@ -1224,7 +1224,7 @@ input::placeholder, textarea::placeholder { color: #68736e; opacity: 1; }
   .quick-actions button { min-height: 44px; justify-content: center; }
   .quick-actions button:last-child { grid-column: auto; }
   .mobile-nav-grid { grid-template-columns: 1fr; }
-  .attention-row .small { display: none; }
+  [data-testid="attention-card"] .attention-row .small { display: none; }
   .proposal-table { grid-template-columns: 1fr; }
 }
 

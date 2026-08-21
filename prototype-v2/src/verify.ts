@@ -1256,6 +1256,18 @@ section("ask router", () => {
   const which = ask(store, toolkit, "Which box has the winter jacket?");
   assert("ask-which-box", which.intent === "which_container" && which.hits?.[0]?.container.id === "box-essentials", which.text);
 
+  // Owned item not in any container → never "no record"; disclose its real place.
+  // Water bottle lives on the desk top (a surface, not a box).
+  const whichOwned = ask(store, toolkit, "Which box has the water bottle?");
+  assert("ask-which-box-owned-not-in-box-is-honest",
+    whichOwned.intent === "which_container"
+    && !/no (container )?record|no memory of owning/i.test(whichOwned.text)
+    && /isn't packed in a box|not.*in a box|Desk top/i.test(whichOwned.text), whichOwned.text);
+  // Truly-unknown item → honest "no record" that admits both no-box AND no-memory.
+  const whichUnknown = ask(store, toolkit, "Which box has the quantum flux capacitor?");
+  assert("ask-which-box-unknown-stays-honest",
+    whichUnknown.intent === "which_container" && /no memory of owning/i.test(whichUnknown.text), whichUnknown.text);
+
   const contents = ask(store, toolkit, "What's in the entry tray?");
   assert("ask-container-contents", contents.intent === "container_contents" && !!contents.contents, contents.text);
 

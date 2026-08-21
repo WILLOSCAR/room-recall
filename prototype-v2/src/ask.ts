@@ -75,11 +75,27 @@ export function ask(store: Store, toolkit: AgentToolkit, raw: string): AskReply 
       const hits = call<WhichContainerHit[]>("which_container_has", { query });
       const boxOnly = whichMatch[1] === "box" ? hits.filter((h) => h.isBox) : hits;
       const top = boxOnly[0] ?? hits[0];
+      if (top) {
+        return {
+          intent: "which_container", toolCalls, hits: boxOnly.length ? boxOnly : hits,
+          text: `${top.item} is in ${top.container.name}${top.container.box?.destination ? ` (destination: ${top.container.box.destination})` : ""}.`
+        };
+      }
+      // No container hit — but the item may still be owned, just not in a box.
+      // "Unknown is not empty": never imply the item isn't owned. Fall back to
+      // locate before answering "no container record".
+      const located = call<LocateAnswer>("locate_item", { query });
+      if (located.ok) {
+        return {
+          intent: "which_container", toolCalls, hits: [], answer: located,
+          text: located.placement
+            ? `${located.item} isn't packed in a box right now — it's ${located.chainText}${located.state !== "at_home" ? ` (${located.state.replace(/_/g, " ")})` : ""}.`
+            : `${located.item} is something you own, but I don't have a trusted place for it right now — so I can't say which box, if any.`
+        };
+      }
       return {
-        intent: "which_container", toolCalls, hits: boxOnly.length ? boxOnly : hits,
-        text: top
-          ? `${top.item} is in ${top.container.name}${top.container.box?.destination ? ` (destination: ${top.container.box.destination})` : ""}.`
-          : `I have no container record for “${query}”. If it exists, add it as a belonging or run a container snapshot.`
+        intent: "which_container", toolCalls, hits: [],
+        text: `I have no record of “${query}” — no container holds it and I have no memory of owning one. If you do, add it as a belonging or run a container snapshot.`
       };
     }
   }

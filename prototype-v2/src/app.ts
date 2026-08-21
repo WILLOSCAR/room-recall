@@ -1490,7 +1490,7 @@ function renderAnswerCard(a: DeepReadonly<LocateAnswer> | null): string {
     <div class="answer-meta">
       <span>${confDot(a.confidence)}Confidence ${a.confidence.toFixed(2)} ${confBar(a.confidence)}</span>
       <span>Last updated: ${daysLabel(a.daysSinceUpdate)}</span>
-      <span>Default home: ${esc(a.defaultHomeText || "—")} ${a.atDefaultHome ? '<span class="chip sage">at default</span>' : '<span class="chip amber">away</span>'}</span>
+      <span>Default home: ${esc(a.defaultHomeText || "—")} ${!a.placement ? '<span class="chip neutral">place unknown</span>' : a.atDefaultHome ? '<span class="chip sage">at default</span>' : '<span class="chip amber">away</span>'}</span>
     </div>
     ${ev ? `<ul class="evidence-list">${ev}</ul>` : ""}
     <div class="muted" style="margin-top:8px">${esc(a.hint)}</div>
@@ -2147,7 +2147,7 @@ function renderPlan(): string {
     <g data-testid="plan-pin">
       <circle class="plan-pin-ring" cx="${px(a.planPin.x)}" cy="${px(a.planPin.y)}" r="${(0.16 + (1 - a.confidence) * 0.3) * S}"/>
       <circle class="plan-pin" cx="${px(a.planPin.x)}" cy="${px(a.planPin.y)}" r="7"/>
-      <text class="plan-pin-label" x="${px(a.planPin.x + 0.12)}" y="${px(a.planPin.y - 0.1)}">${esc(a.item)} · ${a.confidence.toFixed(2)}</text>
+      <text class="plan-pin-label" x="${px(a.planPin.x + 0.12)}" y="${px(a.planPin.y - 0.1)}">${esc(a.item)}${a.state !== "at_home" ? ` · ${esc(a.state.replace(/_/g, " "))}` : ""} · ${a.confidence.toFixed(2)}</text>
     </g>` : "";
 
   const roomArea = rooms.reduce((sum, room) => sum + room.plan.w * room.plan.h, 0);
@@ -2161,7 +2161,7 @@ function renderPlan(): string {
         <button type="button" aria-pressed="${ui.planMode === "3d"}" class="${ui.planMode === "3d" ? "active" : ""}" data-action="plan-mode" data-mode="3d"><i data-lucide="cuboid"></i>3D home</button>
       </div>
     </div>
-    ${a && !a.ok ? `<div class="card answer-card uncertain plan-query-status" data-testid="plan-query-status"><div class="sentence">${esc(a.sentence)}</div><div class="answer-actions"><button data-action="nav" data-view="belongings">Search belongings</button></div></div>` : ""}
+    ${a && (!a.ok || a.state !== "at_home") ? `<div class="card answer-card uncertain plan-query-status" data-testid="plan-query-status"><div class="sentence">${esc(a.sentence)}</div>${a.ok && a.state !== "at_home" ? ` <span class="chip amber">${esc(a.state.replace(/_/g, " "))}</span>` : ""}<div class="answer-actions"><button data-action="nav" data-view="belongings">Search belongings</button></div></div>` : ""}
     ${ui.planMode === "3d" ? `<div class="spatial-workspace">
       <div class="spatial-canvas" data-spatial-scene="home" data-testid="plan-3d" aria-label="Interactive 3D home">
         <div class="spatial-canvas-chrome">
@@ -2186,7 +2186,7 @@ function renderPlan(): string {
           }).join("")}
         </div>
         <div class="metric-stack"><div><strong>${roomArea.toFixed(1)} m²</strong><span>mapped footprint</span></div><div><strong>${store.containersView().length}</strong><span>containers</span></div><div><strong>${store.searchBelongings("").length}</strong><span>belongings</span></div></div>
-        ${a?.ok ? `<div class="located-summary"><i data-lucide="map-pin"></i><span><strong>${esc(a.item)}</strong><small>${esc(a.chainText)} · confidence ${a.confidence.toFixed(2)}</small></span></div>` : a ? `<div class="located-summary uncertain"><i data-lucide="circle-help"></i><span><strong>No trusted match</strong><small>${esc(a.sentence)}</small></span></div>` : `<div class="located-summary muted"><i data-lucide="search"></i><span>Locate an item to reveal its confidence halo.</span></div>`}
+        ${a?.ok ? `<div class="located-summary${a.state !== "at_home" ? " uncertain" : ""}"><i data-lucide="${a.state !== "at_home" ? "circle-help" : "map-pin"}"></i><span><strong>${esc(a.item)}</strong><small>${a.state !== "at_home" ? `${esc(a.state.replace(/_/g, " "))} · ` : ""}${esc(a.chainText)} · confidence ${a.confidence.toFixed(2)}</small></span></div>` : a ? `<div class="located-summary uncertain"><i data-lucide="circle-help"></i><span><strong>No trusted match</strong><small>${esc(a.sentence)}</small></span></div>` : `<div class="located-summary muted"><i data-lucide="search"></i><span>Locate an item to reveal its confidence halo.</span></div>`}
         <div class="layer-list" role="group" aria-label="Scene layers">
           ${([["furniture", "Confirmed furniture"], ["boxes", "Moving boxes"], ["proposals", "Proposals"], ["pin", "Located memory"]] as const).map(([key, label]) =>
             `<button type="button" class="layer-toggle" data-action="spatial-layer" data-layer="${key}" aria-pressed="${ui.spatialLayers[key]}"><i class="layer ${key === "boxes" ? "box" : key === "pin" ? "memory" : key}"></i>${label}</button>`).join("")}
