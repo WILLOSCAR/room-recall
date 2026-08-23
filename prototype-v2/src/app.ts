@@ -1442,6 +1442,13 @@ function renderCapture(): string {
 }
 
 function renderRoomCapture(): string {
+  // Trust gate (#13): the visual room draft is a CURATED SAMPLE (a known desk,
+  // shelf, water bottle, gym card). In the demo home that's a legitimate product
+  // tour. In the user's own home it would fabricate furniture and items they never
+  // owned — and "Send items to Review" would pipe invented labels into their real
+  // graph. So own mode never builds the sample; it gets an honest panel routing to
+  // the capture methods that DO work on real input (container snapshot, product).
+  if (mode === "own") return renderRoomCaptureOwn();
   const draft = ui.scanDraft;
   const accepted = draft?.proposals.filter((p) => p.decision === "accepted") ?? [];
   const containers = store.containersView().filter((c) => c.kind !== "box");
@@ -1494,6 +1501,35 @@ function renderRoomCapture(): string {
     <div><i data-lucide="scan-search"></i><span><strong>Reconstruct</strong><small>camera + geometry draft</small></span></div>
     <div><i data-lucide="boxes"></i><span><strong>Map</strong><small>room, furniture, items</small></span></div>
     <div><i data-lucide="list-checks"></i><span><strong>Review</strong><small>accept, correct, reject</small></span></div>
+  </div>`;
+}
+
+// Own-mode room capture: honest about what's real. Full photogrammetry isn't wired
+// yet, and we will NOT invent a sample layout on the user's own graph (that would
+// present furniture they never owned as "your home"). Instead route them to the two
+// capture methods that operate on real input, and keep the trust-flow visible.
+function renderRoomCaptureOwn(): string {
+  return `<div class="capture-workspace own-room-capture" data-testid="own-room-capture">
+    <div class="capture-controls">
+      <div class="step-kicker">01 · Room reconstruction</div>
+      <h3>Full room scan isn't wired for your home yet</h3>
+      <p class="muted">Photogrammetry that turns a walkthrough into furniture and item candidates is on the roadmap. Until it runs on your real photos, Nestory won't invent a sample layout and pass it off as your home — that would break the one promise that matters here.</p>
+      <div class="honesty-note"><i data-lucide="shield-check"></i><span>No belonging is ever created from a guess. Everything in your home memory was confirmed by you.</span></div>
+    </div>
+    <div class="capture-scene">
+      <div class="empty-scene"><i data-lucide="box"></i><strong>What works on real input today</strong><span>Two capture methods already build reviewable proposals from things you actually have.</span>
+        <div class="own-capture-routes">
+          <button class="primary" data-action="capture-mode" data-mode="container" data-testid="own-room-to-container"><i data-lucide="camera"></i><span>Snapshot a drawer or shelf</span></button>
+          <button data-action="capture-mode" data-mode="product" data-testid="own-room-to-product"><i data-lucide="barcode"></i><span>Add a product with exact dimensions</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="pipeline-strip">
+    <div><i data-lucide="camera"></i><span><strong>Capture</strong><small>a real drawer, shelf, or product</small></span></div>
+    <div><i data-lucide="scan-search"></i><span><strong>Observe</strong><small>labels matched to your belongings</small></span></div>
+    <div><i data-lucide="list-checks"></i><span><strong>Review</strong><small>accept, correct, reject</small></span></div>
+    <div><i data-lucide="badge-check"></i><span><strong>Commit</strong><small>only what you confirm</small></span></div>
   </div>`;
 }
 
@@ -2591,6 +2627,9 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "run-room-scan": {
+      // Own mode never builds the curated sample layout (trust gate #13) — the
+      // room-capture UI already routes own-home users to real-input methods.
+      if (mode === "own") { toast("Full room scan isn't wired for your home yet — snapshot a real drawer or add a product instead.", { tone: "info" }); break; }
       if (ui.mediaPending.room) { toast("The selected photo is still being prepared.", { tone: "info" }); break; }
       controlReturnFocus = focusBookmark(t);
       ui.scanDraft = buildScanDraft(Math.max(20, inputNumber("scan-anchor") || 140));

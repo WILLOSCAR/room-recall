@@ -150,6 +150,9 @@ select { width: auto; }
 .empty-scene { display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; padding: 32px; text-align: center; color: var(--ink-soft); }
 .empty-scene > svg { width: 46px; height: 46px; margin-bottom: 12px; color: var(--sage); }
 .empty-scene strong { margin-bottom: 4px; color: var(--ink); }
+.own-capture-routes { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 16px; }
+.own-capture-routes button { display: inline-flex; align-items: center; gap: 8px; }
+.own-capture-routes button svg { width: 16px; height: 16px; }
 .upload-zone { display: flex; position: relative; align-items: center; gap: 12px; padding: 12px; border: 1px dashed #aebbb5; background: #f8faf8; cursor: pointer; }
 .upload-zone:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
 .upload-zone input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }

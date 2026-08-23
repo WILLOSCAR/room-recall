@@ -3210,6 +3210,21 @@ async function runBrowserSmoke(): Promise<void> {
     assert("own-plan-renders", await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="plan-svg"]')) || Boolean(document.querySelector('[data-testid="plan-3d"]'))`));
     await shot("nestory-own-home.png");
 
+    // #13 (trust-critical): own-mode room capture must NOT fabricate a sample
+    // layout of furniture/items the user never owned. It shows an honest panel
+    // routing to real-input methods, and "run-room-scan" builds no draft.
+    assert("own-room-capture-refuses-to-fabricate-a-sample", await evalPage<boolean>(`(() => {
+      window.nestory.setView("capture");
+      document.querySelector('[data-action="capture-mode"][data-mode="room"]')?.click();
+      const honest = Boolean(document.querySelector('[data-testid="own-room-capture"]'));
+      // The demo-only sample controls are absent, and forcing a scan builds nothing.
+      const noScanButton = !document.querySelector('[data-testid="btn-run-room-scan"]');
+      document.querySelector('[data-action="run-room-scan"]')?.click();
+      const noDraft = !window.nestory.ui.scanDraft && !document.querySelector('[data-testid="scan-proposal"]');
+      const routes = Boolean(document.querySelector('[data-testid="own-room-to-container"]'));
+      return honest && noScanButton && noDraft && routes;
+    })()`));
+
     await evalPage(`(() => {
       const raw = localStorage.getItem('nestory-v2-own');
       if (raw === null) throw new Error('missing own-home recovery fixture');
