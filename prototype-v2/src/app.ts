@@ -181,11 +181,14 @@ interface UIState {
   containerItemsQuery: string;
   containerItemsOffset: number;
   mediaPending: { room: boolean; container: boolean; snapshot: boolean };
-  recallTab: "reuse" | "ready" | "release";
+  recallTab: "find" | "reuse" | "ready" | "release";
   ownershipQuery: string;
   ownershipResult: DeepReadonly<OwnershipRecallAnswer> | null;
   capabilityQuery: string;
   capabilityResult: DeepReadonly<HomeCapabilityResult> | null;
+  findQuery: string;
+  findResult: DeepReadonly<LocateAnswer> | null;
+  findHits: DeepReadonly<WhichContainerHit[]> | null;
 }
 
 const ui: UIState = {
@@ -219,11 +222,14 @@ const ui: UIState = {
   containerItemsQuery: "",
   containerItemsOffset: 0,
   mediaPending: { room: false, container: false, snapshot: false },
-  recallTab: "reuse",
+  recallTab: "find",
   ownershipQuery: "",
   ownershipResult: null,
   capabilityQuery: "",
-  capabilityResult: null
+  capabilityResult: null,
+  findQuery: "",
+  findResult: null,
+  findHits: null
 };
 
 const compactHomeQuery = window.matchMedia("(max-width: 760px)");
@@ -1323,16 +1329,33 @@ function doAsk(raw: string): AskReply | null {
 }
 
 // ---------------------------------------------------------------- recall
-// The Recall hub gives the three durable retention loops (vision §5) a home of
-// their own instead of living only inside the Ask chat: Reuse (Ownership Recall),
-// Ready (Home Capability), Release (Declutter Review). Each panel is fully
-// interactive and renders the SAME result card the Ask surface uses.
+// The Recall hub gives the vision §5 loops a home of their own instead of living
+// only inside the Ask chat: Find (Remember/Retrieve — locate + which-box), Reuse
+// (Ownership Recall), Ready (Home Capability), Release (Declutter Review). Each
+// panel is fully interactive and renders the SAME result card the Ask surface uses.
 
 const RECALL_TABS: ReadonlyArray<{ id: UIState["recallTab"]; icon: string; label: string; blurb: string }> = [
-  { id: "reuse", icon: "recycle", label: "Reuse", blurb: "Before you buy — do you already own one, or a usable substitute?" },
-  { id: "ready", icon: "circle-check-big", label: "Ready", blurb: "Can your home do this right now, with what you already own?" },
-  { id: "release", icon: "package-minus", label: "Release", blurb: "Belongings worth a fresh decision — you decide, nothing is auto-disposed." }
+  { id: "find", icon: "search", label: "Find", blurb: "Where is it — and which box or drawer holds it? Every answer carries confidence and freshness." },
+  { id: "reuse", icon: "package-search", label: "Reuse", blurb: "Before you buy — do you already own one, or a usable substitute?" },
+  { id: "ready", icon: "badge-check", label: "Ready", blurb: "Can your home do this right now, with what you already own?" },
+  { id: "release", icon: "box", label: "Release", blurb: "Belongings worth a fresh decision — you decide, nothing is auto-disposed." }
 ];
+
+// Find (Remember/Retrieve): one query answers both "where is it?" (locate) and
+// "which container holds it?" (which-box), so the hub covers the loop the top
+// search bar and Ask handle — with the same evidence contract, in one place.
+function doRecallFind(query: string): void {
+  const q = query.trim();
+  ui.findQuery = q;
+  if (!q) { ui.findResult = null; ui.findHits = null; render(); return; }
+  const answer = act(() => store.locate(q), null);
+  ui.findResult = answer ?? null;
+  ui.findHits = act(() => store.whichContainerHas(q), null) ?? null;
+  // Pair the located item with the spatial selection so "Show on plan" reinforces.
+  if (answer?.ok) setLocateAnswer(answer);
+  render();
+  if (answer) announce(answer.sentence);
+}
 
 function doOwnershipRecall(query: string): void {
   const q = query.trim();
@@ -1361,7 +1384,7 @@ function recallReusePanel(): string {
     </div>
     <div class="recall-chips">${examples.map((e) => `<button data-action="ownership-example" data-q="${esc(e)}">${esc(e)}</button>`).join("")}</div>
     ${o ? `<div data-testid="ownership-result"><p class="recall-sentence">${esc(o.sentence)}</p>${ownershipCard(o)}</div>`
-      : `<div class="empty-inline light"><i data-lucide="recycle"></i><span>Name a category to see if you already own one — reuse beats re-buying.</span></div>`}
+      : `<div class="empty-inline light"><i data-lucide="package-search"></i><span>Name a category to see if you already own one — reuse beats re-buying.</span></div>`}
   </div>`;
 }
 
@@ -1370,13 +1393,13 @@ function recallReadyPanel(): string {
   const profiles = store.catalog.capabilityProfiles ?? [];
   return `<div class="recall-panel" data-testid="recall-ready">
     <div class="ask-composer">
-      <i data-lucide="circle-check-big"></i>
+      <i data-lucide="badge-check"></i>
       <input type="text" id="capability-input" aria-label="An activity to check" data-enter="capability-check" value="${esc(ui.capabilityQuery)}" placeholder="An activity — work out at home, go camping, fix a wobbly chair…">
       <button class="primary" data-action="capability-check" data-testid="btn-capability"><span>Check</span><i data-lucide="arrow-up-right"></i></button>
     </div>
     <div class="recall-chips">${profiles.map((p) => `<button data-action="capability-example" data-q="${esc(p.triggers[0] ?? p.label)}">${esc(p.label)}</button>`).join("")}</div>
     ${c ? `<div data-testid="capability-result"><p class="recall-sentence">${esc(c.sentence)}</p>${capabilityCard(c)}</div>`
-      : `<div class="empty-inline light"><i data-lucide="circle-check-big"></i><span>Pick an activity to see what you already own for it — and the honest gaps.</span></div>`}
+      : `<div class="empty-inline light"><i data-lucide="badge-check"></i><span>Pick an activity to see what you already own for it — and the honest gaps.</span></div>`}
   </div>`;
 }
 
@@ -1388,15 +1411,34 @@ function recallReleasePanel(): string {
   </div>`;
 }
 
+function recallFindPanel(): string {
+  const a = ui.findResult;
+  const hits = ui.findHits ?? [];
+  const examples = ["water bottle", "passport", "winter jacket", "charger"];
+  // Only show the container card when locate succeeded (avoid a lone "which box"
+  // list for a query with no trusted item — that would read as fabricated).
+  const containerBlock = a?.ok && hits.length ? whichContainerCard(hits) : "";
+  return `<div class="recall-panel" data-testid="recall-find">
+    <div class="ask-composer">
+      <i data-lucide="search"></i>
+      <input type="text" id="find-input" aria-label="What are you looking for" data-enter="recall-find" value="${esc(ui.findQuery)}" placeholder="What are you looking for — water bottle, passport, winter jacket…">
+      <button class="primary" data-action="recall-find" data-testid="btn-recall-find"><span>Find</span><i data-lucide="arrow-up-right"></i></button>
+    </div>
+    <div class="recall-chips">${examples.map((e) => `<button data-action="recall-find-example" data-q="${esc(e)}">${esc(e)}</button>`).join("")}</div>
+    ${a ? `<div data-testid="find-result"><p class="recall-sentence">${esc(a.sentence)}</p>${renderAnswerCard(a)}${containerBlock}</div>`
+      : `<div class="empty-inline light"><i data-lucide="search"></i><span>Name something to see where it lives — with confidence, freshness, and which box or drawer holds it.</span></div>`}
+  </div>`;
+}
+
 function renderRecall(): string {
   const tab = ui.recallTab;
   const active = RECALL_TABS.find((t) => t.id === tab) ?? RECALL_TABS[0]!;
-  const body = tab === "reuse" ? recallReusePanel() : tab === "ready" ? recallReadyPanel() : recallReleasePanel();
+  const body = tab === "find" ? recallFindPanel() : tab === "reuse" ? recallReusePanel() : tab === "ready" ? recallReadyPanel() : recallReleasePanel();
   return `<section data-testid="view-recall">
     ${renderPageIntro({
       eyebrow: "The durable promise",
-      title: "Recall what you own — before you buy, pack, or let go.",
-      description: "Three memory loops over your home records: reuse what you already have, check if you're ready for an activity, and decide what to release. Every answer carries evidence, confidence, and freshness — and never acts on its own.",
+      title: "Recall what you own — find it, reuse it, or let it go.",
+      description: "Four memory loops over your home records: find where something lives, reuse what you already have, check if you're ready for an activity, and decide what to release. Every answer carries evidence, confidence, and freshness — and never acts on its own.",
       className: "recall-intro",
       aside: `<div class="ask-contract"><span class="live-dot"></span><span><strong>Read-only</strong><small>decisions stay yours</small></span></div>`
     })}
@@ -1645,7 +1687,7 @@ function renderHome(): string {
         </div>
         <div class="quick-actions">
           <button data-action="nav" data-view="capture"><i data-lucide="scan-line"></i><span>Capture</span></button>
-          <button data-action="recall-open" data-tab="ready"><i data-lucide="circle-check-big"></i><span>Ready check</span></button>
+          <button data-action="recall-open" data-tab="ready"><i data-lucide="badge-check"></i><span>Ready check</span></button>
           <button data-action="nav" data-view="plan"><i data-lucide="cuboid"></i><span>Spatial view</span></button>
         </div>
       </div>
@@ -2695,8 +2737,10 @@ document.addEventListener("click", (e) => {
     case "hero-locate": doLocate(inputValue("hero-search-input"), "hero-search-input"); break;
     case "ask-send": doAsk(inputValue("ask-input")); break;
     case "ask-prompt": if (t.dataset.prompt) { if (ui.view !== "ask") navigate("ask"); doAsk(t.dataset.prompt); } break;
-    case "recall-tab": if (t.dataset.tab === "reuse" || t.dataset.tab === "ready" || t.dataset.tab === "release") { ui.recallTab = t.dataset.tab; controlReturnFocus = focusBookmark(t); render(); } break;
-    case "recall-open": if (t.dataset.tab === "reuse" || t.dataset.tab === "ready" || t.dataset.tab === "release") ui.recallTab = t.dataset.tab; navigate("recall"); break;
+    case "recall-tab": if (t.dataset.tab === "find" || t.dataset.tab === "reuse" || t.dataset.tab === "ready" || t.dataset.tab === "release") { ui.recallTab = t.dataset.tab; controlReturnFocus = focusBookmark(t); render(); } break;
+    case "recall-open": if (t.dataset.tab === "find" || t.dataset.tab === "reuse" || t.dataset.tab === "ready" || t.dataset.tab === "release") ui.recallTab = t.dataset.tab; navigate("recall"); break;
+    case "recall-find": doRecallFind(inputValue("find-input")); break;
+    case "recall-find-example": if (t.dataset.q) doRecallFind(t.dataset.q); break;
     case "ownership-check": doOwnershipRecall(inputValue("ownership-input")); break;
     case "ownership-example": if (t.dataset.q) doOwnershipRecall(t.dataset.q); break;
     case "capability-check": doCapabilityCheck(inputValue("capability-input")); break;
@@ -3144,6 +3188,7 @@ document.addEventListener("keydown", (e) => {
   if (enter === "ask-send") doAsk(target.value);
   if (enter === "ownership-check") doOwnershipRecall(target.value);
   if (enter === "capability-check") doCapabilityCheck(target.value);
+  if (enter === "recall-find") doRecallFind(target.value);
   if (enter === "box-search") { ui.boxQuery = target.value; render(); }
   if (enter === "setup-add-room-custom" || enter === "setup-add-container" || enter === "setup-add-belonging") {
     const btn = document.querySelector<HTMLElement>(`[data-action="${enter}"]`);

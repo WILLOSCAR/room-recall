@@ -2832,8 +2832,22 @@ async function runBrowserSmoke(): Promise<void> {
     // interactive view. Drive each tab and assert its live result card renders.
     await evalPage(`window.nestory.setView("recall")`);
     assert("dom-recall-view-renders", await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="view-recall"]'))`));
-    // Reuse: type a category, run ownership recall.
+    // #14: Find is the first Recall tab (Remember/Retrieve) — locate + which-box in
+    // one place, carrying the same evidence contract as Ask. It opens by default.
+    assert("dom-recall-find-runs", await evalPage<boolean>(`(() => {
+      const input = document.getElementById('find-input'); if (!(input instanceof HTMLInputElement)) return false;
+      input.value = 'winter jacket';
+      document.querySelector('[data-testid="btn-recall-find"]')?.click();
+      const result = document.querySelector('[data-testid="find-result"]');
+      const t = result?.textContent ?? '';
+      // Locate answer card + which-container card (with confidence) both present.
+      const hasAnswer = Boolean(result?.querySelector('[data-testid="answer-card"]'));
+      const hasContainer = Boolean(result?.querySelector('[data-testid="which-container-card"]'));
+      return hasAnswer && hasContainer && /conf \\d\\.\\d\\d/.test(t);
+    })()`));
+    // Reuse: switch tab, type a category, run ownership recall.
     assert("dom-recall-reuse-runs", await evalPage<boolean>(`(() => {
+      document.querySelector('[data-testid="recall-tab-reuse"]')?.click();
       const input = document.getElementById('ownership-input'); if (!(input instanceof HTMLInputElement)) return false;
       input.value = 'charger';
       document.querySelector('[data-testid="btn-ownership"]')?.click();

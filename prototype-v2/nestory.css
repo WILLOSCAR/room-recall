@@ -1019,7 +1019,8 @@ input::placeholder, textarea::placeholder { color: #68736e; opacity: 1; }
 .technical-details .cops { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 
 /* ---------------------------------------------------------------- recall */
-.recall-tabs { margin-bottom: 6px; }
+.recall-tabs { display: flex; margin-bottom: 6px; flex-wrap: wrap; max-width: 100%; }
+.recall-tabs button { flex: 1 1 auto; justify-content: center; min-width: 0; }
 .recall-blurb { margin: 0 0 14px; color: var(--ink-soft); font-size: 12px; line-height: 1.55; }
 .recall-panel { max-width: 720px; }
 .recall-panel .ask-composer { margin: 0 0 12px; }

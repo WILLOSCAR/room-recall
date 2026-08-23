@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-23T14:52:24.646Z
+Generated: 2026-08-23T15:37:17.931Z
 Runtime: node v26.7.0 · typescript strict
-- Assertions: 545
-- Passed: 545
+- Assertions: 546
+- Passed: 546
 - Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 2.500 ms
-- Household UI DOM-commit p95: 5.700 ms
+- UI DOM-commit p95: 2.000 ms
+- Household UI DOM-commit p95: 5.300 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -472,6 +472,7 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `dom-ask-which-container-card`
 - ✓ `dom-ask-container-contents-card`
 - ✓ `dom-recall-view-renders`
+- ✓ `dom-recall-find-runs`
 - ✓ `dom-recall-reuse-runs`
 - ✓ `dom-recall-show-on-map-lands-on-plan`
 - ✓ `dom-recall-ready-runs`
