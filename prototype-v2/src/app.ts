@@ -2258,6 +2258,7 @@ function renderPlan(): string {
     </g>` : "";
 
   const roomArea = rooms.reduce((sum, room) => sum + room.plan.w * room.plan.h, 0);
+  const hasAnchors = store.catalog.furniture.length > 0;
   const selectedFurniture = store.catalog.furniture.find((item) => item.id === ui.spatialSelectedId) ?? null;
   const selectedRoom = selectedFurniture ? store.state.rooms.get(selectedFurniture.room) : null;
   return `<section data-testid="view-plan">
@@ -2282,15 +2283,15 @@ function renderPlan(): string {
       </div>
       <aside class="spatial-inspector">
         <div class="step-kicker">Inspect the room</div>
-        <h3 data-spatial-selection-title>${esc(selectedFurniture?.name ?? "Choose an anchor")}</h3>
-        <p data-spatial-selection-detail>${esc(selectedRoom?.name ?? "Select a furniture anchor to inspect it.")}</p>
+        <h3 data-spatial-selection-title>${esc(selectedFurniture?.name ?? (hasAnchors ? "Choose an anchor" : "No anchors yet"))}</h3>
+        <p data-spatial-selection-detail>${esc(selectedRoom?.name ?? (hasAnchors ? "Select a furniture anchor to inspect it." : "Your home has rooms, but no furniture anchors to inspect yet."))}</p>
         <div data-spatial-contents-host>${spatialAnchorContentsHtml(ui.spatialSelectedId)}</div>
         <div class="spatial-anchor-list" role="group" aria-label="Furniture anchors">
-          ${store.catalog.furniture.map((item) => {
+          ${hasAnchors ? store.catalog.furniture.map((item) => {
             const room = store.state.rooms.get(item.room);
             const visual = FURNITURE_VISUALS[item.id] ?? DEFAULT_FURNITURE_VISUAL;
             return `<button type="button" data-action="spatial-select" data-id="${esc(item.id)}" aria-pressed="${ui.spatialSelectedId === item.id}"><span class="spatial-anchor-icon ${visual.archetype}"></span><span><strong>${esc(item.name)}</strong><small>${esc(room?.name ?? "Home")} · ${item.plan.w.toFixed(1)} × ${item.plan.h.toFixed(1)} m</small></span><i data-lucide="chevron-right"></i></button>`;
-          }).join("")}
+          }).join("") : `<div class="empty-inline light" data-testid="spatial-anchor-empty"><i data-lucide="cuboid"></i><span>No furniture anchors yet — furniture reconstruction from a scan is on the roadmap. Your rooms, containers, and belongings still map here.${mode === "own" ? ` <button class="link-button" data-action="nav" data-view="setup">Add more in Setup</button>` : ""}</span></div>`}
         </div>
         <div class="metric-stack"><div><strong>${roomArea.toFixed(1)} m²</strong><span>mapped footprint</span></div><div><strong>${store.containersView().length}</strong><span>containers</span></div><div><strong>${store.searchBelongings("").length}</strong><span>belongings</span></div></div>
         ${a?.ok ? `<div class="located-summary${a.state !== "at_home" ? " uncertain" : ""}"><i data-lucide="${a.state !== "at_home" ? "circle-help" : "map-pin"}"></i><span><strong>${esc(a.item)}</strong><small>${a.state !== "at_home" ? `${esc(a.state.replace(/_/g, " "))} · ` : ""}${esc(a.chainText)} · confidence ${a.confidence.toFixed(2)}</small></span></div>` : a ? `<div class="located-summary uncertain"><i data-lucide="circle-help"></i><span><strong>No trusted match</strong><small>${esc(a.sentence)}</small></span></div>` : `<div class="located-summary muted"><i data-lucide="search"></i><span>Locate an item to reveal its confidence halo.</span></div>`}

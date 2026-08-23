@@ -3208,6 +3208,16 @@ async function runBrowserSmoke(): Promise<void> {
     assert("own-activation-completes-in-dom", await evalPage<boolean>(`document.querySelector('[data-testid="activation-checklist"]')?.textContent?.includes("activated") ?? false`));
     await evalPage(`window.nestory.setView("plan")`);
     assert("own-plan-renders", await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="plan-svg"]')) || Boolean(document.querySelector('[data-testid="plan-3d"]'))`));
+    // #15: own home has rooms but no furniture anchors — the 3D inspector shows an
+    // honest empty state (not a blank list), and doesn't pretend anchors exist.
+    assert("own-3d-inspector-shows-honest-empty-anchor-state", await evalPage<boolean>(`(() => {
+      const btn = document.querySelector('[data-action="plan-mode"][data-mode="3d"]');
+      if (btn instanceof HTMLElement) btn.click();
+      const empty = document.querySelector('[data-testid="spatial-anchor-empty"]');
+      const title = document.querySelector('[data-spatial-selection-title]')?.textContent ?? '';
+      const anchorButtons = document.querySelectorAll('.spatial-anchor-list [data-action="spatial-select"]').length;
+      return Boolean(empty) && /no anchors/i.test(title) && anchorButtons === 0;
+    })()`));
     await shot("nestory-own-home.png");
 
     // #13 (trust-critical): own-mode room capture must NOT fabricate a sample
