@@ -15,9 +15,9 @@ import type { AskReply } from "./ask.ts";
 import { decorateIcons } from "../lucide-lite.js";
 import type { SpatialObject, SpatialSceneData } from "./spatial.ts";
 import type {
-  BoxStatus, CommitOp, ContainerView, DeepReadonly, LifecycleState, LocateAnswer,
+  BoxStatus, CommitOp, ContainerContentsView, ContainerView, DeepReadonly, LifecycleState, LocateAnswer,
   ObservationRecord, OperationView, PhotoMedia, ProposalView, RowStatus, StorageLike, Store,
-  OwnershipRecallAnswer, DeclutterReviewResult, HomeCapabilityResult
+  OwnershipRecallAnswer, DeclutterReviewResult, HomeCapabilityResult, WhichContainerHit
 } from "./types.ts";
 import { BOX_STATUSES, LIFECYCLE_STATES, ROW_STATUSES } from "./types.ts";
 
@@ -168,7 +168,7 @@ interface UIState {
   askLog: AskLogEntry[];
   captureMode: CaptureMode;
   planMode: PlanMode;
-  spatialPreset: "home" | "study" | "top";
+  spatialPreset: "home" | "study" | "top" | "free";
   spatialSelectedId: string | null;
   spatialLayers: { furniture: boolean; boxes: boolean; proposals: boolean; pin: boolean };
   spatialXray: boolean;
@@ -300,15 +300,18 @@ function applySpatialSelection(id: string | null, opts: { dispatchToScene?: bool
 
 document.addEventListener("spatial-preset-change", (event) => {
   const preset = (event as CustomEvent<UIState["spatialPreset"]>).detail;
-  if (preset !== "home" && preset !== "study" && preset !== "top") return;
+  if (preset !== "home" && preset !== "study" && preset !== "top" && preset !== "free") return;
   const changed = ui.spatialPreset !== preset;
   ui.spatialPreset = preset;
   for (const button of document.querySelectorAll<HTMLElement>('[data-action="spatial-preset"]')) {
-    button.setAttribute("aria-pressed", String(button.dataset.preset === preset));
+    // "free" leaves every named preset unpressed — an honest "you're zoomed into
+    // an item, not in a saved view" instead of falsely lighting "Whole home".
+    button.setAttribute("aria-pressed", String(preset !== "free" && button.dataset.preset === preset));
   }
   // Camera presets are silent to assistive tech otherwise — announce a real change
-  // only (a scene mount re-emits "home" and should not chatter).
-  if (changed) announce(preset === "home" ? "Whole home view." : preset === "study" ? "Study corner view." : "Top view.");
+  // only (a scene mount re-emits "home" and should not chatter). "free" is a
+  // by-product of framing an item the user already acted on, so it stays silent.
+  if (changed && preset !== "free") announce(preset === "home" ? "Whole home view." : preset === "study" ? "Study corner view." : "Top view.");
 });
 
 document.addEventListener("spatial-selection", (event) => {
@@ -1159,6 +1162,34 @@ function declutterCard(d: DeepReadonly<DeclutterReviewResult>): string {
   </div>`;
 }
 
+// Retrieve loop (which-box / what's-in) rendered with the SAME evidence contract
+// the Locate/Ownership cards carry: confidence, freshness, and state — never a
+// bare "it's in the box". Shared verbatim between Ask and any future Retrieve hub.
+function whichContainerCard(hits: DeepReadonly<WhichContainerHit[]>): string {
+  if (!hits.length) return "";
+  const rows = hits.slice(0, 6).map((h) => `<div class="attention-row">
+    <span class="chip ${h.isBox ? "accent" : "sage"}">${h.isBox ? "box" : h.container.kind}</span>
+    <span class="grow"><strong>${esc(h.item)}</strong><div class="place">${esc(h.chainText)}${h.state !== "at_home" ? ` · ${esc(h.state.replace(/_/g, " "))}` : ""}${h.container.box?.destination ? ` · → ${esc(h.container.box.destination)}` : ""}</div></span>
+    <span class="chip ${h.stale || h.confidence < 0.45 ? "amber" : ""}">${h.stale ? "stale · " : ""}conf ${h.confidence.toFixed(2)}</span>
+    <button class="small ghost" data-action="locate-on-map" data-item="${esc(h.itemId)}" data-q="${esc(h.item)}" title="Show ${esc(h.item)} on the map">Show on map</button>
+  </div>`).join("");
+  return `<div class="card" style="box-shadow:none;margin-top:8px" data-testid="which-container-card">${rows}</div>`;
+}
+
+function containerContentsCard(v: DeepReadonly<ContainerContentsView>): string {
+  const rows = v.items.length
+    ? v.items.map((i) => `<div class="attention-row">
+        <span class="grow"><strong>${esc(i.name)}</strong><div class="place">${i.state !== "at_home" ? `${esc(i.state.replace(/_/g, " "))} · ` : ""}conf ${i.confidence.toFixed(2)}</div></span>
+        <button class="small ghost" data-action="locate-on-map" data-item="${esc(i.id)}" data-q="${esc(i.name)}" title="Show ${esc(i.name)} on the map">Show on map</button>
+      </div>`).join("")
+    : `<div class="muted">No recorded contents.</div>`;
+  const freshness = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+    <span class="chip ${v.stale ? "amber" : "sage"}">${v.stale ? "stale" : "fresh"}</span>
+    <span class="muted">${esc(v.container.name)} · confirmed ${esc(daysLabel(v.daysSinceConfirmed))}</span></div>`;
+  const note = v.unknownNote ? `<div class="place faint" style="margin-top:6px">${esc(v.unknownNote)}</div>` : "";
+  return `<div class="card" style="box-shadow:none;margin-top:8px" data-testid="container-contents-card">${freshness}${rows}${note}</div>`;
+}
+
 function capabilityCard(c: DeepReadonly<HomeCapabilityResult>): string {
   const verdictChip = !c.matched ? '<span class="chip">no profile</span>'
     : c.verdict === "ready" ? '<span class="chip sage">ready</span>'
@@ -1169,8 +1200,8 @@ function capabilityCard(c: DeepReadonly<HomeCapabilityResult>): string {
     <div class="proposal-section-label">${esc(g.label)}</div>
     ${g.items.map((i) => `<div class="attention-row">
       <span class="chip ${i.status === "substitute" ? "blue" : "sage"}">${i.status === "substitute" ? "substitute" : "have"}</span>
-      <span class="grow"><strong>${esc(i.name)}</strong><div class="place">${esc(i.chainText)}</div></span>
-      ${i.itemId && i.chainText && !/not confirmed/i.test(i.chainText) ? `<button class="small ghost" data-action="locate-on-map" data-item="${esc(i.itemId)}" data-q="${esc(i.name)}" title="Show ${esc(i.name)} on the map">Show on map</button>` : ""}
+      <span class="grow"><strong>${esc(i.name)}</strong><div class="place">${esc(i.chainText)}${i.confidence != null ? ` · conf ${i.confidence.toFixed(2)}` : ""}${i.stale ? ` · ${esc(daysLabel(i.daysSinceUpdate))}, worth reconfirming` : ""}</div></span>
+      ${i.itemId && i.placeKnown ? `<button class="small ghost" data-action="locate-on-map" data-item="${esc(i.itemId)}" data-q="${esc(i.name)}" title="Show ${esc(i.name)} on the map">Show on map</button>` : ""}
     </div>`).join("")}
   </div>`).join("");
   const notHandy = c.notHandy.length ? `<div style="margin-top:8px">
@@ -1207,6 +1238,10 @@ function askBubble(entry: AskLogEntry): string {
   let extra = "";
   if (reply?.answer?.ok) {
     extra = renderAnswerCard(reply.answer);
+  } else if (reply?.answer && !reply.answer.ok) {
+    // A failed locate in chat still gets its recovery affordance (prefilled "Add
+    // …as a belonging"), so the Retrieve loop never dead-ends on "no memory".
+    extra = renderAnswerCard(reply.answer);
   } else if (reply?.plan?.length) {
     extra = `<div class="card" style="box-shadow:none;margin-top:8px">
       ${reply.plan.map((g) => `<div class="priority-item"><span class="grow"><strong>${esc(g.label)}</strong>${g.needsReview ? ' <span class="chip amber">needs review</span>' : ""}<div class="place">${g.items.map((i) => esc(i.name)).join(" · ")}</div></span></div>`).join("")}
@@ -1217,12 +1252,37 @@ function askBubble(entry: AskLogEntry): string {
     extra = declutterCard(reply.declutter);
   } else if (reply?.capability) {
     extra = capabilityCard(reply.capability);
+  } else if (reply?.contents) {
+    extra = containerContentsCard(reply.contents);
+  } else if (reply?.hits?.length) {
+    extra = whichContainerCard(reply.hits);
   }
   return `<div class="ask-row"><div class="ask-bubble nestory">
-    ${reply?.answer?.ok ? "" : `<div>${esc(entry.text)}</div>`}
+    ${reply?.answer ? "" : `<div>${esc(entry.text)}</div>`}
     ${extra}
     ${calls ? `<details class="technical-details"><summary>How this answer was checked</summary><div class="cops">${calls}</div></details>` : ""}
   </div></div>`;
+}
+
+// Ask starters, grounded in the real graph so own-mode never suggests seeded
+// items the user doesn't own. Demo keeps its curated tour; own mode names a real
+// belonging + real capability profiles, and always offers the graph-safe prompts
+// ("what needs attention", "what can I declutter") that work on any home.
+function askStarters(): string[] {
+  const attentionable = ["What needs attention?", "What can I declutter?"];
+  if (mode === "demo") {
+    return ["Where is my water bottle?", "Do I already have a charger?", "Can I work out at home?", "Am I ready to go camping?", ...attentionable];
+  }
+  const belongings = store.searchBelongings("");
+  const profiles = store.catalog.capabilityProfiles ?? [];
+  const starters: string[] = [];
+  const firstItem = belongings[0]?.name;
+  if (firstItem) starters.push(`Where is my ${firstItem.toLowerCase()}?`);
+  const firstKind = belongings.flatMap((b) => b.kinds)[0];
+  if (firstKind) starters.push(`Do I already have a ${firstKind.replace(/-/g, " ")}?`);
+  for (const p of profiles.slice(0, 1)) starters.push(`Am I ready for ${p.label.toLowerCase()}?`);
+  starters.push(...attentionable);
+  return starters;
 }
 
 function renderAsk(): string {
@@ -1237,7 +1297,7 @@ function renderAsk(): string {
     <div class="ask-console">
       <div class="ask-console-head"><span><i data-lucide="sparkles"></i> Nestory</span><span><span class="live-dot"></span> Home memory ready</span></div>
       <div class="ask-log" role="log" aria-label="Conversation" data-testid="ask-log">
-        ${ui.askLog.map(askBubble).join("") || `<div class="ask-starters"><span>Try asking</span>${["Where is my water bottle?", "Do I already have a charger?", "Can I work out at home?", "Am I ready to go camping?", "What can I declutter?", "What needs attention?"].map((prompt) => `<button data-action="ask-prompt" data-prompt="${esc(prompt)}"><i data-lucide="arrow-up-right"></i>${esc(prompt)}</button>`).join("")}</div>`}
+        ${ui.askLog.map(askBubble).join("") || `<div class="ask-starters"><span>Try asking</span>${askStarters().map((prompt) => `<button data-action="ask-prompt" data-prompt="${esc(prompt)}"><i data-lucide="arrow-up-right"></i>${esc(prompt)}</button>`).join("")}</div>`}
       </div>
       <div class="ask-composer">
         <i data-lucide="sparkles"></i><input type="text" id="ask-input" aria-label="Ask Nestory" data-enter="ask-send" placeholder="Ask where something is, whether you already own it, or what needs attention…">
@@ -2189,11 +2249,11 @@ function renderPlan(): string {
         <h3 data-spatial-selection-title>${esc(selectedFurniture?.name ?? "Choose an anchor")}</h3>
         <p data-spatial-selection-detail>${esc(selectedRoom?.name ?? "Select a furniture anchor to inspect it.")}</p>
         <div data-spatial-contents-host>${spatialAnchorContentsHtml(ui.spatialSelectedId)}</div>
-        <div class="spatial-anchor-list" role="list" aria-label="Furniture anchors">
+        <div class="spatial-anchor-list" role="group" aria-label="Furniture anchors">
           ${store.catalog.furniture.map((item) => {
             const room = store.state.rooms.get(item.room);
             const visual = FURNITURE_VISUALS[item.id] ?? DEFAULT_FURNITURE_VISUAL;
-            return `<button type="button" role="listitem" data-action="spatial-select" data-id="${esc(item.id)}" aria-pressed="${ui.spatialSelectedId === item.id}"><span class="spatial-anchor-icon ${visual.archetype}"></span><span><strong>${esc(item.name)}</strong><small>${esc(room?.name ?? "Home")} · ${item.plan.w.toFixed(1)} × ${item.plan.h.toFixed(1)} m</small></span><i data-lucide="chevron-right"></i></button>`;
+            return `<button type="button" data-action="spatial-select" data-id="${esc(item.id)}" aria-pressed="${ui.spatialSelectedId === item.id}"><span class="spatial-anchor-icon ${visual.archetype}"></span><span><strong>${esc(item.name)}</strong><small>${esc(room?.name ?? "Home")} · ${item.plan.w.toFixed(1)} × ${item.plan.h.toFixed(1)} m</small></span><i data-lucide="chevron-right"></i></button>`;
           }).join("")}
         </div>
         <div class="metric-stack"><div><strong>${roomArea.toFixed(1)} m²</strong><span>mapped footprint</span></div><div><strong>${store.containersView().length}</strong><span>containers</span></div><div><strong>${store.searchBelongings("").length}</strong><span>belongings</span></div></div>
@@ -2595,7 +2655,7 @@ document.addEventListener("click", (e) => {
     case "hero-locate": doLocate(inputValue("hero-search-input"), "hero-search-input"); break;
     case "ask-send": doAsk(inputValue("ask-input")); break;
     case "ask-prompt": if (t.dataset.prompt) { if (ui.view !== "ask") navigate("ask"); doAsk(t.dataset.prompt); } break;
-    case "recall-tab": if (t.dataset.tab === "reuse" || t.dataset.tab === "ready" || t.dataset.tab === "release") { ui.recallTab = t.dataset.tab; render(); } break;
+    case "recall-tab": if (t.dataset.tab === "reuse" || t.dataset.tab === "ready" || t.dataset.tab === "release") { ui.recallTab = t.dataset.tab; controlReturnFocus = focusBookmark(t); render(); } break;
     case "recall-open": if (t.dataset.tab === "reuse" || t.dataset.tab === "ready" || t.dataset.tab === "release") ui.recallTab = t.dataset.tab; navigate("recall"); break;
     case "ownership-check": doOwnershipRecall(inputValue("ownership-input")); break;
     case "ownership-example": if (t.dataset.q) doOwnershipRecall(t.dataset.q); break;

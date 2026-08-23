@@ -58,6 +58,10 @@ export type SpatialObjectKind = "furniture" | "box";
 export type SpatialProposalState = "accepted" | "pending" | "rejected";
 export type SpatialColor = number | string;
 export type SpatialViewPreset = "home" | "study" | "top";
+// The camera can also sit at a "free" pose — framed on one object (dbl-click, a
+// located pin, keyboard focus) rather than a named preset. Reported so the DOM
+// preset bar can show none-pressed instead of falsely keeping "Whole home" lit.
+export type SpatialCameraState = SpatialViewPreset | "free";
 
 export interface SpatialSelection {
   id: string;
@@ -1077,7 +1081,7 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
         if (object) focusObject(object, true); else return;
         break;
       }
-      case "Home": frameCamera(camera, controls, bounds); settleFrames = reduceMotion ? 0 : Math.max(settleFrames, 6); scheduleRender(); break;
+      case "Home": frameCamera(camera, controls, bounds); settleFrames = reduceMotion ? 0 : Math.max(settleFrames, 6); setCameraState("home"); scheduleRender(); break;
       default: return;
     }
     event.preventDefault();
@@ -1135,7 +1139,16 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     return id ? objectData.get(id) ?? null : null;
   };
 
-  const focusObject = (object: SpatialObject, transition: boolean): void => {
+  // Single source for "what camera pose are we in" — a named preset or "free"
+  // (framed on one object). Mirrors it into a dataset marker for verification and
+  // notifies the DOM so the preset bar can reflect the true state (ADR: the scene
+  // owns the camera; the DOM owns the pressed-state, driven by this event).
+  const setCameraState = (stateValue: SpatialCameraState): void => {
+    renderer.domElement.dataset.spatialPreset = stateValue;
+    container.dispatchEvent(new CustomEvent<SpatialCameraState>("spatial-preset-change", { bubbles: true, detail: stateValue }));
+  };
+
+  const focusObject = (object: SpatialObject, transition: boolean, opts: { fromPreset?: boolean } = {}): void => {
     const root = objectRoots.get(object.id);
     if (!root) return;
     const objectBounds = new Box3().setFromObject(root);
@@ -1151,6 +1164,10 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     }
     void controls.setLookAt(position.x, position.y, position.z, objectCenter.x, Math.max(0.28, objectCenter.y * 0.62), objectCenter.z, transition && !reduceMotion);
     settleFrames = reduceMotion ? 0 : 6;
+    // Framing one object is a "free" camera pose, not a named preset — unless this
+    // focus IS a preset (Study corner frames the desk). Report it so the preset bar
+    // stops falsely showing "Whole home" pressed while zoomed into an item.
+    if (!opts.fromPreset) setCameraState("free");
     scheduleRender();
   };
 
@@ -1212,7 +1229,7 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
     const animate = !reduceMotion;
     if (preset === "study") {
       const desk = solidObjects.find((object) => object.archetype === "desk") ?? solidObjects[0];
-      if (desk) focusObject(desk, animate);
+      if (desk) focusObject(desk, animate, { fromPreset: true });
     } else if (preset === "top") {
       const planCenter = bounds.getCenter(new Vector3());
       const extent = Math.max(size.x, size.z) * 1.18;
@@ -1227,8 +1244,7 @@ export function mountSpatialScene(container: HTMLElement, data: SpatialSceneData
       settleFrames = animate ? 6 : 0;
       scheduleRender();
     }
-    renderer.domElement.dataset.spatialPreset = preset;
-    container.dispatchEvent(new CustomEvent<SpatialViewPreset>("spatial-preset-change", { bubbles: true, detail: preset }));
+    setCameraState(preset);
   };
 
   // X-ray: drop wall + furniture/box opacity so the user can see through the

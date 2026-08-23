@@ -1,14 +1,14 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-21T08:12:52.249Z
-Runtime: node v26.3.1 · typescript strict
-- Assertions: 536
-- Passed: 535
-- Failed: 1
+Generated: 2026-08-23T14:13:17.054Z
+Runtime: node v26.7.0 · typescript strict
+- Assertions: 543
+- Passed: 543
+- Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 2.600 ms
-- Household UI DOM-commit p95: 7.300 ms
+- UI DOM-commit p95: 2.400 ms
+- Household UI DOM-commit p95: 5.500 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
-- Settled spatial RAF callbacks observed: 2
+- Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
 ## typescript gate
 - ✓ `tsc-typecheck-and-emit`
@@ -58,6 +58,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `stale-container-flagged`
 - ✓ `stale-list-has-top-drawer`
 - ✓ `which-container-has`
+- ✓ `which-container-carries-evidence-contract`
 - ✓ `snapshot-creates-proposal`
 - ✓ `snapshot-never-direct-write`
 - ✓ `snapshot-observation-linked`
@@ -229,6 +230,7 @@ Runtime: node v26.3.1 · typescript strict
 ## ask router
 - ✓ `ask-locate-intent`
 - ✓ `ask-which-box`
+- ✓ `ask-which-box-discloses-confidence`
 - ✓ `ask-which-box-owned-not-in-box-is-honest`
 - ✓ `ask-which-box-unknown-stays-honest`
 - ✓ `ask-container-contents`
@@ -409,6 +411,8 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `dom-plan-3d-pixels`
 - ✓ `spatial-furniture-uses-readable-archetypes`
 - ✓ `spatial-camera-presets-change-the-mounted-view`
+- ✓ `spatial-anchor-picker-uses-valid-aria`
+- ✓ `spatial-framing-an-item-clears-preset-pressed-state`
 - ✓ `spatial-object-list-selects-and-describes-furniture`
 - ✓ `spatial-selection-reveals-anchor-contents`
 - ✓ `spatial-hover-shows-confidence-tooltip`
@@ -417,7 +421,7 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `spatial-furnished-scene-stays-within-gpu-budget`
 - ✓ `spatial-labels-render-only-in-accessible-html-inspector`
 - ✓ `unrelated-update-preserves-spatial-canvas`
-- ✗ `settled-spatial-scene-has-zero-continuous-raf` — 2
+- ✓ `settled-spatial-scene-has-zero-continuous-raf`
 - ✓ `spatial-selection-from-scene-updates-inspector`
 - ✓ `spatial-selection-does-not-remount-canvas`
 - ✓ `spatial-selection-uses-fitted-outline`
@@ -465,10 +469,13 @@ Runtime: node v26.3.1 · typescript strict
 - ✓ `dom-ask-ownership-recall`
 - ✓ `dom-ask-declutter-review`
 - ✓ `dom-ask-home-capability`
+- ✓ `dom-ask-which-container-card`
+- ✓ `dom-ask-container-contents-card`
 - ✓ `dom-recall-view-renders`
 - ✓ `dom-recall-reuse-runs`
 - ✓ `dom-recall-show-on-map-lands-on-plan`
 - ✓ `dom-recall-ready-runs`
+- ✓ `dom-recall-ready-stop-has-map-button`
 - ✓ `dom-recall-release-runs`
 - ✓ `mobile-nav-reaches-home`
 - ✓ `mobile-nav-reaches-ask`

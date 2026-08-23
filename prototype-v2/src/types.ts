@@ -536,6 +536,10 @@ export interface CapabilityStopItem {
   name: string;
   status: CapabilityNeedStatus;
   chainText: string;
+  placeKnown: boolean;             // false → owned but place unconfirmed; drives the map affordance without a regex on chainText
+  confidence: number | null;       // same evidence contract as locate — surfaced on the stop row
+  daysSinceUpdate: number | null;
+  stale: boolean;                   // >30d — disclosed on the row, never hidden
 }
 
 /** Grouping shape reused from RetrievalPlanGroup: one stop per furniture (or room). */
@@ -639,6 +643,10 @@ export interface UnpackPriorityEntry {
   essentials: string[];
 }
 
+// "Which box/container has X?" — one belonging found inside a container. Carries
+// the SAME evidence contract as locate/ownership (confidence, freshness, state) so
+// the Retrieve loop is never answered without disclosure. placeKnown is always true
+// here (a hit is, by definition, a belonging with a known container placement).
 export interface WhichContainerHit {
   item: string;
   itemId: string;
@@ -646,6 +654,10 @@ export interface WhichContainerHit {
   chainText: string;
   isBox: boolean;
   boxStatus: BoxStatus | null;
+  state: LifecycleState;
+  confidence: number;
+  daysSinceUpdate: number | null;
+  stale: boolean;
 }
 
 export interface AttentionSummary {

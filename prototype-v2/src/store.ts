@@ -1082,7 +1082,13 @@ export function createStore(options: StoreOptions): Store {
         container,
         chainText: m.chainText,
         isBox: container.kind === "box",
-        boxStatus: container.boxStatus
+        boxStatus: container.boxStatus,
+        // Same evidence contract as locate/ownership: never answer "which box"
+        // without surfacing how trustworthy the record is.
+        state: m.state,
+        confidence: m.confidence,
+        daysSinceUpdate: m.daysSinceUpdate,
+        stale: m.daysSinceUpdate !== null && m.daysSinceUpdate > 30
       });
     }
     return hits;
@@ -1377,7 +1383,7 @@ export function createStore(options: StoreOptions): Store {
     const haveNeeds = needs.filter(covered);
     const stopEntries = haveNeeds.map((n) => {
       const view = n.itemId ? belongingView(n.itemId) : null;
-      const item: CapabilityStopItem = { itemId: n.itemId, name: n.item ?? n.label, status: n.status, chainText: n.chainText };
+      const item: CapabilityStopItem = { itemId: n.itemId, name: n.item ?? n.label, status: n.status, chainText: n.chainText, placeKnown: n.placeKnown, confidence: n.confidence, daysSinceUpdate: n.daysSinceUpdate, stale: n.stale };
       return { chain: (view?.chain ?? []) as PlaceNode[], needsReview: !n.placeKnown, item };
     });
     const stops: CapabilityStop[] = groupByPlace(stopEntries)

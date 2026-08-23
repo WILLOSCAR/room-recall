@@ -76,9 +76,12 @@ export function ask(store: Store, toolkit: AgentToolkit, raw: string): AskReply 
       const boxOnly = whichMatch[1] === "box" ? hits.filter((h) => h.isBox) : hits;
       const top = boxOnly[0] ?? hits[0];
       if (top) {
+        const dest = top.container.box?.destination ? ` (destination: ${top.container.box.destination})` : "";
+        const freshness = top.stale ? ` That record is ${top.daysSinceUpdate}d old — worth reconfirming.`
+          : top.confidence < 0.45 ? " I'm not fully confident, though." : "";
         return {
           intent: "which_container", toolCalls, hits: boxOnly.length ? boxOnly : hits,
-          text: `${top.item} is in ${top.container.name}${top.container.box?.destination ? ` (destination: ${top.container.box.destination})` : ""}.`
+          text: `${top.item} is in ${top.container.name}${dest} (confidence ${top.confidence.toFixed(2)}).${freshness}`
         };
       }
       // No container hit — but the item may still be owned, just not in a box.
