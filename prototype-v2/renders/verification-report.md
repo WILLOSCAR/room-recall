@@ -1,11 +1,11 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-24T15:16:50.511Z
+Generated: 2026-08-24T15:48:16.802Z
 Runtime: node v26.7.0 · typescript strict
-- Assertions: 663
-- Passed: 663
+- Assertions: 669
+- Passed: 669
 - Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 1.900 ms
+- UI DOM-commit p95: 1.800 ms
 - Household UI DOM-commit p95: 4.800 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
@@ -67,6 +67,10 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `snapshot-label-count-bound-rejects-before-ledger-write`
 - ✓ `snapshot-accept-moves-item`
 - ✓ `snapshot-accept-confirms-container`
+- ✓ `snapshot-voice-tags-modality`
+- ✓ `snapshot-default-modality-typed`
+- ✓ `snapshot-voice-flows-through-commit`
+- ✓ `snapshot-modality-roundtrips`
 ## P0.3 find and correct
 - ✓ `locate-chain`
 - ✓ `locate-contract-fields`
@@ -581,6 +585,8 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `async-snapshot-photo-preserves-newer-text-focus-selection-and-locks-submit`
 - ✓ `snapshot-persistence-failure-keeps-dialog-text-and-photo`
 - ✓ `late-snapshot-photo-cannot-cross-modal-context`
+- ✓ `dom-snapshot-voice-renders-supported-copy`
+- ✓ `dom-snapshot-voice-never-fabricates-transcript`
 - ✓ `dom-proposal-photo`
 - ✓ `review-decision-focuses-next-action`
 - ✓ `dom-retrieval-plan`

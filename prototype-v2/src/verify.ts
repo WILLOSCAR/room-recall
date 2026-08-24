@@ -480,6 +480,38 @@ section("P0.2 container memory", () => {
   store.acceptProposal(pid);
   assert("snapshot-accept-moves-item", store.belongingView("usb-c-charger")?.chainText.includes("Entry tray"), store.belongingView("usb-c-charger")?.chainText);
   assert("snapshot-accept-confirms-container", store.containerContents("entry-tray")?.daysSinceConfirmed === 0);
+
+  // Voice-capture modality (field-test protocol revision #4): the snapshot
+  // observation records HOW the sentence was captured as local-only provenance.
+  // Default is "typed"; an explicit "voice" is preserved. The tag rides the same
+  // proposal/commit path and survives a reload — it is metadata, never a truth
+  // source or media. The seeded baseline already has an entry-tray snapshot, so
+  // each check reads the LAST matching observation (append-only ledger).
+  const voiceStore = fresh();
+  const entryTraySnapshots = () => voiceStore.state.observations.filter((o) => o.type === "container_snapshot" && o.containerId === "entry-tray");
+  const voicePid = voiceStore.snapshotContainer("entry-tray", "usb-c charger", null, "voice");
+  const voiceObs = entryTraySnapshots()[entryTraySnapshots().length - 1];
+  assert("snapshot-voice-tags-modality", voiceObs?.payload?.modality === "voice", JSON.stringify(voiceObs?.payload));
+  voiceStore.snapshotContainer("entry-tray", "coins");
+  const typedObs = entryTraySnapshots()[entryTraySnapshots().length - 1];
+  assert("snapshot-default-modality-typed", typedObs?.payload?.modality === "typed" && typedObs?.id !== voiceObs?.id, JSON.stringify(typedObs?.payload));
+  // The modality tag never blocks the commit path — accept still moves the item.
+  const beforeChain = voiceStore.belongingView("usb-c-charger")?.chainText;
+  voiceStore.acceptProposal(voicePid);
+  assert("snapshot-voice-flows-through-commit",
+    beforeChain !== voiceStore.belongingView("usb-c-charger")?.chainText
+      && voiceStore.belongingView("usb-c-charger")?.chainText.includes("Entry tray"),
+    String(voiceStore.belongingView("usb-c-charger")?.chainText));
+  // Provenance survives a reload (empty-catalog round-trip, mirroring the recall
+  // tag test — the seeded baseline has a separate, pre-existing ordering defect).
+  const vrt = fresh({ catalog: emptyCatalog, seedFactory: () => [] });
+  const vrtRoom = vrt.createRoom({ name: "Kitchen" });
+  const vrtTray = vrt.createContainer({ name: "Entry tray", kind: "tray", roomId: vrtRoom });
+  vrt.snapshotContainer(vrtTray, "spare batteries", null, "voice");
+  const vrtReload = fresh({ catalog: emptyCatalog, seedFactory: () => [] });
+  vrtReload.importJson(vrt.exportJson());
+  const vrtObs = vrtReload.state.observations.find((o) => o.type === "container_snapshot");
+  assert("snapshot-modality-roundtrips", vrtObs?.payload?.modality === "voice", JSON.stringify(vrtObs?.payload));
 });
 
 // =====================================================================
@@ -3326,6 +3358,40 @@ async function runBrowserSmoke(): Promise<void> {
         window.createImageBitmap = originalCreateImageBitmap;
         resolve(window.nestory.ui.pendingSnapshotPhoto === null && window.nestory.ui.view === "ask" && window.nestory.ui.modal === null);
       }, 260);
+    })`));
+
+    // Voice capture honesty. Headless Chrome (newer builds) DOES expose
+    // SpeechRecognition, so the button renders its SUPPORTED copy — claiming
+    // "unavailable" here would be dishonest in the other direction. The
+    // invariant that matters is that voice never fabricates a transcript: text
+    // enters the field only via a real onresult event or typing. Headless has no
+    // audio path (and the launcher disables background networking), so onresult
+    // cannot fire — after a click the field must be unchanged and the UI must be
+    // honestly listening or erroring, never pretending to have heard something.
+    assert("dom-snapshot-voice-renders-supported-copy", await evalPage<boolean>(`(() => {
+      window.nestory.setView("spaces");
+      window.nestory.openContainer("entry-tray");
+      const button = document.querySelector('[data-testid="snapshot-voice"]');
+      const hint = button instanceof HTMLButtonElement ? button.nextElementSibling : null;
+      return button instanceof HTMLButtonElement
+        && (hint?.textContent?.includes("speech becomes text in the same field") ?? false)
+        && (button.getAttribute("title")?.includes("Speak the items you see") ?? false);
+    })()`));
+
+    assert("dom-snapshot-voice-never-fabricates-transcript", await evalPage<boolean>(`new Promise((resolve) => {
+      window.nestory.setView("spaces");
+      window.nestory.openContainer("entry-tray");
+      const textarea = document.getElementById("snapshot-text");
+      const button = document.querySelector('[data-testid="snapshot-voice"]');
+      if (!(textarea instanceof HTMLTextAreaElement) || !(button instanceof HTMLButtonElement)) { resolve(false); return; }
+      textarea.value = "typed-marker-9001";
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      button.click();
+      setTimeout(() => {
+        const toastText = document.querySelector('#toast-root')?.textContent ?? '';
+        const honestlyEngaged = toastText.includes("Listening") || toastText.includes("type the snapshot instead");
+        resolve(textarea.value === "typed-marker-9001" && honestlyEngaged);
+      }, 400);
     })`));
 
     // Photo evidence renders in the review inbox (data URL injected via the store).

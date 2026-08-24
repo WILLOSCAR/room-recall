@@ -240,6 +240,12 @@ export type ObservationType =
   // for a release proposal; and a "hold judgment for now" note.
   | "release_intent" | "declutter_deferred";
 
+/** How a Container Snapshot sentence was captured. Field-test protocol revision
+ *  #4 asks the moderator to log typed-vs-voice per participant, so the snapshot
+ *  observation carries this as local-only provenance. It is metadata about the
+ *  capture, never a second truth source and never media. */
+export type CaptureModality = "typed" | "voice";
+
 export interface ObservationRecord {
   recordType: "observation";
   id: string;
@@ -834,7 +840,7 @@ export interface Store {
   proposeRelease(itemId: string, disposition: "re_home" | "sell" | "donate" | "recycle" | "discard"): { observationId: string; proposalId: string };
   deferDeclutter(itemId: string): CommitRecord;
   markNotThere(itemId: string): { observationId: string; proposalId: string };
-  snapshotContainer(containerId: string, seenText: string, photo?: PhotoMedia | null): string;
+  snapshotContainer(containerId: string, seenText: string, photo?: PhotoMedia | null, modality?: CaptureModality): string;
   acceptProposal(proposalId: string, extra?: { placeRef?: PlaceRef; placementOverrides?: Record<string, PlaceRef>; mergeKeepId?: string }): CommitRecord;
   rejectProposal(proposalId: string, reason?: string): CommitRecord;
   confirmContainer(containerId: string): CommitRecord;

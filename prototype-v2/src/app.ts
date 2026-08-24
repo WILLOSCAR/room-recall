@@ -15,7 +15,7 @@ import type { AskReply } from "./ask.ts";
 import { decorateIcons } from "../lucide-lite.js";
 import type { SpatialObject, SpatialSceneData } from "./spatial.ts";
 import type {
-  BoxStatus, CommitOp, ContainerContentsView, ContainerView, DeepReadonly, LifecycleState, LocateAnswer,
+  BoxStatus, CaptureModality, CommitOp, ContainerContentsView, ContainerView, DeepReadonly, LifecycleState, LocateAnswer,
   ObservationRecord, OperationView, PhotoMedia, ProposalView, RowStatus, StorageLike, Store,
   OwnershipRecallAnswer, DeclutterReviewResult, DeclutterOption, HomeCapabilityResult, WhichContainerHit
 } from "./types.ts";
@@ -125,6 +125,36 @@ interface CaptureDrafts {
     source: "product" | "manual" | "scan";
   };
   snapshots: Record<string, string>;
+  /** Capture modality per container snapshot (field-test protocol revision #4).
+   *  "voice" while a spoken transcript fills the field, "typed" once the user
+   *  edits/types it. Defaults to "typed" when absent. */
+  snapshotModality: Record<string, CaptureModality>;
+}
+
+// The Web Speech API's SpeechRecognition is Chrome-only and absent from the
+// standard DOM lib, so we declare the minimal structural surface we use. The
+// on-device UI is the only consumer — speech never reaches the Agent/export
+// paths (it becomes plain text in the same snapshot field). Honest degradation:
+// when no constructor exists (headless, Firefox, Node) the voice affordance is
+// disabled rather than faked.
+interface SpeechRecognitionResultLike {
+  results: { 0: { 0: { transcript: string } | undefined } | undefined } | undefined;
+}
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: SpeechRecognitionResultLike) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+}
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
+function speechRecognitionCtor(): SpeechRecognitionCtor | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
 interface FurnitureVisualProfile {
@@ -214,7 +244,8 @@ const ui: UIState = {
     room: { anchorCm: "140", scope: "Bedroom", targetContainerId: "" },
     container: { containerId: "", seen: "" },
     product: { name: "", tags: "", width: "", depth: "", height: "", defaultHome: "", source: "product" },
-    snapshots: {}
+    snapshots: {},
+    snapshotModality: {}
   },
   proposalEdits: {},
   reviewOffset: 0,
@@ -438,7 +469,11 @@ function syncDraftControl(control: HTMLInputElement | HTMLTextAreaElement | HTML
       if (control.value === "product" || control.value === "manual" || control.value === "scan") ui.captureDrafts.product.source = control.value;
       break;
     case "snapshot-text":
-      if (control.dataset.container) ui.captureDrafts.snapshots[control.dataset.container] = control.value;
+      if (control.dataset.container) {
+        ui.captureDrafts.snapshots[control.dataset.container] = control.value;
+        // Any keystroke makes this a typed capture, even if voice filled it first.
+        ui.captureDrafts.snapshotModality[control.dataset.container] = "typed";
+      }
       break;
     default: break;
   }
@@ -2510,6 +2545,7 @@ function containerModal(id: string): string {
   const c = cc.container;
   const isBox = c.kind === "box";
   const boxStatus = c.boxStatus;
+  const voiceSupported = speechRecognitionCtor() !== null;
   return `<div class="modal-overlay" data-action="close-modal-overlay">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="container-modal-title" tabindex="-1" data-testid="container-modal">
       <div class="modal-head">
@@ -2530,6 +2566,10 @@ function containerModal(id: string): string {
       <div style="margin-top:14px">
         <label class="faint" for="snapshot-text" style="display:block;margin-bottom:4px">Container snapshot — type what you can see (comma-separated). It becomes a reviewable proposal, not truth.</label>
         <textarea id="snapshot-text" placeholder="e.g. charger, gym card, coins" maxlength="4000" data-testid="snapshot-input" data-draft="snapshot-text" data-container="${esc(c.id)}">${esc(ui.captureDrafts.snapshots[c.id] ?? "")}</textarea>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+          <button type="button" class="small ghost" data-action="snapshot-voice" data-id="${esc(c.id)}" data-testid="snapshot-voice" title="${voiceSupported ? "Speak the items you see — speech becomes text in the same field" : "Voice input isn't supported in this browser — typing works everywhere"}"><i data-lucide="mic"></i> Voice capture</button>
+          <span class="faint">${voiceSupported ? "speech becomes text in the same field — review before committing" : "voice unavailable in this browser — typing works everywhere"}</span>
+        </div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
           <input type="file" id="snapshot-photo" accept="image/*" aria-label="Optional container snapshot photo" data-role="snapshot-photo" style="max-width:230px">
           ${ui.pendingSnapshotPhoto
@@ -2882,14 +2922,49 @@ document.addEventListener("click", (e) => {
       const text = inputValue("snapshot-text").trim();
       if (containerId && text) {
         const photo = ui.pendingSnapshotPhoto;
-        const out = act(() => store.snapshotContainer(containerId, text, photo), "Snapshot recorded as a proposal — review it in the inbox.");
+        const modality = ui.captureDrafts.snapshotModality[containerId] ?? "typed";
+        const out = act(() => store.snapshotContainer(containerId, text, photo, modality), "Snapshot recorded as a proposal — review it in the inbox.");
         if (out === null) break;
         snapshotPhotoReadToken += 1;
         ui.pendingSnapshotPhoto = null;
         delete ui.captureDrafts.snapshots[containerId];
+        delete ui.captureDrafts.snapshotModality[containerId];
         closeModal();
       } else if (!text) {
         toast("Type what you can see first — the photo alone is evidence, not recognition.");
+      }
+      break;
+    }
+    case "snapshot-voice": {
+      // Voice is just a faster way to fill the SAME sentence field — the transcript
+      // becomes plain text that still flows through snapshot → proposal → commit.
+      // Honest degradation: with no SpeechRecognition (headless/Firefox), say so
+      // plainly rather than faking recognition.
+      const containerId = t.dataset.id;
+      const textarea = document.getElementById("snapshot-text");
+      if (!containerId || !(textarea instanceof HTMLTextAreaElement)) break;
+      const Ctor = speechRecognitionCtor();
+      if (!Ctor) { toast("Voice input isn't supported in this browser — type the snapshot instead.", { tone: "info" }); break; }
+      const recognition = new Ctor();
+      recognition.lang = (typeof navigator !== "undefined" && navigator.language) || "en-US";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      recognition.onresult = (event) => {
+        const transcript = event.results?.[0]?.[0]?.transcript?.trim();
+        if (!transcript) return;
+        const existing = textarea.value.trim();
+        textarea.value = existing ? `${existing}, ${transcript}` : transcript;
+        ui.captureDrafts.snapshots[containerId] = textarea.value;
+        ui.captureDrafts.snapshotModality[containerId] = "voice";
+        textarea.focus();
+      };
+      recognition.onerror = () => { toast("Couldn't capture speech — type the snapshot instead.", { tone: "error" }); };
+      recognition.onend = () => { /* recognition stopped; any transcript was already applied */ };
+      try {
+        recognition.start();
+        toast("Listening… speak the items you see, then pause.", { tone: "info" });
+      } catch {
+        toast("Couldn't start voice capture — type the snapshot instead.", { tone: "error" });
       }
       break;
     }

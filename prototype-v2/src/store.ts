@@ -6,7 +6,7 @@
 
 import type {
   ActivationSummary, AnyRecord, AttentionSummary, BelongingEntity, BelongingSearchPage, BelongingView, BoxStatus, Catalog,
-  CommitOp, CommitRecord, ContainerContentsView, ContainerEntity, ContainerKind, ContainerView,
+  CaptureModality, CommitOp, CommitRecord, ContainerContentsView, ContainerEntity, ContainerKind, ContainerView,
   ContainerWithContentsView, CreateBelongingInput, CreateBoxInput, CreateContainerInput,
   CreateRoomInput, DerivedState, ReadonlyDerivedState,
   EvidenceKind, EvidenceRecord, ExportDump, Kit, KitReadiness, KitRow, KitRowView,
@@ -1922,15 +1922,18 @@ export function createStore(options: StoreOptions): Store {
     return { observationId: obs.id, proposalId: proposal.id };
   }
 
-  function snapshotContainer(containerId: string, seenText: string, photo: PhotoMedia | null = null): string {
+  function snapshotContainer(containerId: string, seenText: string, photo: PhotoMedia | null = null, modality: CaptureModality = "typed"): string {
     const c = containerOf(containerId);
     if (!c) throw new DomainInputError("Unknown container");
     const normalizedSeenText = boundedInput(seenText, "Snapshot text", 4_000);
     const tokens = [...new Set(normalizedSeenText.split(/[,;]+/).map((token) => token.trim().toLowerCase()).filter(Boolean))];
     if (tokens.length > 100) throw new DomainInputError("Snapshot text must contain at most 100 distinct labels.");
+    // `modality` is local-only capture provenance (field-test protocol revision #4:
+    // log typed-vs-voice per participant). It rides the observation payload — it is
+    // metadata about HOW the sentence was captured, never a truth source or media.
     const obs = append<ObservationRecord>({
       recordType: "observation", id: id("obs"), type: "container_snapshot", at: nowIso(),
-      containerId, ...(photo ? { photo } : {}), payload: { seenText: normalizedSeenText }
+      containerId, ...(photo ? { photo } : {}), payload: { seenText: normalizedSeenText, modality }
     });
     // Photo is evidence, never recognition: it rides along with the snapshot
     // and gets cited by any placement the user later accepts from it.
@@ -2285,7 +2288,7 @@ export function createStore(options: StoreOptions): Store {
     proposeRelease: (itemId, disposition) => transact(() => proposeRelease(itemId, disposition)),
     deferDeclutter: (itemId) => transact(() => deferDeclutter(itemId)),
     markNotThere: (itemId) => transact(() => markNotThere(itemId)),
-    snapshotContainer: (containerId, seenText, photo) => transact(() => snapshotContainer(containerId, seenText, photo)),
+    snapshotContainer: (containerId, seenText, photo, modality) => transact(() => snapshotContainer(containerId, seenText, photo, modality)),
     acceptProposal: (proposalId, extra) => transact(() => acceptProposal(proposalId, extra)),
     rejectProposal: (proposalId, reason) => transact(() => rejectProposal(proposalId, reason)),
     confirmContainer: (containerId) => transact(() => confirmContainer(containerId)),
