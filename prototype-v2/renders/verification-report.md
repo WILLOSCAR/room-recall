@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-24T14:21:51.304Z
+Generated: 2026-08-24T14:36:28.534Z
 Runtime: node v26.7.0 · typescript strict
-- Assertions: 596
-- Passed: 596
+- Assertions: 651
+- Passed: 651
 - Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 1.800 ms
-- Household UI DOM-commit p95: 5.100 ms
+- UI DOM-commit p95: 2.000 ms
+- Household UI DOM-commit p95: 5.500 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -235,6 +235,62 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `tool-missing-arg-rejected`
 - ✓ `tool-accept-with-place`
 - ✓ `tool-retrieval-plan`
+## issue 06 sensitive-evidence boundary
+- ✓ `boundary-fixture-holds-media`
+- ✓ `boundary-locate_item-no-media-key`
+- ✓ `boundary-locate_item-no-photo-key`
+- ✓ `boundary-locate_item-no-dataurl-key`
+- ✓ `boundary-locate_item-no-image-bytes`
+- ✓ `boundary-locate_item-no-media-key`
+- ✓ `boundary-locate_item-no-photo-key`
+- ✓ `boundary-locate_item-no-dataurl-key`
+- ✓ `boundary-locate_item-no-image-bytes`
+- ✓ `boundary-ownership_recall-no-media-key`
+- ✓ `boundary-ownership_recall-no-photo-key`
+- ✓ `boundary-ownership_recall-no-dataurl-key`
+- ✓ `boundary-ownership_recall-no-image-bytes`
+- ✓ `boundary-which_container_has-no-media-key`
+- ✓ `boundary-which_container_has-no-photo-key`
+- ✓ `boundary-which_container_has-no-dataurl-key`
+- ✓ `boundary-which_container_has-no-image-bytes`
+- ✓ `boundary-container_contents-no-media-key`
+- ✓ `boundary-container_contents-no-photo-key`
+- ✓ `boundary-container_contents-no-dataurl-key`
+- ✓ `boundary-container_contents-no-image-bytes`
+- ✓ `boundary-list_containers-no-media-key`
+- ✓ `boundary-list_containers-no-photo-key`
+- ✓ `boundary-list_containers-no-dataurl-key`
+- ✓ `boundary-list_containers-no-image-bytes`
+- ✓ `boundary-list_attention-no-media-key`
+- ✓ `boundary-list_attention-no-photo-key`
+- ✓ `boundary-list_attention-no-dataurl-key`
+- ✓ `boundary-list_attention-no-image-bytes`
+- ✓ `boundary-declutter_review-no-media-key`
+- ✓ `boundary-declutter_review-no-photo-key`
+- ✓ `boundary-declutter_review-no-dataurl-key`
+- ✓ `boundary-declutter_review-no-image-bytes`
+- ✓ `boundary-home_capability-no-media-key`
+- ✓ `boundary-home_capability-no-photo-key`
+- ✓ `boundary-home_capability-no-dataurl-key`
+- ✓ `boundary-home_capability-no-image-bytes`
+- ✓ `boundary-pending_proposals-no-media-key`
+- ✓ `boundary-pending_proposals-no-photo-key`
+- ✓ `boundary-pending_proposals-no-dataurl-key`
+- ✓ `boundary-pending_proposals-no-image-bytes`
+- ✓ `boundary-snapshot_container-no-media-key`
+- ✓ `boundary-snapshot_container-no-photo-key`
+- ✓ `boundary-snapshot_container-no-dataurl-key`
+- ✓ `boundary-snapshot_container-no-image-bytes`
+- ✓ `boundary-retrieval_plan-no-media-key`
+- ✓ `boundary-retrieval_plan-no-photo-key`
+- ✓ `boundary-retrieval_plan-no-dataurl-key`
+- ✓ `boundary-retrieval_plan-no-image-bytes`
+- ✓ `boundary-unpack_priority-no-media-key`
+- ✓ `boundary-unpack_priority-no-photo-key`
+- ✓ `boundary-unpack_priority-no-dataurl-key`
+- ✓ `boundary-unpack_priority-no-image-bytes`
+- ✓ `boundary-ui-keeps-media`
+- ✓ `boundary-agent-keeps-summary`
 ## agent runtime
 - ✓ `runtime-executes-tool`
 - ✓ `runtime-final-text`

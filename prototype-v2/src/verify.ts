@@ -26,7 +26,7 @@ import { buildHouseholdRecords } from "./scale-fixture.ts";
 import { runAgentEval, formatEvalReport, EVAL_JOBS } from "./agent-eval.ts";
 import type { EvalJob } from "./agent-eval.ts";
 import type {
-  BelongingEntity, Catalog, CapabilityProfile, DeepReadonly, KitOperationView, LocateAnswer, LocateSuccess, StorageLike, Store, StoreOptions
+  BelongingEntity, Catalog, CapabilityProfile, DeepReadonly, KitOperationView, LocateAnswer, LocateSuccess, PhotoMedia, StorageLike, Store, StoreOptions
 } from "./types.ts";
 
 const pkgRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -1218,6 +1218,70 @@ section("agent toolkit", () => {
 
   const planOut = toolkit.dispatch("retrieval_plan", { operation_id: store.startOperation("gym") }) as unknown[];
   assert("tool-retrieval-plan", Array.isArray(planOut) && planOut.length >= 3);
+});
+
+// =====================================================================
+// Issue 06 sensitive-evidence boundary: no raw image bytes ever cross the
+// device line into an Agent / reconstruction / export context. The boundary
+// is enforced centrally at `dispatch` (agent.ts), so EVERY consumer is safe
+// by default; the on-device UI reads the store directly and keeps the photos.
+// =====================================================================
+section("issue 06 sensitive-evidence boundary", () => {
+  const store = fresh();
+  // Seed REAL photo media: a container snapshot whose `photo_note` evidence is
+  // cited by the committed placement (so it surfaces in `locate` evidence).
+  const photo: PhotoMedia = { dataUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACw=", width: 1, height: 1 };
+  const photoProposal = store.snapshotContainer("entry-tray", "usb-c charger", photo);
+  store.acceptProposal(photoProposal);
+
+  // Non-vacuity: the store genuinely holds the photo at the read layer. Without
+  // this, "dispatch strips media" could pass on a fixture that never had any.
+  const raw = store.locate("usb-c charger");
+  assert("boundary-fixture-holds-media",
+    raw.ok && raw.evidence.some((e) => e.media?.dataUrl.includes("data:image") === true),
+    JSON.stringify(raw.ok ? raw.evidence.map((e) => e.kind) : raw.sentence));
+
+  const toolkit = createAgentToolkit(store);
+  // A leak is ANY of: a surviving `media`/`photo`/`dataUrl` object key, or raw
+  // image bytes. Key patterns are quoted so a summary mentioning the word
+  // "photo" is not a false positive; only real object keys match.
+  const leakPatterns: Array<[string, RegExp]> = [
+    ["media-key", /"media":/],
+    ["photo-key", /"photo":/],
+    ["dataurl-key", /"dataUrl":/],
+    ["image-bytes", /data:image/]
+  ];
+  const readCalls: Array<[string, Record<string, unknown>]> = [
+    ["locate_item", { query: "usb-c charger" }],
+    ["locate_item", { query: "water bottle" }],
+    ["ownership_recall", { query: "charger" }],
+    ["which_container_has", { query: "usb-c charger" }],
+    ["container_contents", { container_id: "entry-tray" }],
+    ["list_containers", {}],
+    ["list_attention", {}],
+    ["declutter_review", {}],
+    ["home_capability", { intent: "remote work" }],
+    ["pending_proposals", {}],
+    ["snapshot_container", { container_id: "entry-tray", seen_text: "spare battery" }],
+    ["retrieval_plan", { operation_id: store.startOperation("gym") }],
+    ["unpack_priority", {}]
+  ];
+  for (const [name, args] of readCalls) {
+    const json = JSON.stringify(toolkit.dispatch(name, args));
+    for (const [label, pattern] of leakPatterns) {
+      assert(`boundary-${name}-no-${label}`, !pattern.test(json), `${name} leaked ${label}: ${json.slice(0, 240)}`);
+    }
+  }
+
+  // The agent projection is redacted, but the on-device UI still sees the photo.
+  const uiView = store.locate("usb-c charger");
+  assert("boundary-ui-keeps-media", uiView.ok && uiView.evidence.some((e) => !!e.media));
+
+  // And the redacted evidence still carries its honest summary (provenance
+  // survives; only the pixels are dropped).
+  const agentView = toolkit.dispatch("locate_item", { query: "usb-c charger" }) as LocateAnswer;
+  assert("boundary-agent-keeps-summary",
+    agentView.ok && agentView.evidence.some((e) => e.kind === "photo_note" && e.summary.length > 0 && !("media" in e)));
 });
 
 // =====================================================================

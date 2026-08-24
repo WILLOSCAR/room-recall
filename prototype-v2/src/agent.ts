@@ -52,6 +52,24 @@ function optionalStr(args: Record<string, unknown>, key: string): string | null 
   return value;
 }
 
+// Issue 06 sensitive-evidence boundary: the Agent is a model/text context and must
+// never receive raw image bytes. Strip every PhotoMedia (`media`, `photo`) and any
+// stray `dataUrl` from tool results at the toolkit boundary, so EVERY consumer —
+// the LLM runtime, the Ask router, the CLI, eval, any future tool — gets the
+// evidence SUMMARY (kind/summary/at) only. The on-device UI reads the store
+// directly and keeps the photos; only the agent-facing projection is redacted.
+// Fails closed: a media field is dropped, never passed through.
+function stripSensitiveMedia(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(stripSensitiveMedia);
+  const out: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "media" || key === "photo" || key === "dataUrl") continue;
+    out[key] = stripSensitiveMedia(v);
+  }
+  return out;
+}
+
 export function createAgentToolkit(store: Store): AgentToolkit {
   const tools: ToolImpl[] = [
     {
@@ -60,14 +78,7 @@ export function createAgentToolkit(store: Store): AgentToolkit {
         description: "Answer 'where is X?' with place chain, default home, evidence, confidence, freshness, and an uncertainty admission when stale. Never guesses silently.",
         parameters: { type: "object", properties: { query: { type: "string", description: "Item name or kind, e.g. 'water bottle'." } }, required: ["query"] }
       },
-      run: (args) => {
-        const answer = store.locate(str(args, "query"));
-        if (!answer.ok) return answer;
-        return {
-          ...answer,
-          evidence: answer.evidence.map(({ media: _sensitiveMedia, ...evidence }) => evidence)
-        };
-      }
+      run: (args) => store.locate(str(args, "query"))
     },
     {
       descriptor: {
@@ -257,7 +268,9 @@ export function createAgentToolkit(store: Store): AgentToolkit {
           throw new AgentInputError(`Tool ${name} requires argument "${required}".`);
         }
       }
-      return tool.run(args);
+      // Enforce the issue-06 sensitive-evidence boundary at the toolkit edge: no
+      // agent tool result ever carries raw image bytes, regardless of consumer.
+      return stripSensitiveMedia(tool.run(args));
     }
   };
 }
