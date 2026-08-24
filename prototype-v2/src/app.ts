@@ -2574,7 +2574,7 @@ function containerModal(id: string): string {
           <input type="file" id="snapshot-photo" accept="image/*" aria-label="Optional container snapshot photo" data-role="snapshot-photo" style="max-width:230px">
           ${ui.pendingSnapshotPhoto
             ? `<img src="${esc(ui.pendingSnapshotPhoto.dataUrl)}" alt="snapshot preview" data-testid="snapshot-photo-preview" style="height:48px;border-radius:8px;border:1px solid var(--line)"><button class="small ghost" data-action="clear-snapshot-photo">remove photo</button>`
-            : `<span class="faint">optional photo — stored as evidence, never auto-recognized</span>`}
+            : `<span class="faint" data-testid="snapshot-photo-disclosure">Optional photo. It stays on this device — nothing is uploaded. It’s evidence, not recognition: the app never invents contents from a photo. Remove it before committing with “remove photo”.</span>`}
         </div>
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
           <button class="primary" data-action="snapshot-submit" data-id="${esc(c.id)}" data-testid="btn-snapshot" ${ui.mediaPending.snapshot ? "disabled" : ""}>${ui.mediaPending.snapshot ? "Preparing photo…" : "Create snapshot proposal"}</button>

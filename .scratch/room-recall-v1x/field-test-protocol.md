@@ -46,8 +46,13 @@ Record per participant: age band, tech-comfort (1–5), move recency, renter/own
 ## 3. Apparatus
 
 - **prototype-v2** served locally (`npm run serve`), on the participant's own phone
-  where possible (small-screen requirement). Seeded with a neutral 2-room, ~15-item
-  home the participant has NOT seen — no item may be pre-revealed.
+  where possible (small-screen requirement). Seeded with a neutral 3-room,
+  12-container, 21-belonging demo home (`prototype-v2/src/data.ts`) the participant
+  has NOT seen — no item may be pre-revealed. (The seed is the locked demo catalog;
+  its exact size is not load-bearing for the metric — the participant locates items
+  via the app's search/answer, not by browsing — and a moderator resets to it between
+  participants, which provably clears all recall outcomes: lock
+  `recall-outcomes-cleared-by-reset`.)
 - The **Container Snapshot fast lane only** for the primary task (one photo + one
   sentence + room → proposal → review → commit → answer).
 - A **voice-capture option** must be present (revision #4): the sentence may be
@@ -101,7 +106,16 @@ verbatim quotes for the return-trigger and privacy columns — they are the sign
 
 The fast lane must show, BEFORE the shutter, a plain-language on-device disclosure:
 the photo is evidence stored on-device, it is recognition-only (the app does not
-invent contents), and how to delete it. Then, mid-session, the moderator asks the
+invent contents), and how to delete it. **Implemented 2026-08-25** — the Container
+Snapshot modal shows, before a photo is attached: "Optional photo. It stays on this
+device — nothing is uploaded. It's evidence, not recognition: the app never invents
+contents from a photo. Remove it before committing with 'remove photo'." Locked by
+`dom-snapshot-photo-disclosure-states-on-device-evidence-and-removal`. The delete
+path is honestly scoped to *before committing*: post-commit byte-deletion is the
+documented production gap from issue 06 (append-only ledger; no leak vector
+in-prototype), so the disclosure does not promise a deletion the prototype cannot
+perform. If a participant asks to delete a committed photo, the moderator notes it
+as a production requirement, not a prototype capability. Then, mid-session, the moderator asks the
 storage/retention question issue 03 flagged as never-addressed:
 **"Where do you think this photo goes, and what would you want to happen to it?"**
 Record the reaction verbatim. Any surprise, distrust, or deletion request is a

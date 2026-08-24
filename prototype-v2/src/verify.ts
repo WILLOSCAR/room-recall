@@ -714,6 +714,24 @@ section("recall outcomes measure the north star", () => {
     && reloadedOutcomes.outcomes.some((o) => o.itemId === unplacedItem && o.kind === "ownership")
     && reloadedOutcomes.firstAt === rtBefore.firstAt,
     `${reloadedOutcomes.outcomes.length}/${rtBefore.outcomes.length}`);
+
+  // Field-test readiness (2026-08-25): a moderator resets the home between
+  // participants. `reset()` must return the home to its seed state AND clear
+  // every tagged recall outcome — otherwise the next participant's
+  // time-to-first-confirmed-recall would be contaminated by the prior
+  // participant's confirmations (the metric would start non-empty).
+  const resetStore = fresh();
+  const resetItem = expectOk(resetStore.locate("sport socks")).itemId;
+  resetStore.reaffirmPlacement(resetItem);
+  const beforeReset = resetStore.recallOutcomes();
+  resetStore.reset();
+  const afterReset = resetStore.recallOutcomes();
+  assert("recall-outcomes-cleared-by-reset",
+    beforeReset.outcomes.length === 1
+    && afterReset.outcomes.length === 0
+    && afterReset.firstAt === null
+    && afterReset.countLast30Days === 0,
+    `before=${beforeReset.outcomes.length} after=${afterReset.outcomes.length}`);
 });
 
 // =====================================================================
@@ -3431,6 +3449,25 @@ async function runBrowserSmoke(): Promise<void> {
       if (orig.sr) window.SpeechRecognition = orig.sr;
       if (orig.wsr) window.webkitSpeechRecognition = orig.wsr;
       return rendersUnavailable && honestToast;
+    })()`));
+
+    // Protocol §6 pre-shutter privacy disclosure: before a photo is attached, the
+    // fast lane must state, in plain language, that the photo stays ON-DEVICE
+    // (nothing uploaded — the exact "where does this photo go?" misconception the
+    // privacy probe measures), that it is evidence-not-recognition (the app never
+    // invents contents), and how to remove it. Locks the consent surface the
+    // field-test privacy arm depends on; the copy is truthful to the issue-06
+    // boundary (no post-commit byte-deletion exists in-prototype, so the delete
+    // path is honestly scoped to "before committing").
+    assert("dom-snapshot-photo-disclosure-states-on-device-evidence-and-removal", await evalPage<boolean>(`(() => {
+      window.nestory.setView("spaces");
+      window.nestory.openContainer("entry-tray");
+      const d = document.querySelector('[data-testid="snapshot-photo-disclosure"]');
+      const t = d?.textContent ?? "";
+      return t.includes("stays on this device")
+        && t.includes("nothing is uploaded")
+        && t.includes("never invents contents from a photo")
+        && t.includes("remove photo");
     })()`));
 
     // Photo evidence renders in the review inbox (data URL injected via the store).
