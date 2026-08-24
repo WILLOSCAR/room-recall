@@ -735,6 +735,37 @@ section("recall outcomes measure the north star", () => {
 });
 
 // =====================================================================
+// Field-test primary task, end to end (2026-08-25): the protocol's core task is
+// "snapshot the box → find the forgotten item → tap 'Found it here — confirm'."
+// The pieces are locked separately; this locks the COMPOSITION so the field test
+// cannot hit a surprise integration gap — specifically, that a freshly-snapshotted
+// and committed item is (1) findable by name, (2) offered the confirm_here action,
+// and (3) tagging a recall outcome when confirmed. This is the difference between
+// "every step works" and "the whole task works."
+// =====================================================================
+section("field-test primary task flows end to end", () => {
+  const store = fresh();
+  // A confirmed at-home item lives in the desk drawer; snapshotting it into the
+  // entry tray proposes a move (the participant "packed" it into the box).
+  const pid = store.snapshotContainer("entry-tray", "usb-c-charger");
+  store.acceptProposal(pid);
+  // The committed item is findable by name AND offered the confirm action.
+  const found = expectOk(store.locate("usb-c-charger"));
+  assert("field-test-snapshot-item-is-findable-and-confirmable",
+    found.chainText.includes("Entry tray") && found.nextAction === "confirm_here",
+    JSON.stringify({ chain: found.chainText, nextAction: found.nextAction }));
+  // The confirm tap the protocol clocks tags a recall outcome (the North Star).
+  const before = store.recallOutcomes().outcomes.length;
+  store.reaffirmPlacement(found.itemId);
+  const after = store.recallOutcomes();
+  assert("field-test-confirm-tags-recall-outcome",
+    after.outcomes.length === before + 1
+      && after.outcomes.some((o) => o.itemId === found.itemId && o.kind === "location")
+      && after.firstAt !== null,
+    `${before} -> ${after.outcomes.length}`);
+});
+
+// =====================================================================
 // Audit locks (2026-08-24): each adversarially-confirmed defect in the newest
 // trust-bearing code is pinned here as a regression assertion. A finding is
 // "confirmed" only when it reproduces in a test — these reproduce the fixes.
