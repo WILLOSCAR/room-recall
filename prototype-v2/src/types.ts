@@ -190,6 +190,13 @@ export interface PhotoMedia {
   height?: number;
 }
 
+/** Which recall need a confirmed outcome closed. "location" = the user confirmed
+ *  an item is where the system said (a placed item reaffirmed); "ownership" = the
+ *  user confirmed they still own an item whose place is unknown. Structurally
+ *  honest: a placed-item reaffirm can be triggered from either the Find or Reuse
+ *  surface, so the tag records what was confirmed, not which button was tapped. */
+export type RecallOutcomeKind = "location" | "ownership";
+
 export interface EvidenceRecord {
   recordType: "evidence";
   id: string;
@@ -197,6 +204,33 @@ export interface EvidenceRecord {
   summary: string;
   at: string;
   media?: PhotoMedia;
+  /** Present ONLY when this confirmation closes a recall loop — it is the North
+   *  Star "Monthly Trusted Recall Outcomes" event. Absent on capture/setup
+   *  confirmations (created / placed / packed / unpacked / container-confirmed /
+   *  released), which write memory but do not answer a recall need. Set only by
+   *  `reaffirmPlacement`, the positive commit verb. */
+  recall?: { kind: RecallOutcomeKind; itemId: string };
+}
+
+/** One trusted recall outcome: the system answered a recall need with evidence
+ *  and the user confirmed it. Distilled from the ledger, never stored separately. */
+export interface RecallOutcome {
+  evidenceId: string;
+  itemId: string;
+  itemName: string;
+  kind: RecallOutcomeKind;
+  at: string;
+}
+
+/** The North Star read-model. A pure projection over the append-only ledger —
+ *  no second source of truth. `firstAt` anchors the field-test metric
+ *  (time-to-first-confirmed-recall); `countLast30Days` is Monthly Trusted Recall
+ *  Outcomes. `now` is injectable so the window is deterministic in tests. */
+export interface RecallOutcomeSummary {
+  outcomes: RecallOutcome[];
+  firstAt: string | null;
+  lastAt: string | null;
+  countLast30Days: number;
 }
 
 export type ObservationType =
@@ -772,6 +806,10 @@ export interface Store {
   staleContainers(): DeepReadonly<ContainerView[]>;
   whichContainerHas(query: string): DeepReadonly<WhichContainerHit[]>;
   attention(): DeepReadonly<AttentionSummary>;
+  /** North Star read-model: trusted recall outcomes (confirmed Find/Reuse answers)
+   *  distilled from the ledger. `now` injects the 30-day window clock (defaults to
+   *  the store clock) so the count is deterministic in tests. */
+  recallOutcomes(now?: string): DeepReadonly<RecallOutcomeSummary>;
   activation(): DeepReadonly<ActivationSummary>;
   operationsView(): DeepReadonly<OperationView[]>;
   operationView(opId: string): DeepReadonly<OperationView> | null;

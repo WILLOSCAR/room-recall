@@ -563,6 +563,97 @@ section("reaffirm placement closes the flywheel on success", () => {
     JSON.stringify(view?.history.map((h) => h.contradictedReason)));
 });
 
+// =====================================================================
+// North Star: Monthly Trusted Recall Outcomes. reaffirmPlacement (the positive
+// commit verb) tags its confirmation evidence so a pure read-model can distill
+// trusted recall outcomes — no second source of truth, the tag lives on the
+// evidence record. Capture/setup confirmations (created / placed / packed /
+// unpacked / container-confirmed / released) are NOT tagged, so they can never
+// inflate the metric. `firstAt` anchors the field-test time-to-first-confirmed-
+// recall; `countLast30Days` is the Monthly Trusted Recall Outcomes window.
+// =====================================================================
+section("recall outcomes measure the north star", () => {
+  const store = fresh();
+  // The seed is capture-only — no recall has been confirmed yet.
+  const baseline = store.recallOutcomes("2026-09-01T00:00:00.000Z");
+  assert("recall-outcomes-start-empty", baseline.outcomes.length === 0 && baseline.firstAt === null && baseline.countLast30Days === 0,
+    JSON.stringify({ n: baseline.outcomes.length, firstAt: baseline.firstAt }));
+
+  // A placed-item reaffirm (the Find "Found it here — confirm" path) → a "location" outcome.
+  const stale = expectOk(store.locate("sport socks"));
+  const placedId = stale.itemId;
+  store.reaffirmPlacement(placedId);
+  const afterOne = store.recallOutcomes();
+  const first = afterOne.outcomes[0];
+  assert("recall-outcome-location-recorded",
+    afterOne.outcomes.length === 1 && first?.itemId === placedId && first.kind === "location"
+    && afterOne.firstAt === first.at && afterOne.lastAt === first.at,
+    JSON.stringify(afterOne.outcomes));
+
+  // Creating a belonging appends a user_confirmation evidence, but it is CAPTURE,
+  // not a recall — it must NOT count.
+  const newId = store.createBelonging({ name: "North star probe", kinds: ["misc"], defaultHome: { type: "container", id: "desk-drawer" } });
+  const afterCreate = store.recallOutcomes();
+  assert("recall-outcome-capture-not-counted", afterCreate.outcomes.length === afterOne.outcomes.length,
+    `${afterOne.outcomes.length} -> ${afterCreate.outcomes.length}`);
+  // Reaffirming the new (placed) item DOES count.
+  store.reaffirmPlacement(newId);
+  const afterReaffirm = store.recallOutcomes();
+  assert("recall-outcome-reaffirm-counted", afterReaffirm.outcomes.length === afterCreate.outcomes.length + 1,
+    `${afterCreate.outcomes.length} -> ${afterReaffirm.outcomes.length}`);
+
+  // A place-unknown owned item reaffirmed (the Reuse "Still own it" path) → an
+  // "ownership" outcome. Reach place-unknown via the documented retire → reverse.
+  const ownerId = "black-training-shirt";
+  store.acceptProposal(store.proposeRelease(ownerId, "donate").proposalId);  // retire + contradict placement
+  store.setItemState(ownerId, "at_home");                                    // reversal → place-unknown + at_home
+  store.reaffirmPlacement(ownerId);
+  const afterOwnership = store.recallOutcomes();
+  const ownershipOutcome = afterOwnership.outcomes.find((o) => o.itemId === ownerId);
+  assert("recall-outcome-ownership-kind", ownershipOutcome?.kind === "ownership" && ownershipOutcome.itemName.includes("training"),
+    JSON.stringify(ownershipOutcome));
+
+  // The outcome list is time-independent; only the 30-day count is windowed. All
+  // outcomes were confirmed "now", so the default window counts them all; a window
+  // anchored far in the future counts none but returns the same outcomes.
+  assert("recall-outcome-window-default-counts-all", afterOwnership.countLast30Days === afterOwnership.outcomes.length,
+    `${afterOwnership.countLast30Days}/${afterOwnership.outcomes.length}`);
+  const farFuture = store.recallOutcomes("2100-01-01T00:00:00.000Z");
+  assert("recall-outcome-window-excludes-aged", farFuture.countLast30Days === 0
+    && farFuture.outcomes.length === afterOwnership.outcomes.length
+    && farFuture.firstAt === afterOwnership.firstAt,
+    `count=${farFuture.countLast30Days} n=${farFuture.outcomes.length}`);
+
+  // A retired item's past outcome still resolves its name (belongings are append-only).
+  const retiredName = store.recallOutcomes().outcomes.find((o) => o.itemId === ownerId)?.itemName;
+  assert("recall-outcome-name-survives-retirement", retiredName === ownershipOutcome?.itemName && retiredName !== ownerId,
+    String(retiredName));
+
+  // Export/import round-trips the tag — ledger-validation passes the optional field
+  // through, so the metric survives a browser-tab reload / sync. Use an empty-seed
+  // store (the seeded baseline has a separate, pre-existing export/import ordering
+  // defect tracked on its own — this assertion isolates the recall tag itself).
+  const rt = fresh({ catalog: emptyCatalog, seedFactory: () => [] });
+  const rtRoom = rt.createRoom({ name: "Kitchen" });
+  const rtDrawer = rt.createContainer({ name: "Junk drawer", kind: "drawer", roomId: rtRoom });
+  const placedItem = rt.createBelonging({ name: "Spatula", kinds: ["kitchen"], defaultHome: { type: "container", id: rtDrawer } });
+  rt.reaffirmPlacement(placedItem); // location outcome
+  const unplacedItem = rt.createBelonging({ name: "Peeler", kinds: ["kitchen"], defaultHome: { type: "container", id: rtDrawer } });
+  rt.acceptProposal(rt.proposeRelease(unplacedItem, "donate").proposalId); // retire + contradict
+  rt.setItemState(unplacedItem, "at_home");                                 // reversal → place-unknown
+  rt.reaffirmPlacement(unplacedItem);                                       // ownership outcome
+  const rtBefore = rt.recallOutcomes();
+  const reloaded = fresh({ catalog: emptyCatalog, seedFactory: () => [] });
+  reloaded.importJson(rt.exportJson());
+  const reloadedOutcomes = reloaded.recallOutcomes();
+  assert("recall-outcome-roundtrip",
+    reloadedOutcomes.outcomes.length === 2
+    && reloadedOutcomes.outcomes.some((o) => o.itemId === placedItem && o.kind === "location")
+    && reloadedOutcomes.outcomes.some((o) => o.itemId === unplacedItem && o.kind === "ownership")
+    && reloadedOutcomes.firstAt === rtBefore.firstAt,
+    `${reloadedOutcomes.outcomes.length}/${rtBefore.outcomes.length}`);
+});
+
 
 // =====================================================================
 // P0.4 Operations and kits

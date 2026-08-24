@@ -14,7 +14,7 @@ import type {
   OperationData, OperationStatus, OperationView, OwnershipRecallAnswer, OwnershipMatch, DeclutterReviewResult, DeclutterCandidate, DeclutterReason, DeclutterOption,
   CapabilityProfile, CapabilityNeed, CapabilityNeedResult, CapabilityNeedStatus, CapabilityStop, CapabilityStopItem, CapabilityGapEntry, HomeCapabilityResult, CapabilityVerdict,
   PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
-  PlanPin, PlanRect, ProposalRecord, ProposalStatus, ProposalView, Relation, RetrievalPlanGroup,
+  PlanPin, PlanRect, ProposalRecord, ProposalStatus, ProposalView, RecallOutcome, RecallOutcomeSummary, Relation, RetrievalPlanGroup,
   RetrievalPlanItem, Room, RowStatus,
   ScoredBelongingView, StorageLike, Store, StoreOptions, UnpackPriorityEntry,
   WhichContainerHit
@@ -389,8 +389,12 @@ export function createStore(options: StoreOptions): Store {
     return record;
   }
 
-  function appendEvidence(kind: EvidenceKind, summary: string): EvidenceRecord {
-    return append({ recordType: "evidence", id: id("ev"), kind, summary, at: nowIso() });
+  function appendEvidence(kind: EvidenceKind, summary: string, recall?: EvidenceRecord["recall"]): EvidenceRecord {
+    const record: EvidenceRecord = { recordType: "evidence", id: id("ev"), kind, summary, at: nowIso() };
+    // Keep the tag ABSENT (not undefined) on non-outcome evidence so the North Star
+    // read-model can trust a simple truthiness check and the ledger stays honest.
+    if (recall) record.recall = recall;
+    return append(record);
   }
 
   function appendCommit(input: { summary: string; ops: CommitOp[]; sourceProposalId?: string | null; sourceObservationIds?: string[] }): CommitRecord {
@@ -1217,6 +1221,43 @@ export function createStore(options: StoreOptions): Store {
     return attentionCache;
   }
 
+  // North Star read-model — Monthly Trusted Recall Outcomes. A pure projection over
+  // the append-only ledger: it distills the `recall`-tagged user_confirmation evidence
+  // that reaffirmPlacement writes (the positive commit verb) into a chronological
+  // outcome list. No second source of truth — the tag lives on the evidence record
+  // and this function only reads it. Capture/setup confirmations (created, placed,
+  // packed, unpacked, container-confirmed, released) are NOT tagged, so they can
+  // never inflate the metric. `now` is injectable so the 30-day window is deterministic.
+  function recallOutcomes(nowArg?: string): RecallOutcomeSummary {
+    const outcomes: RecallOutcome[] = [];
+    for (const record of records) {
+      if (record.recordType !== "evidence") continue;
+      const tag = (record as EvidenceRecord).recall;
+      if (!tag) continue;
+      const entity = belongingOf(tag.itemId);
+      outcomes.push({
+        evidenceId: record.id,
+        itemId: tag.itemId,
+        // Belongings are append-only (retired, never deleted), so the name always
+        // resolves — even for an item released after its recall was confirmed.
+        itemName: entity ? entity.name : tag.itemId,
+        kind: tag.kind,
+        at: record.at
+      });
+    }
+    outcomes.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+    const nowMs = nowArg ? new Date(nowArg).getTime() : now();
+    const windowStart = nowMs - 30 * DAY;
+    const first = outcomes[0];
+    const last = outcomes[outcomes.length - 1];
+    return deepFreeze({
+      outcomes,
+      firstAt: first ? first.at : null,
+      lastAt: last ? last.at : null,
+      countLast30Days: outcomes.filter((o) => new Date(o.at).getTime() >= windowStart).length
+    });
+  }
+
   // Declutter Review (Release) — decision SUPPORT only. Surfaces belongings worth
   // a fresh decision with an observed REASON; never infers "unused" from absence
   // of a usage record, never disposes, never shames.
@@ -1759,7 +1800,7 @@ export function createStore(options: StoreOptions): Store {
     if (!b) throw new DomainInputError("Unknown belonging");
     const active = state.placements.get(itemId)?.active ?? null;
     if (active) {
-      const ev = appendEvidence("user_confirmation", `You confirmed ${b.name} is still ${RELATION_PHRASE[active.relation]} ${chainText(chainFor(active.placeRef))}`);
+      const ev = appendEvidence("user_confirmation", `You confirmed ${b.name} is still ${RELATION_PHRASE[active.relation]} ${chainText(chainFor(active.placeRef))}`, { kind: "location", itemId });
       return appendCommit({
         summary: `Confirm placement: ${b.name}`,
         ops: [{ type: "create_placement", itemId, placeRef: active.placeRef, relation: active.relation, confidence: 0.95, evidenceIds: [ev.id] }]
@@ -1769,7 +1810,7 @@ export function createStore(options: StoreOptions): Store {
     // The user_confirmation evidence is the write-back; the commit records the act
     // in the ledger (no ops — there is no placement to refresh, and inventing one
     // would violate "unknown is not empty").
-    appendEvidence("user_confirmation", `You confirmed you still own ${b.name}`);
+    appendEvidence("user_confirmation", `You confirmed you still own ${b.name}`, { kind: "ownership", itemId });
     return appendCommit({ summary: `Confirm ownership: ${b.name}`, ops: [] });
   }
 
@@ -2197,7 +2238,7 @@ export function createStore(options: StoreOptions): Store {
     // read
     searchBelongings, searchBelongingsPage, belongingView, locate, locateById, ownershipRecall, declutterReview, homeCapability,
     containerContents, containersView, staleContainers, whichContainerHas,
-    attention, activation, operationsView, operationView, retrievalPlan, unpackPriority,
+    attention, recallOutcomes, activation, operationsView, operationView, retrievalPlan, unpackPriority,
     proposals, commitsView, exportJson, exportJsonText, planPinFor, chainFor, chainText,
     lifecycleOf,
     // write
