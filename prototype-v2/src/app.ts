@@ -1243,11 +1243,10 @@ function askBubble(entry: AskLogEntry): string {
   const reply = entry.reply;
   const calls = reply?.toolCalls.map((c) => `<span class="op-badge">${esc(c.name)} · ${esc(JSON.stringify(c.input))}</span>`).join("") ?? "";
   let extra = "";
-  if (reply?.answer?.ok) {
-    extra = renderAnswerCard(reply.answer);
-  } else if (reply?.answer && !reply.answer.ok) {
-    // A failed locate in chat still gets its recovery affordance (prefilled "Add
-    // …as a belonging"), so the Retrieve loop never dead-ends on "no memory".
+  if (reply?.answer) {
+    // renderAnswerCard handles both hits and misses — a failed locate still gets its
+    // recovery affordance (prefilled "Add …as a belonging"), so the Retrieve loop
+    // never dead-ends on "no memory".
     extra = renderAnswerCard(reply.answer);
   } else if (reply?.plan?.length) {
     extra = `<div class="card" style="box-shadow:none;margin-top:8px">
