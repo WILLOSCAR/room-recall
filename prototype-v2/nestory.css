@@ -823,6 +823,11 @@ input::placeholder, textarea::placeholder { color: #68736e; opacity: 1; }
 .spatial-tooltip span { color: rgba(255,255,255,.82); }
 .declutter-options { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .declutter-options .chip { font-size: 9px; opacity: .85; }
+/* Release options are actionable but calm (§12 no guilt): neutral chip that shows
+   a subtle affordance on hover/focus — never a red/warning tint. */
+.declutter-options button.chip { border: 1px solid var(--line); background: var(--paper-2); color: var(--ink-soft); cursor: pointer; }
+.declutter-options button.chip:hover { background: var(--card); color: var(--ink); opacity: 1; }
+.declutter-options button.chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .declutter-row-actions { display: inline-flex; gap: 6px; align-items: center; flex: 0 0 auto; }
 .place.faint { color: var(--ink-faint); }
 .spatial-anchor-icon { position: relative; display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; background: #eadbc9; }

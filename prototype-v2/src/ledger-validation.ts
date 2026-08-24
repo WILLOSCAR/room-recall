@@ -10,8 +10,8 @@ type ObjectValue = Record<string, unknown>;
 
 const RECORD_TYPES = new Set(["evidence", "observation", "proposal", "commit"]);
 const EVIDENCE_KINDS = new Set(["user_confirmation", "seed_import", "negative_report", "correction", "snapshot_text", "photo_note"]);
-const OBSERVATION_TYPES = new Set(["container_snapshot", "not_there_report", "duplicate_suspected", "stale_container_flag", "manual_note"]);
-const PROPOSAL_TYPES = new Set(["placement_correction", "contents_update", "duplicate_merge", "container_refresh"]);
+const OBSERVATION_TYPES = new Set(["container_snapshot", "not_there_report", "duplicate_suspected", "stale_container_flag", "manual_note", "release_intent", "declutter_deferred"]);
+const PROPOSAL_TYPES = new Set(["placement_correction", "contents_update", "duplicate_merge", "container_refresh", "release_decision"]);
 const PLACE_TYPES = new Set(["room", "furniture", "container", "state"]);
 const RELATIONS = new Set(["inside", "on_surface", "under", "attached_to", "near"]);
 // Canonical domain vocabulary lives in types.ts; build lookup Sets from it so

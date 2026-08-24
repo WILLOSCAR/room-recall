@@ -1218,9 +1218,28 @@ export function createStore(options: StoreOptions): Store {
   // of a usage record, never disposes, never shames.
   const DECLUTTER_GONE: readonly LifecycleState[] = ["consumed", "retired"];
   const FLAGGED_STATES: readonly LifecycleState[] = ["missing", "lent_out"];
+  const DEFER_WINDOW_DAYS = 30;
   function declutterReview(): DeclutterReviewResult {
     ensureTemporalCacheFresh();
-    const all = searchBelongings("").filter((v) => !v.mergedInto && !DECLUTTER_GONE.includes(v.state));
+    // Suppress items the user has already acted on this cycle (pure read, typed —
+    // no reason-string matching): (a) an item with a pending Release proposal lives
+    // in Review, not here; (b) a "hold for now" defer hides it for DEFER_WINDOW_DAYS,
+    // then it resurfaces (later, not never — no nagging).
+    const pendingReleaseIds = new Set<string>();
+    for (const p of state.proposals) {
+      if (p.status !== "pending") continue;
+      for (const oid of p.sourceObservationIds) {
+        const src = state.observations.find((o) => o.id === oid);
+        if (src?.type === "release_intent" && src.itemId) pendingReleaseIds.add(src.itemId);
+      }
+    }
+    const deferredIds = new Set(
+      state.observations
+        .filter((o) => o.type === "declutter_deferred" && o.itemId && daysAgo(o.at) < DEFER_WINDOW_DAYS)
+        .map((o) => o.itemId as string)
+    );
+    const suppressed = (id: string): boolean => pendingReleaseIds.has(id) || deferredIds.has(id);
+    const all = searchBelongings("").filter((v) => !v.mergedInto && !DECLUTTER_GONE.includes(v.state) && !suppressed(v.id));
     // group by kind to detect duplicates (2+ sharing a primary kind)
     const byKind = new Map<string, typeof all>();
     for (const v of all) {
@@ -1746,6 +1765,61 @@ export function createStore(options: StoreOptions): Store {
     return appendCommit({ summary: `Confirm ownership: ${b.name}`, ops: [] });
   }
 
+  // Release enactment (§5.5 / §6 "释放即结束旧 Placement"). A disposal decision NEVER
+  // commits on click: it records the user's choice as an inspectable observation and
+  // opens a pending Proposal, so the placement only ends when the user Accepts it in
+  // Review (through the unchanged acceptProposal gate). re_home reuses the existing
+  // placement_correction flow (Review's place-picker); sell/donate/recycle/discard
+  // collapse to lifecycle "retired" (append-only, reversible via setItemState → at_home).
+  // The specific channel is preserved honestly in the observation payload + summary.
+  const RELEASE_LABEL: Record<"re_home" | "sell" | "donate" | "recycle" | "discard", string> = {
+    re_home: "re-home", sell: "sell", donate: "donate", recycle: "recycle", discard: "discard"
+  };
+  function proposeRelease(itemId: string, disposition: "re_home" | "sell" | "donate" | "recycle" | "discard"): { observationId: string; proposalId: string } {
+    const b = belongingOf(itemId);
+    if (!b) throw new DomainInputError("Unknown belonging");
+    // Server-side essentials guard — the UI allow-list is not the only line of defense.
+    if (b.importance === "essential" && disposition !== "re_home") {
+      throw new DomainInputError("Essentials are never nudged toward disposal — only keep, re-home, or defer.");
+    }
+    const label = RELEASE_LABEL[disposition];
+    const obs = append<ObservationRecord>({ recordType: "observation", id: id("obs"), type: "release_intent", at: nowIso(), itemId, payload: { disposition } });
+    appendEvidence("user_confirmation", `You chose to ${label} ${b.name} during a declutter review`);
+    const active = state.placements.get(itemId)?.active ?? null;
+    if (disposition === "re_home") {
+      const proposal = append<ProposalRecord>({
+        recordType: "proposal", id: id("proposal"), type: "placement_correction", at: nowIso(),
+        sourceObservationIds: [obs.id], needsPlace: true,
+        summary: `${b.name}: end its current placement and re-home it. Where does it go now?`,
+        suggestedOps: [
+          ...(active ? [{ type: "contradict_placement", itemId, reason: "release_re_home" } as CommitOp] : []),
+          { type: "create_placement", itemId, placeRef: null, relation: "inside", confidence: 0.9 }
+        ]
+      });
+      return { observationId: obs.id, proposalId: proposal.id };
+    }
+    const proposal = append<ProposalRecord>({
+      recordType: "proposal", id: id("proposal"), type: "release_decision", at: nowIso(),
+      sourceObservationIds: [obs.id], needsPlace: false,
+      summary: `${label} ${b.name} — ends its home placement and retires it from active memory. Reversible from the ledger.`,
+      suggestedOps: [
+        ...(active ? [{ type: "contradict_placement", itemId, reason: `release_${disposition}` } as CommitOp] : []),
+        { type: "set_state", itemId, state: "retired" }
+      ]
+    });
+    return { observationId: obs.id, proposalId: proposal.id };
+  }
+
+  // "Hold judgment for now" (§5.5 暂缓判断): a ledgered decision with ZERO graph
+  // mutation. It suppresses the item from declutterReview for DEFER_WINDOW_DAYS, then
+  // it resurfaces — later, not never — and never becomes a reminder/badge/streak.
+  function deferDeclutter(itemId: string): CommitRecord {
+    const b = belongingOf(itemId);
+    if (!b) throw new DomainInputError("Unknown belonging");
+    append<ObservationRecord>({ recordType: "observation", id: id("obs"), type: "declutter_deferred", at: nowIso(), itemId });
+    return appendCommit({ summary: `Defer declutter decision: ${b.name}`, ops: [] });
+  }
+
   function markNotThere(itemId: string): { observationId: string; proposalId: string } {
     const b = belongingOf(itemId);
     if (!b) throw new DomainInputError("Unknown belonging");
@@ -2097,6 +2171,8 @@ export function createStore(options: StoreOptions): Store {
     setItemState: (itemId, lifecycle) => transact(() => setItemState(itemId, lifecycle)),
     correctPlacement: (itemId, placeRef, opts) => transact(() => correctPlacement(itemId, placeRef, opts)),
     reaffirmPlacement: (itemId) => transact(() => reaffirmPlacement(itemId)),
+    proposeRelease: (itemId, disposition) => transact(() => proposeRelease(itemId, disposition)),
+    deferDeclutter: (itemId) => transact(() => deferDeclutter(itemId)),
     markNotThere: (itemId) => transact(() => markNotThere(itemId)),
     snapshotContainer: (containerId, seenText, photo) => transact(() => snapshotContainer(containerId, seenText, photo)),
     acceptProposal: (proposalId, extra) => transact(() => acceptProposal(proposalId, extra)),

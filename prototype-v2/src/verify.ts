@@ -1447,6 +1447,98 @@ section("declutter review (release)", () => {
   assert("declutter-tool-dispatches", viaTool.ok === true && Array.isArray(viaTool.candidates), JSON.stringify(viaTool).slice(0, 60));
 });
 
+// Release enactment (§5.5 / §6 "释放即结束旧 Placement"): disposal decisions route
+// through Review→Accept (no auto-dispose), keep/defer commit directly, everything
+// append-only and reversible.
+section("release enactment (declutter commit path)", () => {
+  const pickNonEssential = (s: Store): string => {
+    const c = s.declutterReview().candidates.find((x) => x.importance !== "essential" && x.placeKnown);
+    if (!c) throw new Error("expected a non-essential placed declutter candidate in the seed");
+    return c.itemId;
+  };
+
+  // 1) A disposal is a PROPOSAL, not a commit: item stays put + leaves review + is pending.
+  const s1 = fresh();
+  const id1 = pickNonEssential(s1);
+  const stateBefore = s1.lifecycleOf(id1);
+  const { proposalId } = s1.proposeRelease(id1, "discard");
+  assert("release-proposal-not-committed-until-accept",
+    s1.lifecycleOf(id1) === stateBefore && s1.lifecycleOf(id1) !== "retired"
+    && s1.belongingView(id1)?.placement != null
+    && !s1.declutterReview().candidates.some((c) => c.itemId === id1)
+    && s1.proposals("pending").some((p) => p.id === proposalId && p.type === "release_decision"),
+    `state=${s1.lifecycleOf(id1)}`);
+  // every release proposal has an inspectable source observation (acceptProposal guard).
+  assert("release-requires-inspectable-source",
+    (s1.proposals("pending").find((p) => p.id === proposalId)?.sourceObservationIds.length ?? 0) > 0);
+
+  // 2) Accepting ends the placement + retires; item vanishes from all reads.
+  s1.acceptProposal(proposalId);
+  const afterView = s1.belongingView(id1);
+  assert("release-accept-ends-placement-and-retires",
+    s1.lifecycleOf(id1) === "retired"
+    && afterView?.placement == null
+    && !s1.declutterReview().candidates.some((c) => c.itemId === id1)
+    && !s1.ownershipRecall(afterView?.name ?? "").matches.some((m) => m.itemId === id1),
+    `state=${s1.lifecycleOf(id1)} placed=${afterView?.placement != null}`);
+
+  // 3) Append-only + reversible: original placement commit survives; un-retire restores.
+  const s2 = fresh();
+  const id2 = pickNonEssential(s2);
+  const originalName = s2.belongingView(id2)?.name ?? "";
+  const commitsBefore = s2.commitsView().length;
+  const rel = s2.proposeRelease(id2, "donate");
+  s2.acceptProposal(rel.proposalId);
+  s2.setItemState(id2, "at_home");
+  const restored = s2.locateById(id2);
+  assert("release-append-only-reversible",
+    s2.commitsView().length > commitsBefore  // nothing deleted; only records added
+    && restored.ok && s2.lifecycleOf(id2) === "at_home"
+    && s2.searchBelongings(originalName).some((v) => v.id === id2),
+    `retrievable=${restored.ok} state=${s2.lifecycleOf(id2)}`);
+
+  // 4) NON-NEGOTIABLE: essentials can't be disposed, but can be re-homed.
+  const s3 = fresh();
+  let disposalThrew = false;
+  try { s3.proposeRelease("usb-c-charger", "discard"); } catch { disposalThrew = true; }
+  assert("release-essentials-never-disposable", disposalThrew);
+  const rehome = s3.proposeRelease("usb-c-charger", "re_home");
+  assert("release-essentials-can-rehome",
+    s3.proposals("pending").some((p) => p.id === rehome.proposalId && p.type === "placement_correction" && p.needsPlace === true));
+
+  // 5) defer is a ledgered no-op that suppresses without nagging, then resurfaces.
+  const s4 = fresh();
+  const id4 = pickNonEssential(s4);
+  const defCommit = s4.deferDeclutter(id4);
+  assert("release-defer-is-noop",
+    defCommit.ops.length === 0 && s4.lifecycleOf(id4) === "at_home"
+    && !s4.declutterReview().candidates.some((c) => c.itemId === id4),
+    `ops=${defCommit.ops.length}`);
+
+  // 6) re_home proposal needs a place; accepting without one throws.
+  const s5 = fresh();
+  const id5 = pickNonEssential(s5);
+  const rh = s5.proposeRelease(id5, "re_home");
+  const rhProposal = s5.proposals("pending").find((p) => p.id === rh.proposalId);
+  assert("release-rehome-needs-place",
+    rhProposal?.needsPlace === true && rhProposal.suggestedOps.some((o) => o.type === "create_placement" && o.placeRef === null));
+  let noPlaceThrew = false;
+  try { s5.acceptProposal(rh.proposalId); } catch { noPlaceThrew = true; }
+  assert("release-rehome-accept-without-place-throws", noPlaceThrew);
+
+  // 7) place-unknown disposal retires cleanly (no dangling contradict_placement).
+  const s6 = fresh();
+  // markNotThere then reject leaves an item owned but place-unknown is hard to reach in
+  // seed; instead retire a place-known item works above. Assert the proposal shape:
+  const id6 = pickNonEssential(s6);
+  const rel6 = s6.proposeRelease(id6, "recycle");
+  const p6 = s6.proposals("pending").find((p) => p.id === rel6.proposalId);
+  assert("release-disposal-proposal-shape",
+    (p6?.suggestedOps.some((o) => o.type === "set_state" && o.state === "retired") ?? false)
+    && (p6?.type === "release_decision"),
+    JSON.stringify(p6?.suggestedOps.map((o) => o.type)));
+});
+
 section("home capability (ready loop)", () => {
   // --- integration over the REAL seed catalog: honest mixed results ---
   const store = fresh();
@@ -2995,13 +3087,27 @@ async function runBrowserSmoke(): Promise<void> {
       document.querySelector('[data-testid="recall-tab-release"]')?.click();
       const panel = document.querySelector('[data-testid="recall-release"]');
       const t = panel?.textContent ?? '';
-      // Release is no longer a dead end: rows carry an Open action (read-only
-      // cross-nav), and the decision options render as inert LABELS — never a
-      // state-mutating control (no-auto-dispose guardrail).
+      // Release now closes the flywheel: options are ACTIONABLE (release-option),
+      // the disposal set opens Review (verified separately), and the trust note
+      // still promises no auto-dispose. Every option carries the action.
       const hasOpen = Boolean(panel?.querySelector('[data-action="open-item"]'));
-      const optionChips = [...(panel?.querySelectorAll('.declutter-options .chip') ?? [])];
-      const optionsAreInert = optionChips.length > 0 && optionChips.every((c) => !c.hasAttribute('data-action'));
-      return /you decide/i.test(t) && /duplicate/i.test(t) && hasOpen && optionsAreInert;
+      const optionBtns = [...(panel?.querySelectorAll('.declutter-options button') ?? [])];
+      const optionsAreActionable = optionBtns.length > 0 && optionBtns.every((c) => c.getAttribute('data-action') === 'release-option');
+      const noteReassures = /nothing leaves your memory until you accept/i.test(t);
+      return /you decide/i.test(t) && /duplicate/i.test(t) && hasOpen && optionsAreActionable && noteReassures;
+    })()`));
+    // A disposal click opens Review and does NOT change lifecycle/placement until Accept.
+    assert("dom-release-disposal-opens-review-without-committing", await evalPage<boolean>(`(() => {
+      document.querySelector('[data-testid="recall-tab-release"]')?.click();
+      const btn = document.querySelector('[data-testid="recall-release"] .declutter-options button[data-option="discard"]');
+      if (!(btn instanceof HTMLElement)) return false;
+      const itemId = btn.getAttribute('data-item');
+      const before = window.nestory.store.lifecycleOf(itemId);
+      btn.click();
+      const stillOnView = Boolean(document.querySelector('[data-testid="view-review"]'));
+      const after = window.nestory.store.lifecycleOf(itemId);
+      const pending = window.nestory.store.proposals('pending').some((p) => p.type === 'release_decision');
+      return stillOnView && before === after && after !== 'retired' && pending;
     })()`));
     await shot("nestory-recall.png");
 

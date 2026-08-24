@@ -17,7 +17,7 @@ import type { SpatialObject, SpatialSceneData } from "./spatial.ts";
 import type {
   BoxStatus, CommitOp, ContainerContentsView, ContainerView, DeepReadonly, LifecycleState, LocateAnswer,
   ObservationRecord, OperationView, PhotoMedia, ProposalView, RowStatus, StorageLike, Store,
-  OwnershipRecallAnswer, DeclutterReviewResult, HomeCapabilityResult, WhichContainerHit
+  OwnershipRecallAnswer, DeclutterReviewResult, DeclutterOption, HomeCapabilityResult, WhichContainerHit
 } from "./types.ts";
 import { BOX_STATUSES, LIFECYCLE_STATES, ROW_STATUSES } from "./types.ts";
 
@@ -1147,6 +1147,18 @@ function ownershipCard(o: DeepReadonly<OwnershipRecallAnswer>): string {
   </div>`;
 }
 
+// Plain-language hints for the Release options — calm, never coercive (§12 no guilt).
+const DECLUTTER_OPTION_TITLE: Record<DeclutterOption, string> = {
+  keep: "Keep it and refresh the record",
+  re_home: "Move it to a new home — opens a Review step to pick where",
+  reuse: "Confirm you're using it — refreshes the record",
+  sell: "Decide to sell — opens a Review step; nothing changes until you accept",
+  donate: "Decide to donate — opens a Review step; nothing changes until you accept",
+  recycle: "Decide to recycle — opens a Review step; nothing changes until you accept",
+  discard: "Decide to discard — opens a Review step; nothing changes until you accept",
+  defer: "Hold judgment for now — no change, no reminder"
+};
+
 function declutterCard(d: DeepReadonly<DeclutterReviewResult>): string {
   const groups = d.groups.map((g) => `<div style="margin-top:8px">
     <div class="proposal-section-label">${esc(g.label)}</div>
@@ -1155,7 +1167,7 @@ function declutterCard(d: DeepReadonly<DeclutterReviewResult>): string {
         <strong>${esc(c.item)}</strong>
         <div class="place">${esc(c.because)}${c.placeKnown ? ` · ${esc(c.chainText)}` : ""}${c.daysSinceUpdate != null ? ` · ${esc(daysLabel(c.daysSinceUpdate))}` : ""}</div>
         ${c.duplicateOf.length ? `<div class="place faint">also: ${c.duplicateOf.map((n) => esc(n)).join(", ")}</div>` : ""}
-        <div class="declutter-options">${c.options.map((o) => `<span class="chip neutral">${esc(o.replace(/_/g, " "))}</span>`).join("")}</div>
+        <div class="declutter-options">${c.options.map((o) => `<button class="chip" data-action="release-option" data-item="${esc(c.itemId)}" data-option="${esc(o)}" title="${DECLUTTER_OPTION_TITLE[o] ?? ""}">${esc(o.replace(/_/g, " "))}</button>`).join("")}</div>
       </span>
       <span class="declutter-row-actions">
         <button class="small ghost" data-action="open-item" data-id="${esc(c.itemId)}" title="Open ${esc(c.item)}">Open</button>
@@ -1165,7 +1177,7 @@ function declutterCard(d: DeepReadonly<DeclutterReviewResult>): string {
   </div>`).join("");
   return `<div class="card" style="box-shadow:none;margin-top:8px">
     ${groups || '<div class="muted">Nothing flagged for review right now.</div>'}
-    <div class="trust-note" style="margin-top:12px"><i data-lucide="shield-check"></i> ${esc(d.note)}</div>
+    <div class="trust-note" style="margin-top:12px"><i data-lucide="shield-check"></i> ${esc(d.note)} Choosing sell, donate, recycle, discard or re-home opens a Review step — nothing leaves your memory until you accept it there. Keep, reuse and defer just note your decision.</div>
   </div>`;
 }
 
@@ -2108,6 +2120,11 @@ function observationCopy(observation: ObservationRecord): string {
     return names.length ? `${names.join(" and ")} may describe the same belonging.` : "Two belonging records may describe the same thing.";
   }
   if (observation.type === "stale_container_flag") return `${containerName ?? "This container"} has not been confirmed recently.`;
+  if (observation.type === "release_intent") {
+    const d = typeof observation.payload?.disposition === "string" ? observation.payload.disposition.replace(/_/g, " ") : "release";
+    return `You decided to ${d} ${itemName ?? "this belonging"} and asked to review it before it changes your memory.`;
+  }
+  if (observation.type === "declutter_deferred") return `You chose to hold judgment on ${itemName ?? "this belonging"} for now.`;
   return `A manual note was attached${itemName ? ` to ${itemName}` : ""}.`;
 }
 
@@ -2139,6 +2156,15 @@ function proposalDiffs(proposal: DeepReadonly<ProposalView>, edit: ProposalRevie
     } else if (op.type === "set_state") {
       const belonging = store.state.belongings.get(op.itemId);
       diffs.push({ subject: belonging?.name ?? op.itemId, before: store.lifecycleOf(op.itemId).replace(/_/g, " "), after: op.state.replace(/_/g, " ") });
+    } else if (op.type === "contradict_placement") {
+      // Show the placement-ending honestly — but only when it isn't immediately
+      // replaced by a create_placement in the SAME proposal (a re-home already shows
+      // its move via the create_placement branch; a disposal ends it for good).
+      const rehomed = proposal.suggestedOps.some((other) => other.type === "create_placement" && other.itemId === op.itemId);
+      if (!rehomed) {
+        const belonging = store.belongingView(op.itemId);
+        diffs.push({ subject: belonging?.name ?? op.itemId, before: belonging?.chainText || "at home", after: "no longer placed at home" });
+      }
     }
   }
   return diffs;
@@ -2773,6 +2799,27 @@ document.addEventListener("click", (e) => {
     }
     case "capability-check": doCapabilityCheck(inputValue("capability-input")); break;
     case "capability-example": if (t.dataset.q) doCapabilityCheck(t.dataset.q); break;
+    case "release-option": {
+      // The Release flywheel (§5.5 / §6). keep/reuse/defer are safe, reversible acts
+      // that commit on click; the five placement-ending/moving dispositions NEVER
+      // commit here — they open a Review proposal the user must Accept, so disposal
+      // is impossible without a second, reviewed click.
+      const itemId = t.dataset.item;
+      const opt = t.dataset.option as DeclutterOption | undefined;
+      if (!itemId || !opt) break;
+      controlReturnFocus = focusBookmark(t);
+      if (opt === "keep" || opt === "reuse") {
+        act(() => store.reaffirmPlacement(itemId), opt === "keep" ? "Kept — record refreshed." : "Reuse confirmed — record refreshed.");
+        render();
+      } else if (opt === "defer") {
+        act(() => store.deferDeclutter(itemId), "Held for later — no change to your home, and no reminder was created.");
+        render();
+      } else {
+        const out = act(() => store.proposeRelease(itemId, opt), "Opened in Review — nothing leaves your memory until you accept it.", { view: "review" });
+        if (out) navigate("review");
+      }
+      break;
+    }
     case "locate-on-map": {
       // Prefer the stable id (locateById) so the map pins the exact belonging the
       // card named — a name-based locate could resolve to a different same-named

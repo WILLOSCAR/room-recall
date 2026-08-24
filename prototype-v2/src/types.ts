@@ -201,7 +201,10 @@ export interface EvidenceRecord {
 
 export type ObservationType =
   | "container_snapshot" | "not_there_report" | "duplicate_suspected"
-  | "stale_container_flag" | "manual_note";
+  | "stale_container_flag" | "manual_note"
+  // Release loop: the user's declutter decision, recorded as the inspectable source
+  // for a release proposal; and a "hold judgment for now" note.
+  | "release_intent" | "declutter_deferred";
 
 export interface ObservationRecord {
   recordType: "observation";
@@ -215,7 +218,10 @@ export interface ObservationRecord {
 }
 
 export type ProposalType =
-  | "placement_correction" | "contents_update" | "duplicate_merge" | "container_refresh";
+  | "placement_correction" | "contents_update" | "duplicate_merge" | "container_refresh"
+  // Release loop: a disposal decision (sell/donate/recycle/discard) that ends a
+  // placement and retires the item — gated through Review→Accept, never auto-committed.
+  | "release_decision";
 
 export interface ProposalRecord {
   recordType: "proposal";
@@ -787,6 +793,8 @@ export interface Store {
   setItemState(itemId: string, lifecycle: LifecycleState): void;
   correctPlacement(itemId: string, placeRef: PlaceRef, opts?: { relation?: Relation; note?: string | null }): CommitRecord;
   reaffirmPlacement(itemId: string): CommitRecord;
+  proposeRelease(itemId: string, disposition: "re_home" | "sell" | "donate" | "recycle" | "discard"): { observationId: string; proposalId: string };
+  deferDeclutter(itemId: string): CommitRecord;
   markNotThere(itemId: string): { observationId: string; proposalId: string };
   snapshotContainer(containerId: string, seenText: string, photo?: PhotoMedia | null): string;
   acceptProposal(proposalId: string, extra?: { placeRef?: PlaceRef; placementOverrides?: Record<string, PlaceRef>; mergeKeepId?: string }): CommitRecord;
