@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 
 import { catalog, buildSeedRecords, emptyCatalog } from "./data.ts";
 import { createStore, DomainInputError, ReentrantStoreCommandError } from "./store.ts";
-import { createAgentToolkit } from "./agent.ts";
+import { createAgentToolkit, stripSensitiveMedia } from "./agent.ts";
 import type { AgentToolkit } from "./agent.ts";
 import { ask } from "./ask.ts";
 import { runAgentTurn } from "./agent-runtime.ts";
@@ -96,6 +96,19 @@ function expectKit(store: Store, opId: string): DeepReadonly<KitOperationView> {
   const op = store.operationView(opId);
   if (!op || op.type !== "kit") throw new Error(`Expected kit operation ${opId}`);
   return op;
+}
+
+// Throw-analog of expectOk: runs `fn`, asserts it throws, and that the message
+// matches `pattern`. Returns the message so a test can make further claims on it.
+function expectThrow(fn: () => unknown, pattern: RegExp): string {
+  try {
+    fn();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!pattern.test(message)) throw new Error(`Expected a throw matching ${pattern}, got: ${message}`);
+    return message;
+  }
+  throw new Error(`Expected a throw matching ${pattern}, but nothing was thrown`);
 }
 
 // =====================================================================
@@ -652,6 +665,98 @@ section("recall outcomes measure the north star", () => {
     && reloadedOutcomes.outcomes.some((o) => o.itemId === unplacedItem && o.kind === "ownership")
     && reloadedOutcomes.firstAt === rtBefore.firstAt,
     `${reloadedOutcomes.outcomes.length}/${rtBefore.outcomes.length}`);
+});
+
+// =====================================================================
+// Audit locks (2026-08-24): each adversarially-confirmed defect in the newest
+// trust-bearing code is pinned here as a regression assertion. A finding is
+// "confirmed" only when it reproduces in a test — these reproduce the fixes.
+// =====================================================================
+section("audit locks: gone-state, recall-outcome, and boundary hardening", () => {
+  // C1 — reaffirming a gone item must THROW, not fabricate a present-tense
+  // ownership confirmation and mint a fake North-Star recall outcome.
+  const c1 = fresh();
+  const legitId = expectOk(c1.locate("sport socks")).itemId;
+  c1.reaffirmPlacement(legitId);                                     // one genuine outcome
+  const baselineOutcomes = c1.recallOutcomes().outcomes.length;       // 1
+  const goneId = "black-training-shirt";
+  c1.acceptProposal(c1.proposeRelease(goneId, "donate").proposalId);  // retired + placement ended
+  expectThrow(() => c1.reaffirmPlacement(goneId), /Reverse the release/i);
+  assert("audit-c1-reaffirm-gone-mints-no-outcome",
+    c1.recallOutcomes().outcomes.length === baselineOutcomes,
+    `${baselineOutcomes} -> ${c1.recallOutcomes().outcomes.length}`);
+
+  // C2 — setItemState to a disposal state must ALSO end the active placement,
+  // so state and placement never disagree (no present-tense fabrication).
+  const c2 = fresh();
+  const c2Id = expectOk(c2.locate("sport socks")).itemId;
+  c2.setItemState(c2Id, "retired");
+  const c2View = c2.belongingView(c2Id);
+  assert("audit-c2-setstate-gone-ends-placement",
+    c2View?.state === "retired" && c2View.placement === null,
+    `state=${c2View?.state} placement=${c2View?.placement === null ? "null" : "live"}`);
+
+  // C4/C6 — proposeRelease on an already-gone item throws (no re-home half-state,
+  // no redundant proposals).
+  expectThrow(() => c1.proposeRelease(goneId, "donate"), /already released/i);
+
+  // C3 — snapshotContainer never proposes a gone item as "seen" (no resurrection).
+  const c3 = fresh();
+  c3.setItemState(goneId, "retired");
+  const c3ProposalId = c3.snapshotContainer("entry-tray", "black training shirt");
+  const c3Proposal = c3.proposals().find((p) => p.id === c3ProposalId);
+  c3.acceptProposal(c3ProposalId);
+  assert("audit-c3-snapshot-skips-gone",
+    c3Proposal !== undefined
+      && !c3Proposal.suggestedOps.some((op) => op.type === "create_placement" && op.itemId === goneId)
+      && c3.belongingView(goneId)?.placement === null,
+    `ops=${c3Proposal?.suggestedOps.map((op) => op.type).join(",")}`);
+
+  // A1 — import cannot FORGE a recall tag: a tag referencing a non-existent
+  // belonging is rejected (semantic), and a tag with a bogus kind is rejected
+  // (structural). The metric is only as trustworthy as the tag's provenance.
+  const a1 = fresh();
+  const a1Before = a1.recordCount;
+  const forgedUnknown = a1.exportJson();
+  forgedUnknown.records.push({
+    recordType: "evidence", id: "ev-forged-unknown", kind: "user_confirmation",
+    summary: "Forged recall tag", at: new Date(NOW + 10).toISOString(),
+    recall: { kind: "ownership", itemId: "item-that-never-existed" }
+  });
+  expectThrow(() => a1.importJson(forgedUnknown), /references unknown Belonging/i);
+  assert("audit-a1-forged-tag-keeps-home", a1.recordCount === a1Before, `${a1Before} -> ${a1.recordCount}`);
+
+  const forgedKind = a1.exportJson();
+  forgedKind.records.push({
+    recordType: "evidence", id: "ev-forged-kind", kind: "user_confirmation",
+    summary: "Forged recall kind", at: new Date(NOW + 11).toISOString(),
+    recall: { kind: "bogus", itemId: "water-bottle" } as never
+  });
+  expectThrow(() => a1.importJson(forgedKind), /unsupported value/i);
+
+  // A2 — a home reset wipes pre-reset recall outcomes exactly as it wipes every
+  // other read (the read-model folds the reset-aware derived evidence map).
+  const a2 = fresh();
+  const a2Id = expectOk(a2.locate("sport socks")).itemId;
+  a2.reaffirmPlacement(a2Id);
+  assert("audit-a2-precondition-outcome-exists", a2.recallOutcomes().outcomes.length === 1);
+  a2.reset();
+  assert("audit-a2-reset-wipes-outcomes",
+    a2.recallOutcomes().outcomes.length === 0 && a2.recallOutcomes().countLast30Days === 0,
+    `n=${a2.recallOutcomes().outcomes.length}`);
+
+  // A3 — the 30-day window is bounded on BOTH sides: an outcome stamped "in the
+  // future" relative to the supplied `now` is excluded by the upper bound.
+  const a3 = fresh();
+  const a3Id = expectOk(a3.locate("sport socks")).itemId;
+  a3.reaffirmPlacement(a3Id); // outcome stamped at NOW (the store's fixed clock)
+  assert("audit-a3-upper-bound-excludes-future",
+    a3.recallOutcomes(new Date(NOW - 60_000).toISOString()).countLast30Days === 0
+      && a3.recallOutcomes().countLast30Days === 1,
+    `before=${a3.recallOutcomes(new Date(NOW - 60_000).toISOString()).countLast30Days} at-now=${a3.recallOutcomes().countLast30Days}`);
+
+  // A5 — an unparseable `now` is a hard error, never a silent "all time" window.
+  expectThrow(() => a3.recallOutcomes("not-a-date"), /invalid now/i);
 });
 
 
@@ -1282,6 +1387,19 @@ section("issue 06 sensitive-evidence boundary", () => {
   const agentView = toolkit.dispatch("locate_item", { query: "usb-c charger" }) as LocateAnswer;
   assert("boundary-agent-keeps-summary",
     agentView.ok && agentView.evidence.some((e) => e.kind === "photo_note" && e.summary.length > 0 && !("media" in e)));
+
+  // B3 — the sanitizer is value-based, not key-name-based: image bytes riding
+  // under a NON-standard key (e.g. `payload.thumb`) are still redacted, and a
+  // cyclic result degrades to "[circular]" instead of crashing the dispatch.
+  const nested = stripSensitiveMedia({ payload: { thumb: "data:image/png;base64,LEAK", note: "ok" } }) as { payload: { thumb: string; note: string } };
+  assert("audit-b3-strip-detects-dataurl-value",
+    nested.payload.thumb === "[image media omitted]" && nested.payload.note === "ok"
+      && !JSON.stringify(nested).includes("data:image"),
+    JSON.stringify(nested));
+  const cyclic: Record<string, unknown> = { a: 1 };
+  cyclic.self = cyclic;
+  const cycled = stripSensitiveMedia(cyclic) as Record<string, unknown>;
+  assert("audit-b3-strip-cycle-guarded", cycled.self === "[circular]" && cycled.a === 1, JSON.stringify(cycled));
 });
 
 // =====================================================================
@@ -1312,6 +1430,28 @@ try {
       turn.history.length === 4 && turn.history[1]?.role === "assistant" && turn.history[2]?.role === "user" && turn.history[2]?.content[0]?.type === "tool_result",
       turn.history.map((m) => m.role).join(","));
     assert("runtime-rounds-counted", turn.toolRoundsUsed === 1);
+  }
+
+  {
+    // B2 backstop: even a tool result that reaches the LLM projection WITHOUT
+    // going through the real dispatch (raw media intact) is redacted by
+    // boundedProjection — defense-in-depth behind the issue-06 boundary.
+    const leakyToolkit: AgentToolkit = {
+      tools: [{ name: "leaky_read", description: "returns raw media", parameters: { type: "object", properties: {}, required: [] } }],
+      dispatch: () => ({ evidence: [{ kind: "photo_note", media: { dataUrl: "data:image/png;base64,LEAK", width: 1, height: 1 } }] })
+    };
+    const leakyLlm = scripted([
+      { stopReason: "tool_use", content: [{ type: "tool_use", id: "b2", name: "leaky_read", input: {} }] },
+      { stopReason: "end_turn", content: [{ type: "text", text: "done" }] }
+    ]);
+    const leakyTurn = await runAgentTurn({ toolkit: leakyToolkit, llm: leakyLlm, userText: "read it" });
+    let leakyResult: string | undefined;
+    for (const e of leakyTurn.events) {
+      if (e.kind === "tool_call" && e.name === "leaky_read") { leakyResult = e.result; break; }
+    }
+    assert("audit-b2-runtime-backstop-drops-media",
+      leakyResult !== undefined && !leakyResult.includes("data:image") && leakyResult.includes("[image media omitted]"),
+      leakyResult ?? "no tool_call event");
   }
 
   {
@@ -2046,6 +2186,28 @@ try {
 
   const locate = await getJson(server1.url, "/locate?q=water%20bottle");
   assert("srv-locate-view", locate.body["ok"] === true && locate.body["chainText"] === "Desk top · Desk · Bedroom", locate.body["chainText"]);
+
+  // B1 — the HTTP /locate route is on the same issue-06 boundary: a photo seeded
+  // into the store never reaches the network response. (The on-device UI reads
+  // the store directly and keeps the photo; the server projection is redacted.)
+  const boundaryStore = fresh();
+  const boundaryPhoto: PhotoMedia = { dataUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACw=", width: 1, height: 1 };
+  boundaryStore.acceptProposal(boundaryStore.snapshotContainer("entry-tray", "usb-c charger", boundaryPhoto));
+  const rawBoundary = boundaryStore.locate("usb-c charger");
+  assert("srv-boundary-fixture-holds-media",
+    rawBoundary.ok && rawBoundary.evidence.some((e) => e.media?.dataUrl.includes("data:image") === true),
+    JSON.stringify(rawBoundary.ok ? rawBoundary.evidence.map((e) => e.kind) : rawBoundary.sentence));
+  const boundaryServer = await startNestoryServer({ store: boundaryStore, port: 0 });
+  try {
+    const boundaryLocate = await getJson(boundaryServer.url, "/locate?q=usb-c%20charger");
+    const boundaryJson = JSON.stringify(boundaryLocate.body);
+    assert("srv-locate-redacts-media",
+      boundaryLocate.status === 200 && boundaryLocate.body["ok"] === true
+        && !/"media":/.test(boundaryJson) && !/data:image/.test(boundaryJson),
+      boundaryJson.slice(0, 240));
+  } finally {
+    await boundaryServer.close();
+  }
   const fullSearchResponse = await fetch(server1.url + "/search?q=");
   const fullSearchBody = await fullSearchResponse.json() as unknown;
   assert("srv-search-keeps-full-array-compatibility-contract", fullSearchResponse.status === 200 && Array.isArray(fullSearchBody) && fullSearchBody.length === serverStore.searchBelongings("").length);

@@ -58,16 +58,27 @@ function optionalStr(args: Record<string, unknown>, key: string): string | null 
 // the LLM runtime, the Ask router, the CLI, eval, any future tool — gets the
 // evidence SUMMARY (kind/summary/at) only. The on-device UI reads the store
 // directly and keeps the photos; only the agent-facing projection is redacted.
-// Fails closed: a media field is dropped, never passed through.
-function stripSensitiveMedia(value: unknown): unknown {
+// Fails closed: a media field is dropped, never passed through. Also redacts any
+// STRING value that is an image data URL (defense-in-depth — catches bytes riding
+// under a non-standard key like `payload.thumb` or a future `thumbnail` field),
+// and guards cycles so a cyclic result degrades to "[circular]" instead of crashing.
+const IMAGE_DATA_URL = /^data:image\//;
+export function stripSensitiveMedia(value: unknown, seen: Set<object> = new Set()): unknown {
+  if (typeof value === "string") return IMAGE_DATA_URL.test(value) ? "[image media omitted]" : value;
   if (value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map(stripSensitiveMedia);
-  const out: Record<string, unknown> = {};
-  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
-    if (key === "media" || key === "photo" || key === "dataUrl") continue;
-    out[key] = stripSensitiveMedia(v);
+  if (seen.has(value)) return "[circular]";
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) return value.map((v) => stripSensitiveMedia(v, seen));
+    const out: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      if (key === "media" || key === "photo" || key === "dataUrl") continue;
+      out[key] = stripSensitiveMedia(v, seen);
+    }
+    return out;
+  } finally {
+    seen.delete(value);
   }
-  return out;
 }
 
 export function createAgentToolkit(store: Store): AgentToolkit {

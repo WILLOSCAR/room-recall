@@ -77,7 +77,11 @@ function boundedProjection(
   depth = 0,
   key = ""
 ): unknown {
-  if (key === "dataUrl") {
+  // Backstop for the issue-06 boundary: drop the same sensitive keys the toolkit
+  // strips (media/photo/dataUrl), so even a value that reached the LLM path
+  // without going through dispatch never leaks raw image bytes. Substituting the
+  // leaf (rather than dropping the key) keeps the projection structurally intact.
+  if (key === "dataUrl" || key === "media" || key === "photo") {
     budget.truncated = true;
     return "[image media omitted]";
   }

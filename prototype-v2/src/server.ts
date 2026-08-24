@@ -22,7 +22,7 @@ import { resolve } from "node:path";
 
 import { catalog, buildSeedRecords, emptyCatalog } from "./data.ts";
 import { createStore, DomainInputError, StoreConflictError } from "./store.ts";
-import { AgentInputError, createAgentToolkit } from "./agent.ts";
+import { AgentInputError, createAgentToolkit, stripSensitiveMedia } from "./agent.ts";
 import type { AgentToolkit } from "./agent.ts";
 import { ask } from "./ask.ts";
 import { DECISION_TOOLS } from "./agent-runtime.ts";
@@ -347,7 +347,12 @@ function handleGet(path: string, url: URL, ctx: RouteContext, res: ServerRespons
     return true;
   }
   if (path === "/export") { jsonText(res, 200, store.exportJsonText()); return true; }
-  if (path === "/locate") { json(res, 200, store.locate(q)); return true; }
+  // /locate is the only media-bearing read endpoint (its evidence[].media carries
+  // PhotoMedia). Over HTTP it is an egress surface, not the on-device UI, so the
+  // issue-06 boundary applies: redact raw image bytes the same way the agent
+  // toolkit does. (GET /export is intentionally exempt — it is the backup/restore
+  // path, and the toolkit exposes no export tool.)
+  if (path === "/locate") { json(res, 200, stripSensitiveMedia(store.locate(q))); return true; }
   if (path === "/search") {
     const limitParam = url.searchParams.get("limit");
     if (limitParam === null) {

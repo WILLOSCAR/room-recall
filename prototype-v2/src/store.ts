@@ -1230,9 +1230,11 @@ export function createStore(options: StoreOptions): Store {
   // never inflate the metric. `now` is injectable so the 30-day window is deterministic.
   function recallOutcomes(nowArg?: string): RecallOutcomeSummary {
     const outcomes: RecallOutcome[] = [];
-    for (const record of records) {
-      if (record.recordType !== "evidence") continue;
-      const tag = (record as EvidenceRecord).recall;
+    // Fold the DERIVED, reset-aware evidence map (not the raw record stream) so a
+    // home reset wipes pre-reset outcomes exactly as it wipes every other read.
+    // `state.evidence` is insertion-ordered and holds the full EvidenceRecord.
+    for (const record of state.evidence.values()) {
+      const tag = record.recall;
       if (!tag) continue;
       const entity = belongingOf(tag.itemId);
       outcomes.push({
@@ -1246,7 +1248,8 @@ export function createStore(options: StoreOptions): Store {
       });
     }
     outcomes.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
-    const nowMs = nowArg ? new Date(nowArg).getTime() : now();
+    const nowMs = nowArg ? Date.parse(nowArg) : now();
+    if (!Number.isFinite(nowMs)) throw new DomainInputError(`recallOutcomes: invalid now "${nowArg}"`);
     const windowStart = nowMs - 30 * DAY;
     const first = outcomes[0];
     const last = outcomes[outcomes.length - 1];
@@ -1254,14 +1257,19 @@ export function createStore(options: StoreOptions): Store {
       outcomes,
       firstAt: first ? first.at : null,
       lastAt: last ? last.at : null,
-      countLast30Days: outcomes.filter((o) => new Date(o.at).getTime() >= windowStart).length
+      // Bounded on BOTH sides: "last 30 days" excludes future-dated and >30-day-old
+      // records alike. Lower bound is inclusive ("within the last 30 days" — a
+      // conscious choice; the exact-boundary instant is counted). Each reaffirm is
+      // one genuine user_confirmation, so each is one outcome — in the product flow
+      // a reaffirm follows a recall question, so confirmations map 1:1 to recalls.
+      countLast30Days: outcomes.filter((o) => { const t = Date.parse(o.at); return t >= windowStart && t <= nowMs; }).length
     });
   }
 
   // Declutter Review (Release) — decision SUPPORT only. Surfaces belongings worth
   // a fresh decision with an observed REASON; never infers "unused" from absence
-  // of a usage record, never disposes, never shames.
-  const DECLUTTER_GONE: readonly LifecycleState[] = ["consumed", "retired"];
+  // of a usage record, never disposes, never shames. "Gone" is the shared
+  // module-scope GONE_STATES (one definition for every Retrieve/Reuse/Release read).
   const FLAGGED_STATES: readonly LifecycleState[] = ["missing", "lent_out"];
   const DEFER_WINDOW_DAYS = 30;
   function declutterReview(): DeclutterReviewResult {
@@ -1288,7 +1296,7 @@ export function createStore(options: StoreOptions): Store {
     // the user actually owns — suppression is applied only at EMISSION (in push).
     // Otherwise acting on one item of an exactly-two pair would drop its partner
     // below the `items.length < 2` threshold and silently hide it too.
-    const all = searchBelongings("").filter((v) => !v.mergedInto && !DECLUTTER_GONE.includes(v.state));
+    const all = searchBelongings("").filter((v) => !v.mergedInto && !GONE_STATES.includes(v.state));
     // group by kind to detect duplicates (2+ sharing a primary kind)
     const byKind = new Map<string, typeof all>();
     for (const v of all) {
@@ -1763,10 +1771,19 @@ export function createStore(options: StoreOptions): Store {
 
   function setItemState(itemId: string, lifecycle: LifecycleState): void {
     if (!LIFECYCLE_STATES.includes(lifecycle)) throw new DomainInputError(`Unknown state ${lifecycle}`);
-    if (!belongingOf(itemId)) throw new DomainInputError("Unknown belonging");
+    const b = belongingOf(itemId);
+    if (!b) throw new DomainInputError("Unknown belonging");
+    const ops: CommitOp[] = [{ type: "set_state", itemId, state: lifecycle }];
+    // A disposal state must end the active placement too — otherwise the item is
+    // gone (state) yet still "at home" (placement), a present-tense fabrication
+    // any direct consumer of belongingView.placement would see. Mirrors the
+    // release flow's accept-time contradict (reason "release_accept").
+    if (GONE_STATES.includes(lifecycle) && state.placements.get(itemId)?.active) {
+      ops.push({ type: "contradict_placement", itemId, reason: "state_gone" });
+    }
     appendCommit({
-      summary: `Set ${belongingOf(itemId)?.name ?? itemId} state: ${lifecycle}`,
-      ops: [{ type: "set_state", itemId, state: lifecycle }]
+      summary: `Set ${b.name} state: ${lifecycle}`,
+      ops
     });
   }
 
@@ -1798,6 +1815,12 @@ export function createStore(options: StoreOptions): Store {
   function reaffirmPlacement(itemId: string): CommitRecord {
     const b = belongingOf(itemId);
     if (!b) throw new DomainInputError("Unknown belonging");
+    // A released/consumed item is gone — reaffirming it would fabricate a present-
+    // tense ownership confirmation and mint a fake North-Star recall outcome.
+    // The honest reversal is setItemState → at_home, then reaffirm.
+    if (GONE_STATES.includes(lifecycleOf(itemId))) {
+      throw new DomainInputError(`Cannot reaffirm a released/consumed item (${b.name}). Reverse the release first.`);
+    }
     const active = state.placements.get(itemId)?.active ?? null;
     if (active) {
       const ev = appendEvidence("user_confirmation", `You confirmed ${b.name} is still ${RELATION_PHRASE[active.relation]} ${chainText(chainFor(active.placeRef))}`, { kind: "location", itemId });
@@ -1827,6 +1850,13 @@ export function createStore(options: StoreOptions): Store {
   function proposeRelease(itemId: string, disposition: "re_home" | "sell" | "donate" | "recycle" | "discard"): { observationId: string; proposalId: string } {
     const b = belongingOf(itemId);
     if (!b) throw new DomainInputError("Unknown belonging");
+    // An already-gone item cannot be released or re-homed: re-homing a retired item
+    // would create a fresh placement while it stays retired (contradictory half-state),
+    // and re-releasing it just opens redundant proposals. The honest path back is
+    // setItemState → at_home (reversal), then a fresh release if still wanted.
+    if (GONE_STATES.includes(lifecycleOf(itemId))) {
+      throw new DomainInputError(`${b.name} is already released. Reverse it (setItemState → at_home) before releasing it again.`);
+    }
     // Server-side essentials guard — the UI allow-list is not the only line of defense.
     if (b.importance === "essential" && disposition !== "re_home") {
       throw new DomainInputError("Essentials are never nudged toward disposal — only keep, re-home, or defer.");
@@ -1916,6 +1946,10 @@ export function createStore(options: StoreOptions): Store {
     for (const token of tokens) {
       const match = searchBelongingsTop(token, 1)[0];
       if (!match || match.score < 55 || matchedItems.has(match.id)) continue;
+      // Never propose a released/consumed item as "seen" in a snapshot — that would
+      // resurrect a gone item with a fresh placement while it stays retired (a
+      // contradictory half-state) and could shadow a genuinely-present namesake.
+      if (GONE_STATES.includes(lifecycleOf(match.id))) continue;
       matchedItems.add(match.id);
       const already = match.placement?.placeRef.type === "container" && match.placement.placeRef.id === containerId;
       if (!already) {

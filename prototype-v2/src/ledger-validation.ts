@@ -1,5 +1,5 @@
 import type {
-  AnyRecord, Belonging, Catalog, CommitOp, CommitRecord, Container, OperationData, PhotoMedia, PlaceRef, Room
+  AnyRecord, Belonging, Catalog, CommitOp, CommitRecord, Container, EvidenceRecord, OperationData, PhotoMedia, PlaceRef, Room
 } from "./types.ts";
 import {
   BOX_STATUSES, CONTAINER_KINDS, LIFECYCLE_STATES as LIFECYCLE_STATE_VALUES,
@@ -10,6 +10,10 @@ type ObjectValue = Record<string, unknown>;
 
 const RECORD_TYPES = new Set(["evidence", "observation", "proposal", "commit"]);
 const EVIDENCE_KINDS = new Set(["user_confirmation", "seed_import", "negative_report", "correction", "snapshot_text", "photo_note"]);
+// RecallOutcomeKind — the North-Star tag. Only reaffirmPlacement may mint it; the
+// validator still enforces its shape + reference so a crafted import cannot forge
+// outcomes from nothing (or from garbage) on the way back in.
+const RECALL_KINDS = new Set(["location", "ownership"]);
 const OBSERVATION_TYPES = new Set(["container_snapshot", "not_there_report", "duplicate_suspected", "stale_container_flag", "manual_note", "release_intent", "declutter_deferred"]);
 const PROPOSAL_TYPES = new Set(["placement_correction", "contents_update", "duplicate_merge", "container_refresh", "release_decision"]);
 const PLACE_TYPES = new Set(["room", "furniture", "container", "state"]);
@@ -266,6 +270,11 @@ export function validatedLedgerRecords(data: unknown, source: string): AnyRecord
       oneOf(record["kind"], EVIDENCE_KINDS, `${path}.kind`);
       string(record["summary"], `${path}.summary`);
       if (record["media"] !== undefined) media(record["media"], `${path}.media`);
+      if (record["recall"] !== undefined && record["recall"] !== null) {
+        const recall = object(record["recall"], `${path}.recall`);
+        oneOf(recall["kind"], RECALL_KINDS, `${path}.recall.kind`);
+        string(recall["itemId"], `${path}.recall.itemId`);
+      }
     } else if (type === "observation") {
       oneOf(record["type"], OBSERVATION_TYPES, `${path}.type`);
       optionalString(record["itemId"], `${path}.itemId`);
@@ -432,6 +441,12 @@ function foldSemantics(
     const path = `Record ${index + 1}`;
     if (record.recordType === "evidence") {
       semantics.evidence.add(record.id);
+      // A recall tag must reference a belonging that exists at this point in the
+      // ledger — closes the import-forgery hole where a crafted dump mints North-
+      // Star outcomes for items that never existed. (Shape was checked structurally
+      // upstream; genuine round-trips pass because the item is created first.)
+      const recall = (record as EvidenceRecord).recall;
+      if (recall) semanticItem(recall.itemId, semantics, `${path}.recall.itemId`);
       return;
     }
     if (record.recordType === "observation") {

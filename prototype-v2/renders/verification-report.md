@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-24T14:36:28.534Z
+Generated: 2026-08-24T15:16:50.511Z
 Runtime: node v26.7.0 · typescript strict
-- Assertions: 651
-- Passed: 651
+- Assertions: 663
+- Passed: 663
 - Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 2.000 ms
-- Household UI DOM-commit p95: 5.500 ms
+- UI DOM-commit p95: 1.900 ms
+- Household UI DOM-commit p95: 4.800 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -104,6 +104,14 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `recall-outcome-window-excludes-aged`
 - ✓ `recall-outcome-name-survives-retirement`
 - ✓ `recall-outcome-roundtrip`
+## audit locks: gone-state, recall-outcome, and boundary hardening
+- ✓ `audit-c1-reaffirm-gone-mints-no-outcome`
+- ✓ `audit-c2-setstate-gone-ends-placement`
+- ✓ `audit-c3-snapshot-skips-gone`
+- ✓ `audit-a1-forged-tag-keeps-home`
+- ✓ `audit-a2-precondition-outcome-exists`
+- ✓ `audit-a2-reset-wipes-outcomes`
+- ✓ `audit-a3-upper-bound-excludes-future`
 ## P0.4 operations and kits
 - ✓ `kit-rows-resolved`
 - ✓ `duplicate-reqs-merge`
@@ -291,11 +299,14 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `boundary-unpack_priority-no-image-bytes`
 - ✓ `boundary-ui-keeps-media`
 - ✓ `boundary-agent-keeps-summary`
+- ✓ `audit-b3-strip-detects-dataurl-value`
+- ✓ `audit-b3-strip-cycle-guarded`
 ## agent runtime
 - ✓ `runtime-executes-tool`
 - ✓ `runtime-final-text`
 - ✓ `runtime-history-shape`
 - ✓ `runtime-rounds-counted`
+- ✓ `audit-b2-runtime-backstop-drops-media`
 - ✓ `runtime-blocks-decision-tools`
 - ✓ `runtime-decision-not-applied`
 - ✓ `runtime-decision-allowed-explicitly`
@@ -406,6 +417,8 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `srv-import-allows-household-sized-dump`
 - ✓ `srv-concurrent-import-cannot-erase-acknowledged-write`
 - ✓ `srv-locate-view`
+- ✓ `srv-boundary-fixture-holds-media`
+- ✓ `srv-locate-redacts-media`
 - ✓ `srv-search-keeps-full-array-compatibility-contract`
 - ✓ `srv-search-opt-in-window-bounds-network-projection`
 - ✓ `srv-search-window-validates-limit`
