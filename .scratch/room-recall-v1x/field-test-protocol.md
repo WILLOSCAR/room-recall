@@ -30,6 +30,12 @@ predicts? Secondary: does the user show a stated return trigger?
 on-ramp ONLY. The durable promise (Ownership/pre-purchase recall) stays unproven
 until the longitudinal arm returns.
 
+How the five sessions aggregate into that verdict — the N≥5 proceed/revise/stop
+thresholds, the activation≠retention disconfirming rule, and the non-circularity
+validity guard that can INVALIDATE a run — is **pre-registered** in
+[`field-test-analysis-plan.md`](field-test-analysis-plan.md), written before any
+data so the thresholds cannot move to fit the result.
+
 ## 2. Sample (revision #5 — deliberately non-high-tech)
 
 N ≥ 5, recruited to OVER-represent the hard tail, not the fluent middle:
