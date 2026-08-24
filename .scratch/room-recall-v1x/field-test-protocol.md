@@ -104,10 +104,7 @@ Record the reaction verbatim. Any surprise, distrust, or deletion request is a
 logged privacy surprise — the target is 0, and a single "I had no idea" is a
 `revise` signal, not a pass.
 
-Sensitive-evidence boundary (issue 06, still open — this test informs it but does
-not resolve it): faces, documents, screens, addresses, receipts, and labels in a
-box photo must be excludable before anything leaves the device. Note any participant
-who raises one of these unprompted.
+Sensitive-evidence boundary (issue 06, resolved 2026-08-24 — defaults set and enforced in-prototype, locked by assertions): no raw image bytes leave the device; only the evidence SUMMARY `{kind, summary, at}` crosses into any Agent / reconstruction / export context, so faces, documents, screens, addresses, receipts, and labels in a box photo are all protected by one rule (no per-class redaction). Retention is on-device only with user-initiated deletion; the pre-shutter disclosure above is the consent surface. This test does NOT re-litigate the boundary — it measures whether real users UNDERSTAND and TRUST it. Note any participant who raises one of these classes unprompted, or who assumes the photo "goes to the cloud" (a misunderstanding of the on-device default).
 
 ## 7. Longitudinal arm (falsification #1 & #2 — the part that actually matters)
 
