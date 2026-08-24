@@ -26,7 +26,7 @@ import { buildHouseholdRecords } from "./scale-fixture.ts";
 import { runAgentEval, formatEvalReport, EVAL_JOBS } from "./agent-eval.ts";
 import type { EvalJob } from "./agent-eval.ts";
 import type {
-  BelongingEntity, Catalog, CapabilityProfile, DeepReadonly, KitOperationView, LocateAnswer, LocateSuccess, PhotoMedia, StorageLike, Store, StoreOptions
+  BelongingEntity, CaptureModality, Catalog, CapabilityProfile, DeepReadonly, KitOperationView, LocateAnswer, LocateSuccess, PhotoMedia, StorageLike, Store, StoreOptions
 } from "./types.ts";
 
 const pkgRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -512,6 +512,23 @@ section("P0.2 container memory", () => {
   vrtReload.importJson(vrt.exportJson());
   const vrtObs = vrtReload.state.observations.find((o) => o.type === "container_snapshot");
   assert("snapshot-modality-roundtrips", vrtObs?.payload?.modality === "voice", JSON.stringify(vrtObs?.payload));
+
+  // Audit locks (voice-capture slice): the modality tag is field-test provenance,
+  // so it is validated at BOTH edges — a forged/garbage value must never persist
+  // and corrupt the typed-vs-voice arm's data.
+  // Write edge: an explicitly invalid modality fails loud BEFORE the ledger write
+  // (the default "typed" covers the omitted case; only an invalid *value* throws).
+  const obsBeforeReject = voiceStore.state.observations.length;
+  expectThrow(() => voiceStore.snapshotContainer("entry-tray", "odd item", null, "bogus" as CaptureModality), /modality must be "typed" or "voice"/i);
+  assert("snapshot-invalid-modality-rejected-before-ledger-write", voiceStore.state.observations.length === obsBeforeReject);
+  // Import edge: a tampered dump carrying a forged modality fails closed (nothing
+  // is loaded), mirroring the recall-tag import-forgery lock (audit-a1).
+  const forgedDump = vrt.exportJson();
+  const forgedRecord = forgedDump.records.find((r) => r.recordType === "observation" && (r as { type?: string }).type === "container_snapshot") as { payload?: Record<string, unknown> } | undefined;
+  if (forgedRecord?.payload) forgedRecord.payload.modality = "carrier-pigeon";
+  const forgedReload = fresh({ catalog: emptyCatalog, seedFactory: () => [] });
+  expectThrow(() => forgedReload.importJson(forgedDump), /payload.modality has unsupported value/i);
+  assert("snapshot-import-rejects-forged-modality", forgedReload.state.observations.length === 0);
 });
 
 // =====================================================================
@@ -3393,6 +3410,28 @@ async function runBrowserSmoke(): Promise<void> {
         resolve(textarea.value === "typed-marker-9001" && honestlyEngaged);
       }, 400);
     })`));
+
+    // Honest degradation where the Web Speech API is genuinely absent (Firefox,
+    // or a locked-down browser): the button still renders (typing always works)
+    // but the UI says voice is unavailable, and a click toasts the honest
+    // fallback rather than pretending to listen. Headless Chrome HAS the API, so
+    // this test removes it, re-renders, asserts, then restores it.
+    assert("dom-snapshot-voice-degrades-honestly-when-api-absent", await evalPage<boolean>(`(() => {
+      const orig = { sr: window.SpeechRecognition, wsr: window.webkitSpeechRecognition };
+      delete window.SpeechRecognition;
+      delete window.webkitSpeechRecognition;
+      window.nestory.openContainer("entry-tray");
+      const button = document.querySelector('[data-testid="snapshot-voice"]');
+      const hint = button instanceof HTMLButtonElement ? button.nextElementSibling : null;
+      const rendersUnavailable = button instanceof HTMLButtonElement
+        && (hint?.textContent?.includes("voice unavailable in this browser") ?? false)
+        && (button.getAttribute("title")?.includes("isn't supported in this browser") ?? false);
+      if (button instanceof HTMLButtonElement) button.click();
+      const honestToast = (document.querySelector('#toast-root')?.textContent ?? '').includes("Voice input isn't supported in this browser");
+      if (orig.sr) window.SpeechRecognition = orig.sr;
+      if (orig.wsr) window.webkitSpeechRecognition = orig.wsr;
+      return rendersUnavailable && honestToast;
+    })()`));
 
     // Photo evidence renders in the review inbox (data URL injected via the store).
     const photoProposalId = await evalPage<string>(`window.nestory.store.snapshotContainer("entry-tray", "usb-c charger", { dataUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACw=", width: 1, height: 1 })`);

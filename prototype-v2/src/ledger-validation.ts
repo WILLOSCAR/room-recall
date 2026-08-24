@@ -14,6 +14,7 @@ const EVIDENCE_KINDS = new Set(["user_confirmation", "seed_import", "negative_re
 // validator still enforces its shape + reference so a crafted import cannot forge
 // outcomes from nothing (or from garbage) on the way back in.
 const RECALL_KINDS = new Set(["location", "ownership"]);
+const CAPTURE_MODALITIES = new Set(["typed", "voice"]);
 const OBSERVATION_TYPES = new Set(["container_snapshot", "not_there_report", "duplicate_suspected", "stale_container_flag", "manual_note", "release_intent", "declutter_deferred"]);
 const PROPOSAL_TYPES = new Set(["placement_correction", "contents_update", "duplicate_merge", "container_refresh", "release_decision"]);
 const PLACE_TYPES = new Set(["room", "furniture", "container", "state"]);
@@ -280,7 +281,16 @@ export function validatedLedgerRecords(data: unknown, source: string): AnyRecord
       optionalString(record["itemId"], `${path}.itemId`);
       optionalString(record["containerId"], `${path}.containerId`);
       if (record["photo"] !== undefined) media(record["photo"], `${path}.photo`);
-      if (record["payload"] !== undefined) object(record["payload"], `${path}.payload`);
+      if (record["payload"] !== undefined) {
+        const payload = object(record["payload"], `${path}.payload`);
+        // `modality` is local-only capture provenance (field-test typed-vs-voice
+        // arm). It is not a truth source, but a forged value would corrupt the
+        // field-test data — validate it the same way the recall tag is validated,
+        // so a tampered dump fails closed instead of silently mislabeling captures.
+        if (record["type"] === "container_snapshot" && payload["modality"] !== undefined && payload["modality"] !== null) {
+          oneOf(payload["modality"], CAPTURE_MODALITIES, `${path}.payload.modality`);
+        }
+      }
     } else if (type === "proposal") {
       oneOf(record["type"], PROPOSAL_TYPES, `${path}.type`);
       strings(record["sourceObservationIds"], `${path}.sourceObservationIds`);

@@ -54,7 +54,11 @@ Record per participant: age band, tech-comfort (1–5), move recency, renter/own
   spoken, not typed. Log which modality each participant chooses.
 - Instrumentation: the store's `recallOutcomes()` read-model gives the moderator a
   deterministic `firstAt` (first confirmed recall) and the 30-day outcome count;
-  the moderator also records wall-clock, taps, and corrections on the scoresheet
+  the `modality` tag (`"typed"`/`"voice"`) on each `container_snapshot`
+  observation is the deterministic record of the typed-vs-voice arm — read it
+  from the export JSON, not from memory (the tag is validated at both the write
+  and import edges, so a tampered dump cannot silently mislabel a capture). The
+  moderator also records wall-clock, taps, and corrections on the scoresheet
   (§5). The prototype's own clock is the backup.
 
 ## 4. The task — un-staged, with a real miss (revisions #1, #2)
@@ -87,7 +91,7 @@ just-packed box" in the same session, PLUS a scheduled post-arrival verification
 | Post-commit "Not there" events | reached the different-box item? | reachable, not forced |
 | Privacy surprises | any hesitation/question about the photo (§6) | 0 on the fast lane |
 | Retrieved what they cared about | did they find the FORGOTTEN item? | yes |
-| Capture modality | typed vs voice | log only |
+| Capture modality | `modality` tag on the snapshot observation (export JSON) + moderator cross-check | log only |
 | Stated return trigger | "would you open this again, and why?" | verbatim |
 
 The first six map directly to issue 02's metric and issue 03's five axes. Record

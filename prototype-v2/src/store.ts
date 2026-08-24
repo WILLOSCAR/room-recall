@@ -1926,6 +1926,15 @@ export function createStore(options: StoreOptions): Store {
     const c = containerOf(containerId);
     if (!c) throw new DomainInputError("Unknown container");
     const normalizedSeenText = boundedInput(seenText, "Snapshot text", 4_000);
+    // `modality` is local-only capture provenance (field-test protocol revision #4:
+    // log typed-vs-voice per participant). It rides the observation payload — it is
+    // metadata about HOW the sentence was captured, never a truth source or media.
+    // Validated at the write edge (and again at import) so a forged/garbage value
+    // can't corrupt the field-test arm's typed-vs-voice data. The default ("typed")
+    // covers the omitted case; an explicitly invalid value fails loud.
+    if (modality !== "typed" && modality !== "voice") {
+      throw new DomainInputError(`Snapshot modality must be "typed" or "voice".`);
+    }
     const tokens = [...new Set(normalizedSeenText.split(/[,;]+/).map((token) => token.trim().toLowerCase()).filter(Boolean))];
     if (tokens.length > 100) throw new DomainInputError("Snapshot text must contain at most 100 distinct labels.");
     // `modality` is local-only capture provenance (field-test protocol revision #4:
