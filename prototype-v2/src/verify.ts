@@ -1539,6 +1539,71 @@ section("release enactment (declutter commit path)", () => {
     JSON.stringify(p6?.suggestedOps.map((o) => o.type)));
 });
 
+// Hardening (adversarial audit of the release/reaffirm code): four confirmed defects,
+// each locked here.
+
+// Rank 5: the placement-ending contradict is decided at ACCEPT time from the LIVE
+// placement, not frozen at propose time — so a disposal accepted after the item was
+// re-placed still ends the current placement (no stale-placement corruption on reverse).
+section("release ends whatever placement is live at accept time", () => {
+  const id = "black-training-shirt";
+  const store = fresh();
+  store.acceptProposal(store.proposeRelease(id, "donate").proposalId);  // retire + contradict
+  store.setItemState(id, "at_home");                                     // documented reversal → place-unknown + at_home
+  const rel = store.proposeRelease(id, "sell");                          // active == null at propose time
+  store.correctPlacement(id, { type: "container", id: "wardrobe-second-drawer" }); // fresh active placement
+  store.acceptProposal(rel.proposalId);
+  assert("accept-ends-live-placement", store.belongingView(id)?.placement == null, "placement still active after release");
+  store.setItemState(id, "at_home");
+  assert("reversal-yields-no-stale-placement", store.belongingView(id)?.placement == null);
+});
+
+// Rank 1: re-homing an item that was surfaced under a flag (missing/lent_out/…)
+// clears that flag — otherwise locate keeps calling it missing and declutter nags forever.
+section("re_home clears the flag it was offered to resolve", () => {
+  const store = fresh();
+  store.setItemState("winter-jacket", "missing");
+  const r = store.proposeRelease("winter-jacket", "re_home");
+  store.acceptProposal(r.proposalId, { placeRef: { type: "container", id: "wardrobe-rail" } });
+  assert("re_home-resets-lifecycle", store.lifecycleOf("winter-jacket") === "at_home", store.lifecycleOf("winter-jacket"));
+  assert("re_home-locate-not-flagged", !expectOk(store.locateById("winter-jacket")).sentence.includes("missing"));
+  assert("re_home-leaves-declutter", !store.declutterReview().candidates.some((c) => c.itemId === "winter-jacket"));
+  // lent_out variant (correctPlacement omits it from its reset list; re_home must not).
+  const s2 = fresh();
+  s2.setItemState("laundry-bag", "lent_out");
+  const r2 = s2.proposeRelease("laundry-bag", "re_home");
+  s2.acceptProposal(r2.proposalId, { placeRef: { type: "container", id: "wardrobe-rail" } });
+  assert("re_home-clears-lent-out", s2.lifecycleOf("laundry-bag") === "at_home", s2.lifecycleOf("laundry-bag"));
+});
+
+// Rank 4: acting on one item of an exactly-two duplicate pair must NOT silently drop
+// its un-acted partner (group over un-suppressed inventory; suppress only at emission).
+section("declutter keeps the un-acted partner of a duplicate pair", () => {
+  const store = fresh();
+  const dup = () => store.declutterReview().candidates.filter((c) => c.reason === "duplicate_kind").map((c) => c.itemId);
+  assert("dup-pair-baseline", dup().includes("large-towel") && dup().includes("small-towel"), dup().join(","));
+  store.deferDeclutter("large-towel");
+  const after = dup();
+  assert("dup-partner-survives", after.includes("small-towel"), after.join(","));
+  assert("acted-item-suppressed", !after.includes("large-towel"), after.join(","));
+});
+
+// Rank 3: attention().uncertainItems must not surface a gone (retired) item, even when
+// a later re-placement left it with an active placement.
+section("attention hides gone items even with an active placement", () => {
+  let clock = NOW;
+  const store = fresh({ now: () => clock });
+  const rel = store.proposeRelease("black-training-shirt", "discard");
+  const nt = store.markNotThere("black-training-shirt");
+  store.acceptProposal(rel.proposalId);                                                     // retire (contradicts placement)
+  store.acceptProposal(nt.proposalId, { placeRef: { type: "container", id: "desk-drawer" } }); // re-creates active placement
+  assert("gone-with-active-placement-reachable",
+    store.lifecycleOf("black-training-shirt") === "retired" && store.belongingView("black-training-shirt")?.placement != null,
+    `state=${store.lifecycleOf("black-training-shirt")}`);
+  clock = NOW + 31 * 86_400_000;
+  assert("attention-excludes-gone", !store.attention().uncertainItems.some((v) => v.id === "black-training-shirt"));
+});
+
 section("home capability (ready loop)", () => {
   // --- integration over the REAL seed catalog: honest mixed results ---
   const store = fresh();
@@ -3108,6 +3173,27 @@ async function runBrowserSmoke(): Promise<void> {
       const after = window.nestory.store.lifecycleOf(itemId);
       const pending = window.nestory.store.proposals('pending').some((p) => p.type === 'release_decision');
       return stillOnView && before === after && after !== 'retired' && pending;
+    })()`));
+    // Rank 2 (highest trust): a released (retired) item must NOT survive as a
+    // present-tense HAVE in a FROZEN ui cache. Search in Find, then release+accept —
+    // the publish→reconcile subscription re-derives ui.findResult from its query, so
+    // the cached card flips to retired with no manual re-query in the handler.
+    assert("dom-released-item-not-cached-as-have", await evalPage<boolean>(`(() => {
+      window.nestory.store.reset();
+      window.nestory.setView('recall');
+      document.querySelector('[data-testid="recall-tab-find"]')?.click();
+      const input = document.getElementById('find-input');
+      if (!(input instanceof HTMLInputElement)) return false;
+      input.value = 'large towel';
+      document.querySelector('[data-testid="btn-recall-find"]')?.click();
+      const before = window.nestory.ui.findResult;
+      if (!before || !before.ok || before.state === 'retired') return false; // precondition: a live HAVE
+      const rel = window.nestory.store.proposeRelease('large-towel', 'donate');
+      window.nestory.store.acceptProposal(rel.proposalId);
+      // read the FROZEN cache — reconcile ran on publish, no handler re-query here
+      const after = window.nestory.ui.findResult;
+      const hitStale = (window.nestory.ui.findHits ?? []).some((h) => h.itemId === 'large-towel');
+      return Boolean(after) && after.ok && after.state === 'retired' && after.nextAction !== 'confirm_here' && !hitStale;
     })()`));
     await shot("nestory-recall.png");
 

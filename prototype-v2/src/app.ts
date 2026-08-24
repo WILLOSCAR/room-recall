@@ -2792,9 +2792,10 @@ document.addEventListener("click", (e) => {
       const itemId = t.dataset.item;
       if (!itemId) break;
       controlReturnFocus = focusBookmark(t);
-      const out = act(() => store.reaffirmPlacement(itemId), "Confirmed — record refreshed.");
-      // Re-run the recall so the refreshed freshness/confidence shows immediately.
-      if (out && ui.ownershipQuery) { ui.ownershipResult = store.ownershipRecall(ui.ownershipQuery); render(); }
+      // reaffirmPlacement publishes; reconcileCachesToStore refreshes the Reuse card
+      // AND any ask-log ownership entry (works on the Ask surface where
+      // ui.ownershipQuery is empty too — Rank 6). Just render.
+      if (act(() => store.reaffirmPlacement(itemId), "Confirmed — record refreshed.")) render();
       break;
     }
     case "capability-check": doCapabilityCheck(inputValue("capability-input")); break;
@@ -2842,16 +2843,12 @@ document.addEventListener("click", (e) => {
       const itemId = t.dataset.item;
       if (!itemId) break;
       controlReturnFocus = focusBookmark(t);
-      const out = act(() => store.reaffirmPlacement(itemId), "Confirmed — record refreshed.");
-      if (out) {
-        const refreshed = store.locateById(itemId);
-        ui.lastAnswer = refreshed;
-        if (ui.view === "recall" && ui.recallTab === "find") {
-          ui.findResult = refreshed;
-          ui.findHits = store.whichContainerHas(ui.findQuery || (refreshed.ok ? refreshed.item : ""));
-        }
+      // reaffirmPlacement publishes → reconcileCachesToStore refreshes lastAnswer +
+      // the Find cache from their stored queries. We only need to announce here.
+      if (act(() => store.reaffirmPlacement(itemId), "Confirmed — record refreshed.")) {
         render();
-        announce(refreshed.sentence);
+        const refreshed = store.locateById(itemId);
+        if (refreshed.ok) announce(refreshed.sentence);
       }
       break;
     }
@@ -3291,6 +3288,34 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// Cache coherence on every store write: the Recall/Home/Ask cards hold FROZEN
+// snapshots (ui.findResult, ui.ownershipResult, …, and ask-log replies). A commit
+// elsewhere — most importantly a Release that retires an item — must not leave a
+// gone item rendered as a present-tense HAVE in one of those snapshots. Re-derive
+// each from its stored query BEFORE the render fires. Runs on the store's own
+// publish→subscribe, so it covers writes from any surface (Review Accept included).
+function reconcileCachesToStore(): void {
+  if (ui.findQuery) {
+    ui.findResult = store.locate(ui.findQuery);
+    ui.findHits = store.whichContainerHas(ui.findQuery);
+  }
+  if (ui.ownershipQuery) ui.ownershipResult = store.ownershipRecall(ui.ownershipQuery);
+  if (ui.capabilityQuery) ui.capabilityResult = store.homeCapability(ui.capabilityQuery);
+  // lastAnswer has no stored query — re-derive from its item id so a retired item
+  // can't survive as a stale HAVE on Home; drop it if the item is gone.
+  if (ui.lastAnswer?.ok) {
+    const refreshed = store.locateById(ui.lastAnswer.itemId);
+    ui.lastAnswer = refreshed.ok ? refreshed : null;
+  }
+  // Ask log entries are frozen replies; refresh any ownership card that lists a
+  // still-present item so a committed reuse/release is reflected (Rank 6).
+  for (const entry of ui.askLog) {
+    const o = entry.reply?.ownership;
+    if (o && entry.reply) entry.reply.ownership = store.ownershipRecall(o.query) as OwnershipRecallAnswer;
+  }
+}
+
+store.subscribe(reconcileCachesToStore);
 store.subscribe(requestRender);
 compactHomeQuery.addEventListener("change", requestRender);
 

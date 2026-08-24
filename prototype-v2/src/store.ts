@@ -34,6 +34,10 @@ const UNAVAILABLE_STATES: readonly LifecycleState[] = ["laundry", "drying", "len
 // and declutterReview must all agree that consumed/retired items are gone.
 const GONE_STATES: readonly LifecycleState[] = ["consumed", "retired"];
 const NOT_HANDY_STATES: readonly LifecycleState[] = ["laundry", "drying", "lent_out", "missing", "in_transit", "packed"];
+// Non-at-home lifecycle flags that a re-home/correction resolves — re-placing an
+// item means it's back home. Includes lent_out (declutter surfaces it via
+// FLAGGED_STATES, so a re_home must clear it or the item nags forever).
+const RETURNS_HOME_STATES: readonly LifecycleState[] = ["packed", "with_me", "laundry", "drying", "missing", "in_transit", "lent_out"];
 const OPERATION_STATUSES = new Set<OperationStatus>(OPERATION_STATUS_VALUES);
 const SEARCH_CACHE_LIMIT = 32;
 const SEARCH_MATCH_CACHE_LIMIT = 8;
@@ -1206,7 +1210,7 @@ export function createStore(options: StoreOptions): Store {
     const all = searchBelongings("");
     attentionCache = deepFreeze({
       staleContainers: staleContainers(),
-      uncertainItems: all.filter((v) => v.placement && (v.confidence < 0.45 || (v.daysSinceUpdate ?? 0) > 30)),
+      uncertainItems: all.filter((v) => v.placement && !GONE_STATES.includes(v.state) && (v.confidence < 0.45 || (v.daysSinceUpdate ?? 0) > 30)),
       missingItems: all.filter((v) => v.state === "missing"),
       pendingProposals: state.proposals.filter((p) => p.status === "pending").length
     });
@@ -1239,7 +1243,11 @@ export function createStore(options: StoreOptions): Store {
         .map((o) => o.itemId as string)
     );
     const suppressed = (id: string): boolean => pendingReleaseIds.has(id) || deferredIds.has(id);
-    const all = searchBelongings("").filter((v) => !v.mergedInto && !DECLUTTER_GONE.includes(v.state) && !suppressed(v.id));
+    // Group over the UN-suppressed inventory so duplicate bucket counts reflect what
+    // the user actually owns — suppression is applied only at EMISSION (in push).
+    // Otherwise acting on one item of an exactly-two pair would drop its partner
+    // below the `items.length < 2` threshold and silently hide it too.
+    const all = searchBelongings("").filter((v) => !v.mergedInto && !DECLUTTER_GONE.includes(v.state));
     // group by kind to detect duplicates (2+ sharing a primary kind)
     const byKind = new Map<string, typeof all>();
     for (const v of all) {
@@ -1252,7 +1260,7 @@ export function createStore(options: StoreOptions): Store {
     const seen = new Set<string>();
     const baseOptions: DeclutterOption[] = ["keep", "re_home", "reuse", "sell", "donate", "recycle", "discard", "defer"];
     const push = (v: (typeof all)[number], reason: DeclutterReason, because: string, duplicateOf: string[] = []) => {
-      if (seen.has(v.id)) return;
+      if (seen.has(v.id) || suppressed(v.id)) return; // suppressed = already acted on this cycle
       seen.add(v.id);
       candidates.push({
         itemId: v.id, item: v.name, reason, because,
@@ -1785,15 +1793,21 @@ export function createStore(options: StoreOptions): Store {
     const label = RELEASE_LABEL[disposition];
     const obs = append<ObservationRecord>({ recordType: "observation", id: id("obs"), type: "release_intent", at: nowIso(), itemId, payload: { disposition } });
     appendEvidence("user_confirmation", `You chose to ${label} ${b.name} during a declutter review`);
-    const active = state.placements.get(itemId)?.active ?? null;
+    // The placement-ending contradict is decided at ACCEPT time (in acceptProposal),
+    // not baked here — otherwise a disposal accepted after the item was re-placed
+    // would retire it while leaving a stale active placement (the propose-time
+    // snapshot of `active` would be wrong). Mirrors the duplicate_merge precedent.
     if (disposition === "re_home") {
       const proposal = append<ProposalRecord>({
         recordType: "proposal", id: id("proposal"), type: "placement_correction", at: nowIso(),
         sourceObservationIds: [obs.id], needsPlace: true,
         summary: `${b.name}: end its current placement and re-home it. Where does it go now?`,
         suggestedOps: [
-          ...(active ? [{ type: "contradict_placement", itemId, reason: "release_re_home" } as CommitOp] : []),
-          { type: "create_placement", itemId, placeRef: null, relation: "inside", confidence: 0.9 }
+          { type: "create_placement", itemId, placeRef: null, relation: "inside", confidence: 0.9 },
+          // Re-homing an item resolves the flag it was surfaced under (missing /
+          // lent_out / etc.) — otherwise locate keeps calling it missing and it nags
+          // in declutter forever. Mirrors correctPlacement's lifecycle reset.
+          ...(RETURNS_HOME_STATES.includes(lifecycleOf(itemId)) ? [{ type: "set_state", itemId, state: "at_home" } as CommitOp] : [])
         ]
       });
       return { observationId: obs.id, proposalId: proposal.id };
@@ -1803,7 +1817,6 @@ export function createStore(options: StoreOptions): Store {
       sourceObservationIds: [obs.id], needsPlace: false,
       summary: `${label} ${b.name} — ends its home placement and retires it from active memory. Reversible from the ledger.`,
       suggestedOps: [
-        ...(active ? [{ type: "contradict_placement", itemId, reason: `release_${disposition}` } as CommitOp] : []),
         { type: "set_state", itemId, state: "retired" }
       ]
     });
@@ -1925,6 +1938,29 @@ export function createStore(options: StoreOptions): Store {
       const mergeOp = ops.find((o): o is Extract<CommitOp, { type: "merge_belongings" }> => o.type === "merge_belongings");
       if (mergeOp && state.placements.get(mergeOp.mergeId)?.active) {
         ops.push({ type: "contradict_placement", itemId: mergeOp.mergeId, reason: "merged_duplicate" });
+      }
+    }
+    // Release / re-home proposals end the placement that is LIVE at accept time, not
+    // whatever was active when the proposal was drafted. Injecting the contradict
+    // here (from current state) makes the disposal always end the current placement
+    // and keeps the ledger reversible; the idempotence guard leaves markNotThere /
+    // snapshot proposals (which bake their own contradict) untouched. The contradict
+    // must precede any create_placement for the same item (derive() applies ops in
+    // order; a contradict after create_placement would nuke the new placement), so
+    // for re-home we splice it in front of that op; a pure disposal (set_state only)
+    // can append at the end.
+    if (p.type === "release_decision" || p.type === "placement_correction") {
+      const targets = new Set<string>();
+      for (const op of p.suggestedOps) {
+        if (op.type === "set_state" || op.type === "create_placement") targets.add(op.itemId);
+      }
+      for (const target of targets) {
+        if (!state.placements.get(target)?.active) continue;
+        if (ops.some((o) => o.type === "contradict_placement" && o.itemId === target)) continue;
+        const contradict: CommitOp = { type: "contradict_placement", itemId: target, reason: "release_accept" };
+        const createIdx = ops.findIndex((o) => o.type === "create_placement" && o.itemId === target);
+        if (createIdx >= 0) ops.splice(createIdx, 0, contradict);
+        else ops.push(contradict);
       }
     }
     ops.push({ type: "accept_proposal", proposalId });

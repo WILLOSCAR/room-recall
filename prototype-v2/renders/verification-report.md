@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-24T08:42:23.671Z
+Generated: 2026-08-24T13:33:35.827Z
 Runtime: node v26.7.0 · typescript strict
-- Assertions: 575
-- Passed: 575
+- Assertions: 587
+- Passed: 587
 - Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 1.800 ms
-- Household UI DOM-commit p95: 4.800 ms
+- UI DOM-commit p95: 2.100 ms
+- Household UI DOM-commit p95: 5.900 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -288,6 +288,21 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `release-rehome-needs-place`
 - ✓ `release-rehome-accept-without-place-throws`
 - ✓ `release-disposal-proposal-shape`
+## release ends whatever placement is live at accept time
+- ✓ `accept-ends-live-placement`
+- ✓ `reversal-yields-no-stale-placement`
+## re_home clears the flag it was offered to resolve
+- ✓ `re_home-resets-lifecycle`
+- ✓ `re_home-locate-not-flagged`
+- ✓ `re_home-leaves-declutter`
+- ✓ `re_home-clears-lent-out`
+## declutter keeps the un-acted partner of a duplicate pair
+- ✓ `dup-pair-baseline`
+- ✓ `dup-partner-survives`
+- ✓ `acted-item-suppressed`
+## attention hides gone items even with an active placement
+- ✓ `gone-with-active-placement-reachable`
+- ✓ `attention-excludes-gone`
 ## home capability (ready loop)
 - ✓ `capability-matches-profile`
 - ✓ `capability-not-ready-when-required-missing`
@@ -510,6 +525,7 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `dom-recall-ready-stop-has-map-button`
 - ✓ `dom-recall-release-runs`
 - ✓ `dom-release-disposal-opens-review-without-committing`
+- ✓ `dom-released-item-not-cached-as-have`
 - ✓ `mobile-nav-reaches-home`
 - ✓ `mobile-nav-reaches-ask`
 - ✓ `mobile-nav-reaches-recall`
