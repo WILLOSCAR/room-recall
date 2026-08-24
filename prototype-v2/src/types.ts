@@ -786,6 +786,7 @@ export interface Store {
   createBelonging(input: CreateBelongingInput): string;
   setItemState(itemId: string, lifecycle: LifecycleState): void;
   correctPlacement(itemId: string, placeRef: PlaceRef, opts?: { relation?: Relation; note?: string | null }): CommitRecord;
+  reaffirmPlacement(itemId: string): CommitRecord;
   markNotThere(itemId: string): { observationId: string; proposalId: string };
   snapshotContainer(containerId: string, seenText: string, photo?: PhotoMedia | null): string;
   acceptProposal(proposalId: string, extra?: { placeRef?: PlaceRef; placementOverrides?: Record<string, PlaceRef>; mergeKeepId?: string }): CommitRecord;

@@ -137,7 +137,12 @@ export function ask(store: Store, toolkit: AgentToolkit, raw: string): AskReply 
       return t.length > 0 && (lower === t || lower.includes(t));
     })
   );
-  if (capabilityActivity && !/\bkit\b/.test(lower)) {
+  if (capabilityActivity && !/\bkit\b/.test(lower)
+    // …but a bare activity noun ("camping", "wfh") must NOT swallow a Retrieve or
+    // Release request that merely mentions it. "where is my camping lantern" is a
+    // Locate; "declutter my camping gear" is a Declutter. Only route to capability
+    // when the query isn't clearly asking to find or let go of something.
+    && !/\b(where|wheres|find|locate|which|get rid|declutter|clean out|let go|sell|donate|toss|throw)\b/.test(lower)) {
     const capability = call<HomeCapabilityResult>("home_capability", { intent: text });
     return { intent: "capability", toolCalls, capability, text: capability.sentence };
   }

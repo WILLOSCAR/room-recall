@@ -509,6 +509,61 @@ section("P0.3 find and correct", () => {
   assert("commit-lineage-to-proposal", commit.sourceProposalId === proposalId && (commit.sourceObservationIds ?? []).includes(observationId));
 });
 
+// Gone-state honesty across the whole Retrieve loop: a consumed/retired item must
+// never be reported as a present-tense HAVE by locate, which-box, or contents.
+section("gone-state never fabricates a present-tense HAVE", () => {
+  const store = fresh();
+  // black-training-shirt is placed inside wardrobe-second-drawer in the seed.
+  const before = expectOk(store.locate("black training shirt"));
+  assert("gone-precondition-located-in-container", /probably|might be/i.test(before.sentence) && before.chainText.includes("drawer"), before.sentence);
+
+  store.setItemState("black-training-shirt", "consumed");
+  const consumed = expectOk(store.locate("black training shirt"));
+  assert("locate-consumed-is-past-tense",
+    /used up/i.test(consumed.sentence) && !/probably|might be/i.test(consumed.sentence),
+    consumed.sentence);
+  // A gone item must NOT offer the positive "found it here — confirm" affordance.
+  assert("locate-consumed-not-confirmable", consumed.nextAction !== "confirm_here", consumed.nextAction);
+  // which-box and contents must agree it's no longer boxed. (The fuzzy query can
+  // still return sibling training items that share kinds — the invariant is that
+  // the CONSUMED item itself never appears, not that the list is empty.)
+  assert("which-box-excludes-consumed",
+    !store.whichContainerHas("black training shirt").some((h) => h.itemId === "black-training-shirt"),
+    JSON.stringify(store.whichContainerHas("black training shirt").map((h) => h.itemId)));
+  assert("contents-excludes-consumed",
+    !(store.containerContents("wardrobe-second-drawer")?.items ?? []).some((i) => i.id === "black-training-shirt"));
+
+  store.setItemState("black-training-shirt", "retired");
+  const retired = expectOk(store.locate("black training shirt"));
+  assert("locate-retired-is-past-tense", /retired/i.test(retired.sentence) && !/probably|might be/i.test(retired.sentence), retired.sentence);
+});
+
+// The positive half of the flywheel: reaffirmPlacement freshens a placed item's
+// record (raising confidence, resetting age) without logging a spurious correction,
+// and for a place-unknown owned item it records ownership without inventing a place.
+section("reaffirm placement closes the flywheel on success", () => {
+  const store = fresh();
+  // sport socks is stale in the seed (low confidence, old placement).
+  const stale = expectOk(store.locate("sport socks"));
+  assert("reaffirm-precondition-stale", stale.stale && stale.placement !== null, `${stale.stale} ${stale.daysSinceUpdate}`);
+  assert("reaffirm-nextaction-is-confirm", stale.nextAction === "confirm_here", stale.nextAction);
+  const itemId = stale.itemId;
+  const historyBefore = store.belongingView(itemId)?.history.length ?? 0;
+
+  store.reaffirmPlacement(itemId);
+  const after = expectOk(store.locateById(itemId));
+  assert("reaffirm-refreshes-freshness", (after.daysSinceUpdate ?? 99) === 0 && after.confidence > stale.confidence && !after.stale, `${stale.confidence}->${after.confidence} days=${after.daysSinceUpdate}`);
+  assert("reaffirm-adds-confirmation-evidence", after.evidence.some((e) => e.kind === "user_confirmation"), after.evidence.map((e) => e.kind).join(","));
+  // No correction: history grows by a superseding placement, and the prior active
+  // was NOT contradicted (it was superseded).
+  const view = store.belongingView(itemId);
+  assert("reaffirm-does-not-log-a-correction",
+    (view?.history.length ?? 0) === historyBefore + 1
+    && view?.history.every((h) => h.contradictedReason !== "user_correction"),
+    JSON.stringify(view?.history.map((h) => h.contradictedReason)));
+});
+
+
 // =====================================================================
 // P0.4 Operations and kits
 // =====================================================================
@@ -1311,6 +1366,15 @@ section("ask router", () => {
   assert("ask-capability-does-not-hijack-kit", stillKit.intent === "kit", stillKit.intent);
   const stillLocate2 = ask(store, toolkit, "where is my water bottle?");
   assert("ask-capability-does-not-hijack-locate", stillLocate2.intent === "locate", stillLocate2.intent);
+  // A Locate/Declutter query that merely CONTAINS an activity noun ("camping",
+  // "home workout") must not be swallowed by the capability router.
+  const locateActivityNoun = ask(store, toolkit, "where is my camping lantern");
+  assert("ask-locate-wins-over-activity-noun", locateActivityNoun.intent === "locate", locateActivityNoun.intent);
+  const declutterActivityNoun = ask(store, toolkit, "what can I get rid of from my home workout stuff");
+  assert("ask-declutter-wins-over-activity-noun", declutterActivityNoun.intent === "declutter", declutterActivityNoun.intent);
+  // …but a genuine readiness phrasing that also contains "find"-free activity words still routes to capability.
+  const stillCapability = ask(store, toolkit, "am I ready to go camping?");
+  assert("ask-capability-still-routes-genuine-activity", stillCapability.intent === "capability", stillCapability.intent);
 
   const help = ask(store, toolkit, "???");
   assert("ask-help-fallback", help.intent === "help" && help.toolCalls.length === 0);
@@ -1327,6 +1391,16 @@ section("ownership recall (durable loop)", () => {
   assert("ownership-none-stays-honest",
     none.ok && none.verdict === "none" && none.ownedCount === 0 && none.matches.length === 0
     && /only speak to what/i.test(none.sentence), none.sentence);
+  // AND-semantics: a partial token overlap ("training mat" shares "training" with the
+  // training shirts, but there is no mat) must NOT fabricate an exact "you already own
+  // one". It falls through to substitute/none — never own_available on the overlap.
+  const partial = store.ownershipRecall("training mat");
+  assert("ownership-partial-overlap-not-fabricated-exact",
+    partial.ok && partial.ownedCount === 0 && partial.verdict !== "own_available",
+    `verdict=${partial.verdict} owned=${partial.ownedCount}`);
+  // …while a genuine whole-query match is still exact.
+  const realExact = store.ownershipRecall("water bottle");
+  assert("ownership-whole-query-still-exact", realExact.ok && realExact.ownedCount >= 1 && realExact.matches[0]?.exact === true, `owned=${realExact.ownedCount}`);
   // gone items (consumed/retired) are not "owned"; a lent/laundry item is owned-but-unavailable.
   const lent = fresh();
   const jacketId = lent.searchBelongings("winter jacket")[0]?.id;
@@ -1348,10 +1422,22 @@ section("declutter review (release)", () => {
     && r.candidates.some((c) => c.reason === "duplicate_kind" && c.duplicateOf.length >= 1), r.sentence);
   assert("declutter-every-candidate-has-observed-reason",
     r.candidates.length > 0 && r.candidates.every((c) => c.because.length > 0 && !/unused|don'?t use/i.test(c.because)), `n=${r.candidates.length}`);
-  assert("declutter-essentials-never-offered-for-disposal",
-    r.candidates.filter((c) => c.importance === "essential").every((c) => !c.options.includes("discard") && !c.options.includes("sell")), "essential got a disposal option");
   assert("declutter-is-decision-support-not-disposal",
     /you decide/i.test(r.sentence) && /never|no item|not/i.test(r.note), r.note);
+  // Non-vacuous guard for the NON-NEGOTIABLE "essentials are never nudged toward
+  // disposal" rule. The seed produces zero essential candidates, so the old
+  // `.every()` over an empty subset passed even if the guard were deleted. Build a
+  // store that actually surfaces an essential candidate (a second essential charger
+  // duplicates the seed usb-c-charger → duplicate_kind), then assert BOTH that the
+  // essential subset is non-empty AND that every option is in the keep/re_home/defer
+  // allow-list (stricter than merely excluding discard/sell).
+  const ess = fresh();
+  ess.createBelonging({ name: "Spare charger", kinds: ["charger"], importance: "essential", defaultHome: { type: "container", id: "desk-drawer" } });
+  const essentials = ess.declutterReview().candidates.filter((c) => c.importance === "essential");
+  assert("declutter-essentials-surface-and-are-never-disposable",
+    essentials.length >= 2 && essentials.every((c) => c.reason === "duplicate_kind"
+      && c.options.every((o) => o === "keep" || o === "re_home" || o === "defer")),
+    `essential candidates=${essentials.length}: ${essentials.map((c) => c.options.join("/")).join(" | ")}`);
   // read-only: calling it changes nothing about the graph.
   const before = store.searchBelongings("").length;
   store.declutterReview();
@@ -2844,6 +2930,28 @@ async function runBrowserSmoke(): Promise<void> {
       const hasAnswer = Boolean(result?.querySelector('[data-testid="answer-card"]'));
       const hasContainer = Boolean(result?.querySelector('[data-testid="which-container-card"]'));
       return hasAnswer && hasContainer && /conf \\d\\.\\d\\d/.test(t);
+    })()`));
+    // Rank 5: a Recall submit keeps keyboard focus on the query input (WCAG 2.4.3),
+    // not dropped to <body> as it was before the refocusInput fix.
+    assert("dom-recall-find-keeps-focus", await evalPage<boolean>(`(() => {
+      const input = document.getElementById('find-input'); if (!(input instanceof HTMLInputElement)) return false;
+      input.value = 'passport';
+      document.querySelector('[data-testid="btn-recall-find"]')?.click();
+      return document.activeElement === document.getElementById('find-input');
+    })()`));
+    // Rank 6: the positive flywheel — a placed find offers "Found it here — confirm",
+    // and confirming appends a user_confirmation + resets freshness (days=0) without
+    // logging a correction. Uses a fresh own-independent probe on the live demo store.
+    assert("dom-recall-find-confirm-refreshes", await evalPage<boolean>(`(() => {
+      const input = document.getElementById('find-input'); if (!(input instanceof HTMLInputElement)) return false;
+      input.value = 'water bottle';
+      document.querySelector('[data-testid="btn-recall-find"]')?.click();
+      const btn = document.querySelector('[data-testid="find-result"] [data-testid="btn-confirm-here"]');
+      if (!(btn instanceof HTMLElement)) return false;
+      const itemId = window.nestory.ui.findResult?.itemId;
+      btn.click();
+      const after = window.nestory.store.locateById(itemId);
+      return after.ok && after.daysSinceUpdate === 0 && after.evidence.some((e) => e.kind === 'user_confirmation');
     })()`));
     // Reuse: switch tab, type a category, run ownership recall.
     assert("dom-recall-reuse-runs", await evalPage<boolean>(`(() => {

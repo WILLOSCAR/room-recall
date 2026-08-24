@@ -1139,6 +1139,7 @@ function ownershipCard(o: DeepReadonly<OwnershipRecallAnswer>): string {
     <span class="grow"><strong>${esc(m.item)}</strong><div class="place">${m.placeKnown ? esc(m.chainText) : "place not confirmed — stays unknown"}${m.available ? "" : ` · ${esc(m.state.replace(/_/g, " "))}`}</div></span>
     <span class="chip ${m.confidence < 0.45 || m.stale ? "amber" : ""}">${m.stale ? "stale · " : ""}conf ${m.confidence.toFixed(2)}</span>
     ${m.placeKnown ? `<button class="small ghost" data-action="locate-on-map" data-item="${esc(m.itemId)}" data-q="${esc(m.item)}" title="Show ${esc(m.item)} on the map">Show on map</button>` : ""}
+    <button class="small ghost" data-action="reuse-confirm" data-item="${esc(m.itemId)}" title="Confirm you still own ${esc(m.item)} — refreshes the record">${m.placeKnown ? "Still here" : "Still own it"}</button>
   </div>`).join("");
   return `<div class="card" style="box-shadow:none;margin-top:8px">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${o.ownedCount} owned · ${o.substituteCount} substitute(s) · ${o.availableCount} available now</span></div>
@@ -1344,16 +1345,29 @@ const RECALL_TABS: ReadonlyArray<{ id: UIState["recallTab"]; icon: string; label
 // Find (Remember/Retrieve): one query answers both "where is it?" (locate) and
 // "which container holds it?" (which-box), so the hub covers the loop the top
 // search bar and Ask handle — with the same evidence contract, in one place.
+// After a Recall submit, render() rebuilds #view and drops focus to <body>. Mirror
+// doAsk: refocus the re-rendered same-id query input (it exists — render is sync),
+// keeping the keyboard/SR user in place across Enter, button, and example-chip paths.
+function refocusInput(id: string): void {
+  const el = document.getElementById(id);
+  if (el instanceof HTMLInputElement) {
+    el.focus();
+    const end = el.value.length;
+    el.setSelectionRange(end, end);
+  }
+}
+
 function doRecallFind(query: string): void {
   const q = query.trim();
   ui.findQuery = q;
-  if (!q) { ui.findResult = null; ui.findHits = null; render(); return; }
+  if (!q) { ui.findResult = null; ui.findHits = null; render(); refocusInput("find-input"); return; }
   const answer = act(() => store.locate(q), null);
   ui.findResult = answer ?? null;
   ui.findHits = act(() => store.whichContainerHas(q), null) ?? null;
   // Pair the located item with the spatial selection so "Show on plan" reinforces.
   if (answer?.ok) setLocateAnswer(answer);
   render();
+  refocusInput("find-input");
   if (answer) announce(answer.sentence);
 }
 
@@ -1362,6 +1376,7 @@ function doOwnershipRecall(query: string): void {
   ui.ownershipQuery = q;
   ui.ownershipResult = q ? act(() => store.ownershipRecall(q), null) : null;
   render();
+  refocusInput("ownership-input");
   if (ui.ownershipResult) announce(ui.ownershipResult.sentence);
 }
 
@@ -1370,6 +1385,7 @@ function doCapabilityCheck(query: string): void {
   ui.capabilityQuery = q;
   ui.capabilityResult = q ? act(() => store.homeCapability(q), null) : null;
   render();
+  refocusInput("capability-input");
   if (ui.capabilityResult) announce(ui.capabilityResult.sentence);
 }
 
@@ -1644,6 +1660,7 @@ function renderAnswerCard(a: DeepReadonly<LocateAnswer> | null): string {
     ${ev ? `<ul class="evidence-list">${ev}</ul>` : ""}
     <div class="muted" style="margin-top:8px">${esc(a.hint)}</div>
     <div class="answer-actions">
+      ${a.nextAction === "confirm_here" ? `<button class="primary" data-action="answer-confirm-here" data-item="${esc(a.itemId)}" data-testid="btn-confirm-here">Found it here — confirm</button>` : ""}
       <button data-action="answer-not-there" data-item="${esc(a.itemId)}" data-testid="btn-not-there">Not there</button>
       <button data-action="answer-show-plan">Show on plan</button>
       <button class="ghost" data-action="open-item" data-id="${esc(a.itemId)}">Open item</button>
@@ -2743,6 +2760,18 @@ document.addEventListener("click", (e) => {
     case "recall-find-example": if (t.dataset.q) doRecallFind(t.dataset.q); break;
     case "ownership-check": doOwnershipRecall(inputValue("ownership-input")); break;
     case "ownership-example": if (t.dataset.q) doOwnershipRecall(t.dataset.q); break;
+    case "reuse-confirm": {
+      // §7.3: a real reuse/confirmation becomes new Evidence and freshens the record
+      // the Reuse loop just flagged as stale. User's tap is the commit; no auto-write,
+      // never invents a place for a place-unknown item.
+      const itemId = t.dataset.item;
+      if (!itemId) break;
+      controlReturnFocus = focusBookmark(t);
+      const out = act(() => store.reaffirmPlacement(itemId), "Confirmed — record refreshed.");
+      // Re-run the recall so the refreshed freshness/confidence shows immediately.
+      if (out && ui.ownershipQuery) { ui.ownershipResult = store.ownershipRecall(ui.ownershipQuery); render(); }
+      break;
+    }
     case "capability-check": doCapabilityCheck(inputValue("capability-input")); break;
     case "capability-example": if (t.dataset.q) doCapabilityCheck(t.dataset.q); break;
     case "locate-on-map": {
@@ -2758,6 +2787,26 @@ document.addEventListener("click", (e) => {
       if (!itemId) break;
       const out = act(() => store.markNotThere(itemId), "Correction opened in Review — nothing was silently overwritten.", { view: "review" });
       if (out) { ui.lastAnswer = store.locateById(itemId); navigate("review"); }
+      break;
+    }
+    case "answer-confirm-here": {
+      // The positive half of the flywheel: the user tells us the record is right,
+      // so we refresh it (the tap IS the commit — no auto-write). Re-render whatever
+      // surface raised it (Home answer card or the Recall Find panel).
+      const itemId = t.dataset.item;
+      if (!itemId) break;
+      controlReturnFocus = focusBookmark(t);
+      const out = act(() => store.reaffirmPlacement(itemId), "Confirmed — record refreshed.");
+      if (out) {
+        const refreshed = store.locateById(itemId);
+        ui.lastAnswer = refreshed;
+        if (ui.view === "recall" && ui.recallTab === "find") {
+          ui.findResult = refreshed;
+          ui.findHits = store.whichContainerHas(ui.findQuery || (refreshed.ok ? refreshed.item : ""));
+        }
+        render();
+        announce(refreshed.sentence);
+      }
       break;
     }
     case "answer-show-plan": navigate("plan"); break;

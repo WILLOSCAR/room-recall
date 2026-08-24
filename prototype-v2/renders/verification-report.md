@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-23T15:49:59.703Z
+Generated: 2026-08-24T06:40:22.553Z
 Runtime: node v26.7.0 · typescript strict
-- Assertions: 546
-- Passed: 546
+- Assertions: 564
+- Passed: 564
 - Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 2.100 ms
-- Household UI DOM-commit p95: 5.700 ms
+- UI DOM-commit p95: 2.400 ms
+- Household UI DOM-commit p95: 6.200 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -81,6 +81,19 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `corrected-answer`
 - ✓ `corrected-evidence-cites-correction`
 - ✓ `commit-lineage-to-proposal`
+## gone-state never fabricates a present-tense HAVE
+- ✓ `gone-precondition-located-in-container`
+- ✓ `locate-consumed-is-past-tense`
+- ✓ `locate-consumed-not-confirmable`
+- ✓ `which-box-excludes-consumed`
+- ✓ `contents-excludes-consumed`
+- ✓ `locate-retired-is-past-tense`
+## reaffirm placement closes the flywheel on success
+- ✓ `reaffirm-precondition-stale`
+- ✓ `reaffirm-nextaction-is-confirm`
+- ✓ `reaffirm-refreshes-freshness`
+- ✓ `reaffirm-adds-confirmation-evidence`
+- ✓ `reaffirm-does-not-log-a-correction`
 ## P0.4 operations and kits
 - ✓ `kit-rows-resolved`
 - ✓ `duplicate-reqs-merge`
@@ -246,17 +259,22 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `ask-capability-bare-activity`
 - ✓ `ask-capability-does-not-hijack-kit`
 - ✓ `ask-capability-does-not-hijack-locate`
+- ✓ `ask-locate-wins-over-activity-noun`
+- ✓ `ask-declutter-wins-over-activity-noun`
+- ✓ `ask-capability-still-routes-genuine-activity`
 - ✓ `ask-help-fallback`
 ## ownership recall (durable loop)
 - ✓ `ownership-owned-cites-place-and-confidence`
 - ✓ `ownership-none-stays-honest`
+- ✓ `ownership-partial-overlap-not-fabricated-exact`
+- ✓ `ownership-whole-query-still-exact`
 - ✓ `ownership-unavailable-is-flagged`
 - ✓ `ownership-tool-dispatches`
 ## declutter review (release)
 - ✓ `declutter-surfaces-duplicates`
 - ✓ `declutter-every-candidate-has-observed-reason`
-- ✓ `declutter-essentials-never-offered-for-disposal`
 - ✓ `declutter-is-decision-support-not-disposal`
+- ✓ `declutter-essentials-surface-and-are-never-disposable`
 - ✓ `declutter-is-read-only`
 - ✓ `declutter-tool-dispatches`
 ## home capability (ready loop)
@@ -473,6 +491,8 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `dom-ask-container-contents-card`
 - ✓ `dom-recall-view-renders`
 - ✓ `dom-recall-find-runs`
+- ✓ `dom-recall-find-keeps-focus`
+- ✓ `dom-recall-find-confirm-refreshes`
 - ✓ `dom-recall-reuse-runs`
 - ✓ `dom-recall-show-on-map-lands-on-plan`
 - ✓ `dom-recall-ready-runs`

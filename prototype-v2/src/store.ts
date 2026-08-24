@@ -29,6 +29,11 @@ const RELATION_PHRASE: Record<Relation, string> = {
 };
 
 const UNAVAILABLE_STATES: readonly LifecycleState[] = ["laundry", "drying", "lent_out", "missing", "in_transit"];
+// Module-scope so every Retrieve/Reuse/Release read shares ONE definition of
+// "no longer owned" — locate, whichContainerHas, containerContents, ownershipRecall
+// and declutterReview must all agree that consumed/retired items are gone.
+const GONE_STATES: readonly LifecycleState[] = ["consumed", "retired"];
+const NOT_HANDY_STATES: readonly LifecycleState[] = ["laundry", "drying", "lent_out", "missing", "in_transit", "packed"];
 const OPERATION_STATUSES = new Set<OperationStatus>(OPERATION_STATUS_VALUES);
 const SEARCH_CACHE_LIMIT = 32;
 const SEARCH_MATCH_CACHE_LIMIT = 8;
@@ -977,14 +982,20 @@ export function createStore(options: StoreOptions): Store {
       uncertain,
       alternates: ctx.alternates ?? [],
       planPin: view.placement ? planPinFor(view.placement.placeRef) : null,
-      nextAction: "mark_not_there"
+      // A placed, still-owned item's primary next action is the positive one —
+      // confirm it's still here (freshens the record, turns the flywheel on success).
+      // Gone (consumed/retired) items are not "here" to confirm; place-unknown items
+      // keep the corrective default.
+      nextAction: view.placement && !GONE_STATES.includes(view.state) ? "confirm_here" : "mark_not_there"
     };
     return deepFreeze({
       ...draft,
       sentence: buildSentence(draft, view),
-      hint: view.placement
-        ? "If it is not there, mark “not there” and I will open a correction."
-        : "Record a placement or run a container snapshot to teach me."
+      hint: GONE_STATES.includes(view.state)
+        ? "This is recorded as gone. If that's wrong, open the item to correct it."
+        : view.placement
+          ? "Found it here? Confirm to keep the record fresh. If it's not there, mark “not there” and I'll open a correction."
+          : "Record a placement or run a container snapshot to teach me."
     });
   }
 
@@ -1000,6 +1011,12 @@ export function createStore(options: StoreOptions): Store {
     if (view.state === "laundry" || view.state === "drying") return `${name} is in the laundry cycle. It normally lives in ${view.defaultHomeText}.`;
     if (view.state === "lent_out") return `${name} is lent out. Last trusted place: ${view.chainText || "unknown"}.`;
     if (view.state === "missing") return `${name} is marked missing. Last trusted place: ${view.chainText || "unknown"}.`;
+    // Gone states: consumed/retired items keep their last placement as HISTORY, but
+    // the sentence must never claim they currently live there — that would invent a
+    // present-tense HAVE from a GONE state (the worst fabrication). Mirrors the way
+    // ownershipRecall / declutterReview / whichContainerHas already exclude GONE_STATES.
+    if (view.state === "consumed") return `${name} is recorded as used up. Last trusted place: ${view.chainText || "unknown"}.`;
+    if (view.state === "retired") return `${name} is retired from your home. Last trusted place: ${view.chainText || "unknown"}.`;
     if (!view.placement) return `I do not have a trusted place for ${name} yet.`;
     const rel = RELATION_PHRASE[view.placement.relation];
     const qualifier = answer.uncertain ? "might be" : "is probably";
@@ -1029,6 +1046,9 @@ export function createStore(options: StoreOptions): Store {
     for (const itemId of activeItemsByContainerCache.get(containerId) ?? []) {
       const b = belongingOf(itemId);
       if (!b || b.mergedInto) continue;
+      // Gone (consumed/retired) items are no longer "in" the container — exclude
+      // them so "what's in box X" agrees with which-box and ownership.
+      if (GONE_STATES.includes(lifecycleOf(itemId))) continue;
       const view = belongingView(itemId);
       if (view) items.push(view);
     }
@@ -1074,6 +1094,9 @@ export function createStore(options: StoreOptions): Store {
     const hits: WhichContainerHit[] = [];
     for (const m of searchBelongings(query)) {
       if (m.placement?.placeRef.type !== "container") continue;
+      // A used-up / retired item is not "in a box" — exclude it, consistent with
+      // ownershipRecall. (packed stays: a packed item genuinely lives in its box.)
+      if (GONE_STATES.includes(m.state)) continue;
       const container = containerOf(m.placement.placeRef.id);
       if (!container) continue;
       hits.push({
@@ -1099,17 +1122,20 @@ export function createStore(options: StoreOptions): Store {
   // over kinds (not one named item), following the same evidence/confidence/
   // freshness contract as locate, and staying honest: owned-but-place-unknown is
   // surfaced, gone items (consumed/retired) are excluded, and an empty result is
-  // "no memory", never a fabricated "you don't own one".
-  const GONE_STATES: readonly LifecycleState[] = ["consumed", "retired"];
-  const NOT_HANDY_STATES: readonly LifecycleState[] = ["laundry", "drying", "lent_out", "missing", "in_transit", "packed"];
+  // "no memory", never a fabricated "you don't own one". GONE_STATES / NOT_HANDY_STATES
+  // are module-scope constants shared with the other Retrieve/Release reads.
   function ownershipRecall(query: string): OwnershipRecallAnswer {
     const q = query.trim();
     const scored = searchBelongings(q);            // ranked over name + kinds
     const qTokens = q.toLowerCase().split(/[\s,]+/).filter((t) => t.length > 1);
     const kindOf = (v: ScoredBelongingView): { matchedKind: string; exact: boolean } => {
-      // exact = a kind or the name literally contains a query token; else substitute.
+      // exact = the item accounts for the WHOLE query (every token appears in a
+      // kind or the name), not just any single token. A lone substring collision
+      // ("water" in a "water pitcher" query matching a Water bottle) must NOT
+      // fabricate "you already own one" — with `every`, a partial overlap stays a
+      // substitute at most, never an exact owned match.
       const hay = [v.name, ...v.kinds].map((s) => s.toLowerCase());
-      const exact = qTokens.length > 0 && qTokens.some((t) => hay.some((h) => h.includes(t)));
+      const exact = qTokens.length > 0 && qTokens.every((t) => hay.some((h) => h.includes(t)));
       const matchedKind = v.kinds[0] ?? v.name;
       return { matchedKind, exact };
     };
@@ -1694,6 +1720,32 @@ export function createStore(options: StoreOptions): Store {
     return appendCommit({ summary: `Correct placement: ${b.name} -> ${chainText(chainFor(placeRef))}`, ops });
   }
 
+  // Positive confirmation — "found it here" / "I still own this". The user is
+  // telling us the CURRENT record is right, so we refresh its freshness without
+  // logging a correction. A place-known item re-affirms its active placement (a new
+  // create_placement at the SAME ref supersedes-without-contradicting, so `at`
+  // refreshes and answerConfidence recovers); a place-unknown owned item gets only
+  // a "still owned" evidence record — we never invent a place ("unknown is not empty").
+  // This is the COMMIT half of the retention flywheel (the user's tap is the commit).
+  function reaffirmPlacement(itemId: string): CommitRecord {
+    const b = belongingOf(itemId);
+    if (!b) throw new DomainInputError("Unknown belonging");
+    const active = state.placements.get(itemId)?.active ?? null;
+    if (active) {
+      const ev = appendEvidence("user_confirmation", `You confirmed ${b.name} is still ${RELATION_PHRASE[active.relation]} ${chainText(chainFor(active.placeRef))}`);
+      return appendCommit({
+        summary: `Confirm placement: ${b.name}`,
+        ops: [{ type: "create_placement", itemId, placeRef: active.placeRef, relation: active.relation, confidence: 0.95, evidenceIds: [ev.id] }]
+      });
+    }
+    // Owned but place unknown: reaffirm ownership only, never fabricate a place.
+    // The user_confirmation evidence is the write-back; the commit records the act
+    // in the ledger (no ops — there is no placement to refresh, and inventing one
+    // would violate "unknown is not empty").
+    appendEvidence("user_confirmation", `You confirmed you still own ${b.name}`);
+    return appendCommit({ summary: `Confirm ownership: ${b.name}`, ops: [] });
+  }
+
   function markNotThere(itemId: string): { observationId: string; proposalId: string } {
     const b = belongingOf(itemId);
     if (!b) throw new DomainInputError("Unknown belonging");
@@ -2044,6 +2096,7 @@ export function createStore(options: StoreOptions): Store {
     createBelonging: (input) => transact(() => createBelonging(input)),
     setItemState: (itemId, lifecycle) => transact(() => setItemState(itemId, lifecycle)),
     correctPlacement: (itemId, placeRef, opts) => transact(() => correctPlacement(itemId, placeRef, opts)),
+    reaffirmPlacement: (itemId) => transact(() => reaffirmPlacement(itemId)),
     markNotThere: (itemId) => transact(() => markNotThere(itemId)),
     snapshotContainer: (containerId, seenText, photo) => transact(() => snapshotContainer(containerId, seenText, photo)),
     acceptProposal: (proposalId, extra) => transact(() => acceptProposal(proposalId, extra)),
