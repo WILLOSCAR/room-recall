@@ -1515,6 +1515,31 @@ section("agent toolkit", () => {
 
   const planOut = toolkit.dispatch("retrieval_plan", { operation_id: store.startOperation("gym") }) as unknown[];
   assert("tool-retrieval-plan", Array.isArray(planOut) && planOut.length >= 3);
+
+  // North-Star integrity (trust contract: system PROPOSES, user COMMITS): a trusted
+  // recall outcome may be minted ONLY by the user's own confirmation verb
+  // (reaffirmPlacement / recordPrePurchaseRecall) — NEVER by the Agent. If a future
+  // edit wired a recall-tagging verb into an Agent tool, the Agent could inflate
+  // Monthly Trusted Recall Outcomes with confirmations the user never made. Lock
+  // both halves: (1) no tool is named for a recall verb; (2) dispatching every
+  // Agent tool leaves recallOutcomes() unchanged — the miswire-catching invariant.
+  const integrityStore = fresh();
+  const integrityKit = createAgentToolkit(integrityStore);
+  const recallVerbNames = ["reaffirm_placement", "record_pre_purchase_recall", "reaffirmPlacement", "recordPrePurchaseRecall"];
+  assert("agent-exposes-no-recall-minting-verb",
+    integrityKit.tools.every((t) => !recallVerbNames.includes(t.name)),
+    integrityKit.tools.map((t) => t.name).join(","));
+  const outcomesBefore = integrityStore.recallOutcomes().outcomes.length;
+  // Drive a representative safe write path through the Agent (snapshot → accept),
+  // plus reads — none may mint a recall outcome.
+  integrityKit.dispatch("ownership_recall", { query: "charger" });
+  integrityKit.dispatch("locate_item", { query: "sport socks" });
+  const agentSnap = integrityKit.dispatch("snapshot_container", { container_id: "entry-tray", seen_text: "usb-c charger" }) as { proposalId: string };
+  integrityKit.dispatch("accept_proposal", { proposal_id: agentSnap.proposalId });
+  integrityKit.dispatch("mark_not_there", { item_id: "water-bottle" });
+  assert("agent-dispatch-cannot-mint-a-recall-outcome",
+    integrityStore.recallOutcomes().outcomes.length === outcomesBefore,
+    `${outcomesBefore} -> ${integrityStore.recallOutcomes().outcomes.length}`);
 });
 
 // =====================================================================
