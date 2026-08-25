@@ -64,6 +64,23 @@ Count `return_trigger ∈ {concrete, vague, none}` per participant. **A majority
 must be reported as the headline, not buried** — activation success does not
 offset it. This is the anti-smoothing commitment.
 
+## 2b. Capture-economics pre-commit (falsification #2 — numeric target)
+
+From [`capture-economics-breakeven.md`](capture-economics-breakeven.md), the cost
+side is grounded in the prototype's real step-counts: Container Snapshot capture ≈
+`4/S` actions per item (S = items per box), correction ≈ 3 actions each. The
+break-even shows the binding constraint is the **correction rate `r`, not capture
+effort**. Pre-committed target for the longitudinal arm (and, as a leading
+indicator, the in-session "Not there → correct" path):
+- **`r > ~17%` (more than ~1 in 6 captured items re-corrected) at a realistic box
+  size is a falsification-#2 signal** — correction cost overtakes the amortized
+  capture cost, the category-killer issue 03 named. Record every correction; report
+  `r` as the headline economic metric, not taps.
+- Avoided-duplicate-purchase value (the `pre_purchase` outcome, ADR-0004) dominates
+  the value side, so the economics clear easily on value magnitude PROVIDED `r`
+  stays under threshold. The test measures `r` and the avoided-purchase count; it
+  does NOT assume the value magnitudes (those stay parameterized).
+
 ## 3. Validity guard — non-circularity (pre-committed, can INVALIDATE the run)
 
 Issue 03 found circular retrieval made wrong answers impossible. The protocol §4
