@@ -195,7 +195,12 @@ export interface PhotoMedia {
  *  user confirmed they still own an item whose place is unknown. Structurally
  *  honest: a placed-item reaffirm can be triggered from either the Find or Reuse
  *  surface, so the tag records what was confirmed, not which button was tapped. */
-export type RecallOutcomeKind = "location" | "ownership";
+export type RecallOutcomeKind = "location" | "ownership" | "pre_purchase";
+// "location"/"ownership" are RETRIEVAL/EXISTENCE recalls (found it / still own it).
+// "pre_purchase" is the AVOIDED-PURCHASE recall: the user checked before buying,
+// found they already own one (or a usable substitute), and committed the decision
+// NOT to buy. It is the economically decisive event of the durable promise and is
+// tracked distinctly so recallOutcomes() can separate retrieval from avoided spend.
 
 export interface EvidenceRecord {
   recordType: "evidence";
@@ -207,8 +212,9 @@ export interface EvidenceRecord {
   /** Present ONLY when this confirmation closes a recall loop — it is the North
    *  Star "Monthly Trusted Recall Outcomes" event. Absent on capture/setup
    *  confirmations (created / placed / packed / unpacked / container-confirmed /
-   *  released), which write memory but do not answer a recall need. Set only by
-   *  `reaffirmPlacement`, the positive commit verb. */
+   *  released), which write memory but do not answer a recall need. Set by the
+   *  positive commit verbs: `reaffirmPlacement` (location/ownership) and
+   *  `recordPrePurchaseRecall` (pre_purchase). */
   recall?: { kind: RecallOutcomeKind; itemId: string };
 }
 
@@ -837,6 +843,10 @@ export interface Store {
   setItemState(itemId: string, lifecycle: LifecycleState): void;
   correctPlacement(itemId: string, placeRef: PlaceRef, opts?: { relation?: Relation; note?: string | null }): CommitRecord;
   reaffirmPlacement(itemId: string): CommitRecord;
+  /** Pre-purchase recall: the user checked before buying, already owns one (or a
+   *  usable substitute), and commits the decision NOT to buy. Tags a distinct
+   *  "pre_purchase" recall outcome. Records the user's decision; never nudges. */
+  recordPrePurchaseRecall(itemId: string, substituteItemId?: string | null): CommitRecord;
   proposeRelease(itemId: string, disposition: "re_home" | "sell" | "donate" | "recycle" | "discard"): { observationId: string; proposalId: string };
   deferDeclutter(itemId: string): CommitRecord;
   markNotThere(itemId: string): { observationId: string; proposalId: string };

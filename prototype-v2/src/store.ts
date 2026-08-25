@@ -1837,6 +1837,38 @@ export function createStore(options: StoreOptions): Store {
     return appendCommit({ summary: `Confirm ownership: ${b.name}`, ops: [] });
   }
 
+  // Pre-purchase recall — the AVOIDED-PURCHASE half of the durable promise. The
+  // user was about to buy something, asked the home first (ownershipRecall), found
+  // they already own one (or a usable substitute), and COMMITS the decision not to
+  // buy. Distinct from reaffirmPlacement: that confirms an item still exists / is
+  // still placed (retrieval/existence); this records that a purchase was AVOIDED
+  // because memory answered. It is the economically decisive North-Star event, so
+  // it is tagged with its own recall kind ("pre_purchase") — never conflated with a
+  // maintenance reaffirm. Trust contract: the system PROPOSES ("you already own
+  // one"), the user COMMITS this; it records the user's decision and never nudges,
+  // shames, or decides the purchase for them. No placement ops — avoiding a buy
+  // changes nothing about where things live; `substituteItemId` (when the avoided
+  // buy was covered by a substitute, not an exact match) is recorded in the summary
+  // for honest provenance. A gone item cannot back an avoided purchase.
+  function recordPrePurchaseRecall(itemId: string, substituteItemId?: string | null): CommitRecord {
+    const b = belongingOf(itemId);
+    if (!b) throw new DomainInputError("Unknown belonging");
+    if (GONE_STATES.includes(lifecycleOf(itemId))) {
+      throw new DomainInputError(`Cannot record a pre-purchase recall against a released/consumed item (${b.name}) — you no longer own it.`);
+    }
+    let via = "";
+    if (substituteItemId != null) {
+      const sub = belongingOf(substituteItemId);
+      if (!sub) throw new DomainInputError("Unknown substitute belonging");
+      if (GONE_STATES.includes(lifecycleOf(substituteItemId))) {
+        throw new DomainInputError(`Cannot cite a released/consumed item (${sub.name}) as a usable substitute.`);
+      }
+      via = ` (using ${sub.name} as a substitute)`;
+    }
+    appendEvidence("user_confirmation", `You decided not to buy another ${b.name}${via} — you already have one`, { kind: "pre_purchase", itemId });
+    return appendCommit({ summary: `Pre-purchase recall: skipped buying ${b.name}`, ops: [] });
+  }
+
   // Release enactment (§5.5 / §6 "释放即结束旧 Placement"). A disposal decision NEVER
   // commits on click: it records the user's choice as an inspectable observation and
   // opens a pending Proposal, so the placement only ends when the user Accepts it in
@@ -2294,6 +2326,7 @@ export function createStore(options: StoreOptions): Store {
     setItemState: (itemId, lifecycle) => transact(() => setItemState(itemId, lifecycle)),
     correctPlacement: (itemId, placeRef, opts) => transact(() => correctPlacement(itemId, placeRef, opts)),
     reaffirmPlacement: (itemId) => transact(() => reaffirmPlacement(itemId)),
+    recordPrePurchaseRecall: (itemId, substituteItemId) => transact(() => recordPrePurchaseRecall(itemId, substituteItemId)),
     proposeRelease: (itemId, disposition) => transact(() => proposeRelease(itemId, disposition)),
     deferDeclutter: (itemId) => transact(() => deferDeclutter(itemId)),
     markNotThere: (itemId) => transact(() => markNotThere(itemId)),

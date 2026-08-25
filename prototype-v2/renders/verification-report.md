@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-24T16:30:48.499Z
+Generated: 2026-08-25T03:02:49.657Z
 Runtime: node v26.7.0 · typescript strict
-- Assertions: 676
-- Passed: 676
+- Assertions: 683
+- Passed: 683
 - Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 1.800 ms
-- Household UI DOM-commit p95: 5.300 ms
+- UI DOM-commit p95: 2.300 ms
+- Household UI DOM-commit p95: 6.000 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -111,6 +111,14 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `recall-outcome-name-survives-retirement`
 - ✓ `recall-outcome-roundtrip`
 - ✓ `recall-outcomes-cleared-by-reset`
+## pre-purchase recall is a first-class, distinct trusted outcome
+- ✓ `pre-purchase-starts-uncounted`
+- ✓ `pre-purchase-tags-distinct-outcome`
+- ✓ `pre-purchase-distinct-from-reaffirm`
+- ✓ `pre-purchase-substitute-path-tags-sought-item`
+- ✓ `pre-purchase-refuses-gone-item`
+- ✓ `pre-purchase-roundtrips-export-import`
+- ✓ `pre-purchase-cleared-by-reset`
 ## field-test primary task flows end to end
 - ✓ `field-test-snapshot-item-is-findable-and-confirmable`
 - ✓ `field-test-confirm-tags-recall-outcome`

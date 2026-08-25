@@ -735,6 +735,82 @@ section("recall outcomes measure the north star", () => {
 });
 
 // =====================================================================
+// Pre-purchase recall (2026-08-25): the AVOIDED-PURCHASE half of the durable
+// promise. `recordPrePurchaseRecall` commits the user's decision NOT to buy
+// (because the home already has one / a substitute) and tags a DISTINCT
+// "pre_purchase" recall outcome — so recallOutcomes() can separate retrieval
+// recalls (location/ownership) from the economically decisive avoided-spend
+// event. This makes the outcome REPRESENTABLE + measurable; it is not field
+// evidence that users actually avoid purchases (that stays waiting-external).
+// =====================================================================
+section("pre-purchase recall is a first-class, distinct trusted outcome", () => {
+  const store = fresh();
+  const before = store.recallOutcomes();
+  assert("pre-purchase-starts-uncounted", before.outcomes.every((o) => o.kind !== "pre_purchase"),
+    JSON.stringify(before.outcomes.map((o) => o.kind)));
+
+  // The user asked "do I already own a charger?" before buying, and committed
+  // the decision not to buy. That is a pre_purchase outcome — NOT an ownership
+  // reaffirm.
+  store.recordPrePurchaseRecall("usb-c-charger");
+  const after = store.recallOutcomes();
+  const pp = after.outcomes.filter((o) => o.kind === "pre_purchase");
+  assert("pre-purchase-tags-distinct-outcome",
+    pp.length === 1 && pp[0]?.itemId === "usb-c-charger" && after.firstAt !== null,
+    JSON.stringify(after.outcomes));
+
+  // Distinguishable from a maintenance/ownership reaffirm on the SAME item: the
+  // two produce two outcomes of two different kinds (never conflated / merged).
+  store.reaffirmPlacement("usb-c-charger");
+  const mixed = store.recallOutcomes();
+  const kinds = mixed.outcomes.filter((o) => o.itemId === "usb-c-charger").map((o) => o.kind).sort();
+  assert("pre-purchase-distinct-from-reaffirm",
+    kinds.length === 2 && kinds.includes("pre_purchase") && (kinds.includes("location") || kinds.includes("ownership")),
+    JSON.stringify(kinds));
+
+  // Substitute path: the avoided buy was covered by a substitute, not an exact
+  // match. Both items must exist; the outcome is still tagged to the sought item.
+  store.recordPrePurchaseRecall("black-training-shirt", "sport-socks");
+  const sub = store.recallOutcomes().outcomes.find((o) => o.kind === "pre_purchase" && o.itemId === "black-training-shirt");
+  assert("pre-purchase-substitute-path-tags-sought-item", Boolean(sub), JSON.stringify(sub));
+
+  // A gone (released/consumed) item cannot back an avoided purchase — you no
+  // longer own it, so claiming "I already have one" would be a fabrication.
+  store.acceptProposal(store.proposeRelease("water-bottle", "donate").proposalId); // → retired
+  expectThrow(() => store.recordPrePurchaseRecall("water-bottle"),
+    /released\/consumed|no longer own/i);
+  // And a gone item cannot be cited as a usable substitute either.
+  expectThrow(() => store.recordPrePurchaseRecall("usb-c-charger", "water-bottle"),
+    /released\/consumed|usable substitute/i);
+  assert("pre-purchase-refuses-gone-item",
+    store.recallOutcomes().outcomes.filter((o) => o.itemId === "water-bottle" && o.kind === "pre_purchase").length === 0);
+
+  // Round-trips export/import (empty-catalog store, mirroring the recall-tag
+  // roundtrip — the seeded baseline has a separate pre-existing ordering defect).
+  const rt = fresh({ catalog: emptyCatalog, seedFactory: () => [] });
+  const room = rt.createRoom({ name: "Kitchen" });
+  const drawer = rt.createContainer({ name: "Junk drawer", kind: "drawer", roomId: room });
+  const item = rt.createBelonging({ name: "Tape measure", kinds: ["tool"], defaultHome: { type: "container", id: drawer } });
+  rt.recordPrePurchaseRecall(item);
+  const reloaded = fresh({ catalog: emptyCatalog, seedFactory: () => [] });
+  reloaded.importJson(rt.exportJson());
+  const rtOut = reloaded.recallOutcomes().outcomes.filter((o) => o.kind === "pre_purchase");
+  assert("pre-purchase-roundtrips-export-import",
+    rtOut.length === 1 && rtOut[0]?.itemId === item, JSON.stringify(rtOut));
+
+  // Cleared by reset (cross-participant / fresh-home cleanliness, same as every
+  // other outcome — no pre_purchase outcome survives a reset).
+  const resetStore = fresh();
+  resetStore.recordPrePurchaseRecall("usb-c-charger");
+  const bReset = resetStore.recallOutcomes().outcomes.length;
+  resetStore.reset();
+  const aReset = resetStore.recallOutcomes();
+  assert("pre-purchase-cleared-by-reset",
+    bReset >= 1 && aReset.outcomes.length === 0 && aReset.firstAt === null,
+    `before=${bReset} after=${aReset.outcomes.length}`);
+});
+
+// =====================================================================
 // Field-test primary task, end to end (2026-08-25): the protocol's core task is
 // "snapshot the box → find the forgotten item → tap 'Found it here — confirm'."
 // The pieces are locked separately; this locks the COMPOSITION so the field test

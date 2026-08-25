@@ -13,7 +13,7 @@ const EVIDENCE_KINDS = new Set(["user_confirmation", "seed_import", "negative_re
 // RecallOutcomeKind — the North-Star tag. Only reaffirmPlacement may mint it; the
 // validator still enforces its shape + reference so a crafted import cannot forge
 // outcomes from nothing (or from garbage) on the way back in.
-const RECALL_KINDS = new Set(["location", "ownership"]);
+const RECALL_KINDS = new Set(["location", "ownership", "pre_purchase"]);
 const CAPTURE_MODALITIES = new Set(["typed", "voice"]);
 const OBSERVATION_TYPES = new Set(["container_snapshot", "not_there_report", "duplicate_suspected", "stale_container_flag", "manual_note", "release_intent", "declutter_deferred"]);
 const PROPOSAL_TYPES = new Set(["placement_correction", "contents_update", "duplicate_merge", "container_refresh", "release_decision"]);

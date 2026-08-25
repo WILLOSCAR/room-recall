@@ -21,3 +21,4 @@ Suggested filename format:
 - [ADR 0001: V1 wedge is moving/unpacking + kits](0001-v1-wedge-moving-and-kits.md)
 - [ADR 0002: Three.js is the browser spatial-review adapter](0002-threejs-spatial-review-adapter.md)
 - [ADR 0003: Use one loss-safe low-latency runtime boundary](0003-loss-safe-low-latency-runtime.md)
+- [ADR 0004: Pre-purchase recall is a distinct trusted-outcome kind](0004-pre-purchase-recall-as-distinct-outcome.md)
