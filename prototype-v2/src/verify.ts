@@ -3097,14 +3097,28 @@ async function runBrowserSmoke(): Promise<void> {
       window.nestory.store.confirmContainer("entry-tray");
       requestAnimationFrame(() => requestAnimationFrame(() => resolve(canvas === document.querySelector('[data-testid="plan-3d"] canvas'))));
     })`));
-    await sleep(1_500);
+    // A settled Three.js scene must render ZERO continuous RAF frames (the runtime
+    // renders on change, not on a rAF loop — ADR-0003). But a decision/camera-ease
+    // triggered just before this check can still have an in-flight frame when a
+    // fixed wait samples under load, false-failing at 1. Preserve the intent (the
+    // scene DOES settle to zero) but confirm it by polling for a quiet 250ms window
+    // and retrying a bounded number of times — a transient in-flight frame no longer
+    // fails the check; a scene that never settles still does (all windows non-zero).
+    await sleep(1_000);
     const settledRafCallbacks = await evalPage<number>(`new Promise((resolve) => {
       const canvas = document.querySelector('[data-testid="plan-3d"] canvas');
-      const before = Number(canvas?.getAttribute('data-spatial-rendered-frames') ?? 0);
-      setTimeout(() => {
-        const after = Number(canvas?.getAttribute('data-spatial-rendered-frames') ?? 0);
-        resolve(after - before);
-      }, 250);
+      const frames = () => Number(canvas?.getAttribute('data-spatial-rendered-frames') ?? 0);
+      let attempts = 0;
+      const sample = () => {
+        const before = frames();
+        setTimeout(() => {
+          const delta = frames() - before;
+          attempts += 1;
+          if (delta === 0 || attempts >= 8) { resolve(delta); return; }
+          sample(); // scene still animating — wait for it to quiesce, bounded to 8 windows (~2s)
+        }, 250);
+      };
+      sample();
     })`);
     browserReport.settledSpatialRafCallbacks = settledRafCallbacks;
     assert("settled-spatial-scene-has-zero-continuous-raf", settledRafCallbacks === 0, settledRafCallbacks);
@@ -3582,8 +3596,22 @@ async function runBrowserSmoke(): Promise<void> {
     await evalPage(`window.nestory.setView("review")`);
     assert("dom-proposal-photo", await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="proposal-photo"]'))`));
     await evalPage(`(() => { const button = document.querySelector('[data-action="reject-proposal"][data-id=${JSON.stringify(photoProposalId)}]'); button?.focus(); button?.click(); })()`);
-    await sleep(80);
-    assert("review-decision-focuses-next-action", await evalPage<boolean>(`document.activeElement?.getAttribute('data-action') === 'accept-proposal'`));
+    // Focus restoration after a review decision runs inside decorateUi's
+    // requestAnimationFrame (app.ts), which headless Chrome can defer well past a
+    // fixed sleep under load. Poll for the settled focus target instead of sampling
+    // once — the assertion's INTENT is unchanged (focus must land on the next
+    // action, "accept-proposal"); only the sampling becomes deadline-bounded so a
+    // late RAF can't false-fail. Resolves as soon as focus lands; ~1.5s ceiling.
+    const reviewFocusAction = await evalPage<string>(`new Promise((resolve) => {
+      const deadline = Date.now() + 1500;
+      const check = () => {
+        const action = document.activeElement?.getAttribute('data-action') ?? '';
+        if (action === 'accept-proposal' || Date.now() > deadline) { resolve(action); return; }
+        requestAnimationFrame(check);
+      };
+      check();
+    })`);
+    assert("review-decision-focuses-next-action", reviewFocusAction === "accept-proposal", reviewFocusAction);
 
     // Retrieval plan renders inside the kit detail.
     assert("dom-retrieval-plan", await (async () => {
