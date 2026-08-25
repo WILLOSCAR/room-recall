@@ -64,7 +64,11 @@ Record per participant: age band, tech-comfort (1–5), move recency, renter/own
 - A **voice-capture option** must be present (revision #4): the sentence may be
   spoken, not typed. Log which modality each participant chooses.
 - Instrumentation: the store's `recallOutcomes()` read-model gives the moderator a
-  deterministic `firstAt` (first confirmed recall) and the 30-day outcome count;
+  deterministic `firstAt` (first confirmed recall) and the 30-day outcome count,
+  served over HTTP at **`GET /recall-outcomes`** (the served app exposes it directly —
+  outcomes + `firstAt` + `countLast30Days` + the `byKind` retrieval-vs-avoided-purchase
+  split — so the moderator reads the metric from the running prototype, not by
+  hand-deriving it from raw `/export` records; the response carries no image bytes);
   the `modality` tag (`"typed"`/`"voice"`) on each `container_snapshot`
   observation is the deterministic record of the typed-vs-voice arm — read it
   from the export JSON, not from memory (the tag is validated at both the write

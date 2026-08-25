@@ -1,12 +1,12 @@
 # Nestory V2 Verification Report
-Generated: 2026-08-25T08:13:35.641Z
+Generated: 2026-08-25T08:18:46.173Z
 Runtime: node v26.7.0 · typescript strict
-- Assertions: 687
-- Passed: 687
+- Assertions: 688
+- Passed: 688
 - Failed: 0
 - Browser smoke: ran
-- UI DOM-commit p95: 2.900 ms
-- Household UI DOM-commit p95: 8.000 ms
+- UI DOM-commit p95: 2.300 ms
+- Household UI DOM-commit p95: 7.000 ms
 - Presentation latency is measured separately by `npm run browser-benchmark`; this correctness harness does not treat headless RAF scheduling as paint evidence.
 - Settled spatial RAF callbacks observed: 0
 - Screenshots: nestory-welcome.png, nestory-mobile-welcome.png, nestory-home.png, nestory-review.png, nestory-operations-move.png, nestory-operations-kit.png, nestory-plan-3d.png, nestory-plan.png, nestory-capture-scan.png, nestory-spaces.png, nestory-ask.png, nestory-recall.png, nestory-mobile-more.png, nestory-mobile-capture.png, nestory-mobile-review.png, nestory-mobile-plan.png, nestory-mobile-plan-2d.png, nestory-mobile-belongings.png, nestory-mobile-home.png, nestory-setup.png, nestory-own-home.png, nestory-boot-recovery.png
@@ -438,6 +438,7 @@ Runtime: node v26.7.0 · typescript strict
 - ✓ `srv-import-allows-household-sized-dump`
 - ✓ `srv-concurrent-import-cannot-erase-acknowledged-write`
 - ✓ `srv-locate-view`
+- ✓ `srv-recall-outcomes-serves-north-star`
 - ✓ `srv-boundary-fixture-holds-media`
 - ✓ `srv-locate-redacts-media`
 - ✓ `srv-search-keeps-full-array-compatibility-contract`

@@ -2404,6 +2404,26 @@ try {
   const locate = await getJson(server1.url, "/locate?q=water%20bottle");
   assert("srv-locate-view", locate.body["ok"] === true && locate.body["chainText"] === "Desk top · Desk · Bedroom", locate.body["chainText"]);
 
+  // North-Star read path for the field-test moderator (protocol §3): /recall-outcomes
+  // serves the deterministic recallOutcomes() read-model over HTTP, so the metric is
+  // readable from the served app, not hand-derived from raw /export records. Mint a
+  // location + a pre_purchase outcome, then assert the endpoint mirrors the store
+  // summary incl. the byKind split.
+  serverStore.reaffirmPlacement(expectOk(serverStore.locate("sport socks")).itemId); // location
+  serverStore.recordPrePurchaseRecall("usb-c-charger");                               // pre_purchase
+  const recallRes = await getJson(server1.url, "/recall-outcomes");
+  const localSummary = serverStore.recallOutcomes();
+  const bodyByKind = (recallRes.body["byKind"] as { total?: Record<string, number> } | undefined)?.total ?? {};
+  assert("srv-recall-outcomes-serves-north-star",
+    recallRes.status === 200
+    && Array.isArray(recallRes.body["outcomes"])
+    && (recallRes.body["outcomes"] as unknown[]).length === localSummary.outcomes.length
+    && recallRes.body["firstAt"] === localSummary.firstAt
+    && (recallRes.body["countLast30Days"] as number) === localSummary.countLast30Days
+    && bodyByKind["location"] === localSummary.byKind.total.location
+    && bodyByKind["pre_purchase"] === localSummary.byKind.total.pre_purchase,
+    JSON.stringify({ status: recallRes.status, n: (recallRes.body["outcomes"] as unknown[])?.length, byKind: bodyByKind }));
+
   // B1 — the HTTP /locate route is on the same issue-06 boundary: a photo seeded
   // into the store never reaches the network response. (The on-device UI reads
   // the store directly and keeps the photo; the server projection is redacted.)

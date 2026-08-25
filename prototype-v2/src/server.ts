@@ -411,6 +411,12 @@ function handleGet(path: string, url: URL, ctx: RouteContext, res: ServerRespons
   }
   if (path === "/attention") { json(res, 200, store.attention()); return true; }
   if (path === "/activation") { json(res, 200, store.activation()); return true; }
+  // North-Star read for the field-test moderator (protocol §3): the deterministic
+  // recallOutcomes() read-model — firstAt, the 30-day count, and the retrieval-vs-
+  // avoided-purchase byKind split. Pure READ (no second source of truth). Passed
+  // through stripSensitiveMedia for consistency with the issue-06 boundary, though
+  // the summary carries no media — only {itemId,itemName,kind,at} + counts.
+  if (path === "/recall-outcomes") { json(res, 200, stripSensitiveMedia(store.recallOutcomes())); return true; }
   if (path === "/tools") { json(res, 200, toolkit.tools); return true; }
   return false;
 }
