@@ -1175,6 +1175,7 @@ function ownershipCard(o: DeepReadonly<OwnershipRecallAnswer>): string {
     <span class="chip ${m.confidence < 0.45 || m.stale ? "amber" : ""}">${m.stale ? "stale · " : ""}conf ${m.confidence.toFixed(2)}</span>
     ${m.placeKnown ? `<button class="small ghost" data-action="locate-on-map" data-item="${esc(m.itemId)}" data-q="${esc(m.item)}" title="Show ${esc(m.item)} on the map">Show on map</button>` : ""}
     <button class="small ghost" data-action="reuse-confirm" data-item="${esc(m.itemId)}" title="Confirm you still own ${esc(m.item)} — refreshes the record">${m.placeKnown ? "Still here" : "Still own it"}</button>
+    <button class="small" data-action="pre-purchase-recall" data-item="${esc(m.itemId)}" title="Record that you checked before buying and won't buy another — ${esc(m.item)} already covers it">Won't buy — I have this</button>
   </div>`).join("");
   return `<div class="card" style="box-shadow:none;margin-top:8px">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">${verdictChip}<span class="muted">${o.ownedCount} owned · ${o.substituteCount} substitute(s) · ${o.availableCount} available now</span></div>
@@ -2836,6 +2837,21 @@ document.addEventListener("click", (e) => {
       // AND any ask-log ownership entry (works on the Ask surface where
       // ui.ownershipQuery is empty too — Rank 6). Just render.
       if (act(() => store.reaffirmPlacement(itemId), "Confirmed — record refreshed.")) render();
+      break;
+    }
+    case "pre-purchase-recall": {
+      // The avoided-purchase moment (ADR-0004): the user checked before buying,
+      // already has this (or it is a usable substitute), and records the decision
+      // NOT to buy. Distinct from "Still own it" (reaffirmPlacement, existence):
+      // this mints a `pre_purchase` North-Star outcome. Records the user's own
+      // decision — no nudge, no auto-write. The outcome is tagged to the item that
+      // covers the need; the substitute-vs-exact nuance already lives in the
+      // ownershipRecall verdict (the card query is free text, not a second
+      // belonging id, so there is no distinct substitute id to cite here).
+      const itemId = t.dataset.item;
+      if (!itemId) break;
+      controlReturnFocus = focusBookmark(t);
+      if (act(() => store.recordPrePurchaseRecall(itemId), "Saved — you skipped buying a duplicate.")) render();
       break;
     }
     case "capability-check": doCapabilityCheck(inputValue("capability-input")); break;

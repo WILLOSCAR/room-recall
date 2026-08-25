@@ -64,5 +64,14 @@ fix — it is a representability gap in the model.
 - Locked by 7 deterministic assertions in `verify.ts` (`pre-purchase-*`): distinct
   tagging, distinguishable-from-reaffirm, substitute path, gone-item refusal,
   export/import round-trip, and reset-clears. verify green.
-- A future UI affordance ("I won't buy — I already have this") on the Reuse card
-  can call this verb; the model and metric are ready ahead of that surface.
+- **Reachable + legible (completed 2026-08-25).** The Reuse card now shows a
+  distinct "Won't buy — I have this" affordance wired to this verb (records the
+  user's decision, no nudge, distinct from "Still own it"), so the outcome is
+  user-producible; and `recallOutcomes()` exposes `byKind.{total,last30Days}` so
+  the North Star reads as retrieval recalls vs avoided-purchase recalls, with the
+  kind counts summing to the flat totals. Locked by
+  `dom-reuse-pre-purchase-button-mints-distinct-outcome` and
+  `recall-outcomes-bykind-splits-retrieval-vs-avoided-purchase`. verify 685.
+- Still open: the Agent/Ask surface cannot yet mint a pre_purchase outcome; the
+  in-product metric stays moderator/export-readable (no user-facing counter, per
+  the trust contract's no-streaks/minimum-collection rule).

@@ -237,6 +237,14 @@ export interface RecallOutcomeSummary {
   firstAt: string | null;
   lastAt: string | null;
   countLast30Days: number;
+  /** Per-kind legibility (ADR-0004): the North Star must be readable as
+   *  retrieval recalls (location + ownership) vs avoided-purchase recalls
+   *  (pre_purchase), not one opaque total. `total` and `last30Days` each split by
+   *  kind; the kind counts sum to the flat `outcomes`/`countLast30Days` totals. */
+  byKind: {
+    total: Record<RecallOutcomeKind, number>;
+    last30Days: Record<RecallOutcomeKind, number>;
+  };
 }
 
 export type ObservationType =

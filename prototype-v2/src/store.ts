@@ -14,7 +14,7 @@ import type {
   OperationData, OperationStatus, OperationView, OwnershipRecallAnswer, OwnershipMatch, DeclutterReviewResult, DeclutterCandidate, DeclutterReason, DeclutterOption,
   CapabilityProfile, CapabilityNeed, CapabilityNeedResult, CapabilityNeedStatus, CapabilityStop, CapabilityStopItem, CapabilityGapEntry, HomeCapabilityResult, CapabilityVerdict,
   PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
-  PlanPin, PlanRect, ProposalRecord, ProposalStatus, ProposalView, RecallOutcome, RecallOutcomeSummary, Relation, RetrievalPlanGroup,
+  PlanPin, PlanRect, ProposalRecord, ProposalStatus, ProposalView, RecallOutcome, RecallOutcomeKind, RecallOutcomeSummary, Relation, RetrievalPlanGroup,
   RetrievalPlanItem, Room, RowStatus,
   ScoredBelongingView, StorageLike, Store, StoreOptions, UnpackPriorityEntry,
   WhichContainerHit
@@ -1253,6 +1253,17 @@ export function createStore(options: StoreOptions): Store {
     const windowStart = nowMs - 30 * DAY;
     const first = outcomes[0];
     const last = outcomes[outcomes.length - 1];
+    const inWindow = (o: RecallOutcome): boolean => { const t = Date.parse(o.at); return t >= windowStart && t <= nowMs; };
+    const last30 = outcomes.filter(inWindow);
+    // Per-kind legibility (ADR-0004): the North Star reads as retrieval recalls
+    // (location + ownership) vs avoided-purchase recalls (pre_purchase). Seed all
+    // kinds to 0 so the shape is stable and the counts sum to the flat totals.
+    const zeroByKind = (): Record<RecallOutcomeKind, number> => ({ location: 0, ownership: 0, pre_purchase: 0 });
+    const countByKind = (list: RecallOutcome[]): Record<RecallOutcomeKind, number> => {
+      const acc = zeroByKind();
+      for (const o of list) acc[o.kind] = (acc[o.kind] ?? 0) + 1;
+      return acc;
+    };
     return deepFreeze({
       outcomes,
       firstAt: first ? first.at : null,
@@ -1262,7 +1273,8 @@ export function createStore(options: StoreOptions): Store {
       // conscious choice; the exact-boundary instant is counted). Each reaffirm is
       // one genuine user_confirmation, so each is one outcome — in the product flow
       // a reaffirm follows a recall question, so confirmations map 1:1 to recalls.
-      countLast30Days: outcomes.filter((o) => { const t = Date.parse(o.at); return t >= windowStart && t <= nowMs; }).length
+      countLast30Days: last30.length,
+      byKind: { total: countByKind(outcomes), last30Days: countByKind(last30) }
     });
   }
 

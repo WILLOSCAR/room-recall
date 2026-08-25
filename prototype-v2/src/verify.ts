@@ -808,6 +808,24 @@ section("pre-purchase recall is a first-class, distinct trusted outcome", () => 
   assert("pre-purchase-cleared-by-reset",
     bReset >= 1 && aReset.outcomes.length === 0 && aReset.firstAt === null,
     `before=${bReset} after=${aReset.outcomes.length}`);
+
+  // Per-kind legibility (ADR-0004): recallOutcomes must read as retrieval recalls
+  // (location + ownership) vs avoided-purchase recalls (pre_purchase), and the kind
+  // counts must SUM to the flat totals (no double-count, no drift).
+  const legible = fresh();
+  const locId = expectOk(legible.locate("sport socks")).itemId;
+  legible.reaffirmPlacement(locId);              // location outcome
+  legible.recordPrePurchaseRecall("usb-c-charger"); // pre_purchase outcome
+  legible.recordPrePurchaseRecall("black-training-shirt"); // pre_purchase outcome
+  const sum = legible.recallOutcomes();
+  const bk = sum.byKind;
+  assert("recall-outcomes-bykind-splits-retrieval-vs-avoided-purchase",
+    bk.total.pre_purchase === 2
+    && bk.total.location === 1
+    && bk.total.ownership === 0
+    && (bk.total.location + bk.total.ownership + bk.total.pre_purchase) === sum.outcomes.length
+    && (bk.last30Days.location + bk.last30Days.ownership + bk.last30Days.pre_purchase) === sum.countLast30Days,
+    JSON.stringify(bk));
 });
 
 // =====================================================================
@@ -3712,6 +3730,27 @@ async function runBrowserSmoke(): Promise<void> {
       document.querySelector('[data-testid="btn-ownership"]')?.click();
       const t = document.querySelector('[data-testid="ownership-result"]')?.textContent ?? '';
       return /already own|owned/i.test(t);
+    })()`));
+    // The avoided-purchase moment is USER-REACHABLE (ADR-0004): the Reuse card's
+    // "Won't buy — I have this" button mints a pre_purchase North-Star outcome, and
+    // it is DISTINCT from "Still own it" (which mints location/ownership). Without a
+    // UI path the store verb would be unreachable — this locks reachability + the
+    // kind distinction end to end.
+    assert("dom-reuse-pre-purchase-button-mints-distinct-outcome", await evalPage<boolean>(`(() => {
+      document.querySelector('[data-testid="recall-tab-reuse"]')?.click();
+      const input = document.getElementById('ownership-input');
+      if (!(input instanceof HTMLInputElement)) return false;
+      input.value = 'charger';
+      document.querySelector('[data-testid="btn-ownership"]')?.click();
+      const before = window.nestory.store.recallOutcomes().byKind.total;
+      const btn = document.querySelector('[data-testid="ownership-result"] [data-action="pre-purchase-recall"]');
+      if (!(btn instanceof HTMLElement)) return false;
+      btn.click();
+      const after = window.nestory.store.recallOutcomes().byKind.total;
+      // exactly one new pre_purchase outcome, and NO new ownership/location outcome.
+      return after.pre_purchase === before.pre_purchase + 1
+        && after.ownership === before.ownership
+        && after.location === before.location;
     })()`));
     // "Show on map" links a Recall result into the spatial view; the located pin
     // renders on the 2D plan (the plan defaults to 3D, so switch to 2D to see it).
