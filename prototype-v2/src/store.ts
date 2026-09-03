@@ -18,6 +18,7 @@ import type {
   WhichContainerHit
 } from "./types.ts";
 import { BOX_STATUSES, IMPORTANCE_SCORE, LIFECYCLE_STATES, ROW_STATUSES } from "./types.ts";
+import { validatedLedgerRecords } from "./ledger-validation.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -972,7 +973,7 @@ export function createStore(options: StoreOptions): Store {
           name: `Box · ${label}`,
           kind: "box",
           parent: { type: "room", id: roomId },
-          box: { label, destination: input.destination || "New home", operationId: input.operationId ?? null }
+          box: { label, destination: input.destination?.trim() || "New home", operationId: input.operationId ?? null }
         }
       }]
     });
@@ -1028,10 +1029,14 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function importJson(data: unknown): void {
-    if (!data || typeof data !== "object" || !Array.isArray((data as { records?: unknown }).records)) {
-      throw new Error("Import needs { records: [...] }");
-    }
-    records = (data as { records: AnyRecord[] }).records;
+    // Validate the WHOLE dump before touching any state. A bad dump used to be
+    // assigned first and only fail later while deriving — by which point the old
+    // records were gone and the replacement had already been persisted. Building
+    // the validated array first means a validation failure leaves records, seq and
+    // storage exactly as they were. The validator owns the whole boundary, including
+    // the top-level shape, so there is no separate pre-check to disagree with it.
+    const imported = validatedLedgerRecords(data, "Import");
+    records = imported;
     seq = records.length;
     persist();
     notify();
