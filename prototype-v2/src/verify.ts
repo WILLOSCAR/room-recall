@@ -363,6 +363,285 @@ section("P0.8 persistence and history", () => {
 });
 
 // =====================================================================
+// P0.8b Import is a trust boundary
+// =====================================================================
+// `importJson` replaces the entire home memory from an outside dump. Three
+// contracts, each asserted against real store behaviour rather than types:
+//   A1 a legitimate export still round-trips,
+//   A2 a malformed dump is refused with a path-named error,
+//   A3 a refused dump changes NOTHING — records, seq, and persisted storage.
+// Scope note: this validates record SHAPE. Referential integrity (does this room
+// exist? does this itemId resolve?) is a separate contract over the catalog and the
+// existing ledger, and is NOT covered here — the cases below say so explicitly
+// rather than pretending shape validation catches them.
+section("P0.8b import trust boundary", () => {
+  // ---- A1 — a legitimate export is still accepted, unchanged.
+  // The source is MUTATED first, so the dump genuinely differs from the target's
+  // starting state. Without this the two stores are seeded identically and the
+  // assertion would pass even if importJson did nothing at all.
+  const source = fresh();
+  source.createBelonging({ name: "Round-trip marker", kinds: ["marker"], defaultHome: { type: "room", id: "bedroom" } });
+  const goodDump = source.exportJson();
+  const target = fresh();
+  const targetBefore = JSON.stringify(target.exportJson().records);
+  assert("import-roundtrip-fixture-actually-differs",
+    targetBefore !== JSON.stringify(goodDump.records),
+    "the dump must differ from the target's initial state or A1 proves nothing");
+  target.importJson(goodDump);
+  assert("import-accepts-legitimate-export",
+    JSON.stringify(target.exportJson().records) === JSON.stringify(goodDump.records)
+      && target.searchBelongings("round-trip marker").length === 1,
+    `${goodDump.records.length} records, marker present`);
+
+  // ---- A2 — malformed / untrusted shapes are refused, each with a path-named error.
+  // On the base version five of these were accepted silently; the null-record, bare-string
+  // and unknown-recordType cases DID throw, but only downstream in derive() — after the
+  // records had already been replaced and persisted (66 -> 1). So all eight were unsafe,
+  // three of them loudly rather than silently.
+  const rejected = (payload: unknown): { threw: boolean; message: string } => {
+    const store = fresh();
+    try { store.importJson(payload); return { threw: false, message: "" }; }
+    catch (err) { return { threw: true, message: err instanceof Error ? err.message : String(err) }; }
+  };
+  const commitWith = (ops: unknown): unknown =>
+    ({ version: 2, records: [{ recordType: "commit", id: "c1", at: "2026-01-01T00:00:00.000Z", summary: "x", ops }] });
+
+  const unknownOp = rejected(commitWith([{ type: "drop_database" }]));
+  assert("import-rejects-unknown-commit-op", unknownOp.threw && /\.type has unsupported value/.test(unknownOp.message), unknownOp.message);
+
+  const opsNotArray = rejected(commitWith("everything"));
+  assert("import-rejects-non-array-ops", opsNotArray.threw && /\.ops must be an array/.test(opsNotArray.message), opsNotArray.message);
+
+  const badConfidence = rejected(commitWith([
+    { type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "bedroom" }, relation: "inside", confidence: 99 },
+  ]));
+  assert("import-rejects-out-of-range-confidence", badConfidence.threw && /confidence must be between 0 and 1/.test(badConfidence.message), badConfidence.message);
+
+  const badTimestamp = rejected({ version: 2, records: [
+    { recordType: "evidence", id: "e1", kind: "user_confirmation", summary: "x", at: "whenever" },
+  ] });
+  assert("import-rejects-invalid-timestamp", badTimestamp.threw && /\.at must be a valid ISO timestamp/.test(badTimestamp.message), badTimestamp.message);
+
+  const nullRecord = rejected({ version: 2, records: [null] });
+  assert("import-rejects-null-record", nullRecord.threw && /must be an object/.test(nullRecord.message), nullRecord.message);
+
+  const bareString = rejected({ version: 2, records: ["not-a-record"] });
+  assert("import-rejects-bare-string-record", bareString.threw && /must be an object/.test(bareString.message), bareString.message);
+
+  const unknownRecordType = rejected({ version: 2, records: [
+    { recordType: "evil", id: "x", at: "2026-01-01T00:00:00.000Z" },
+  ] });
+  assert("import-rejects-unknown-record-type", unknownRecordType.threw && /\.recordType has unsupported value/.test(unknownRecordType.message), unknownRecordType.message);
+
+  const duplicateId = rejected({ version: 2, records: [
+    { recordType: "evidence", id: "dup", kind: "user_confirmation", summary: "a", at: "2026-01-01T00:00:00.000Z" },
+    { recordType: "evidence", id: "dup", kind: "user_confirmation", summary: "b", at: "2026-01-01T00:00:00.000Z" },
+  ] });
+  assert("import-rejects-duplicate-record-id", duplicateId.threw && /duplicates/.test(duplicateId.message), duplicateId.message);
+
+  const emptyDump = rejected({ version: 2, records: [] });
+  assert("import-rejects-empty-dump", emptyDump.threw && /contains no records/.test(emptyDump.message), emptyDump.message);
+
+  const versionless = rejected({ records: [] });
+  assert("import-rejects-unsupported-version", versionless.threw && /unsupported schema version/.test(versionless.message), versionless.message);
+
+  const notAnObject = rejected("a string, not a dump");
+  assert("import-rejects-non-object-dump", notAnObject.threw && /must be an object/.test(notAnObject.message), notAnObject.message);
+
+  // A field the type declares as `string | null` must be PRESENT. An absent key yields
+  // an object violating its own type, and reads like `box?.operationId === opId` then
+  // silently mismatch — detaching a box from its move operation.
+  const boxMissingOperationId = rejected(commitWith([
+    { type: "create_container", container: { id: "box-z", name: "Box Z", kind: "box", parent: { type: "room", id: "bedroom" }, box: { label: "L", destination: "D" } } },
+  ]));
+  assert("import-rejects-absent-required-nullable-field",
+    boxMissingOperationId.threw && /must be present \(use null when empty\)/.test(boxMissingOperationId.message),
+    boxMissingOperationId.message);
+
+  // THE INVARIANT: whatever the store's own write path accepts, the import path must
+  // accept back. Export is a backup; a validator stricter than the writer makes that
+  // backup unrestorable. Three separate defects of exactly this shape were found in
+  // review (over-cap names, blank summaries, an untrimmed box destination), each time on
+  // a field the previous fix did not cover — so this drives every write method AT and
+  // BEYOND its boundaries in one pass rather than pinning a few sample lengths.
+  const selfInflicted: string[] = [];
+  const roundTrips = (label: string, write: (store: Store) => void): void => {
+    const writer = fresh();
+    try { write(writer); } catch { return; } // the writer refusing its own input is fine
+    const dump = JSON.parse(JSON.stringify(writer.exportJson())) as ReturnType<Store["exportJson"]>;
+    try { fresh().importJson(dump); }
+    catch (err) { selfInflicted.push(`${label}: ${err instanceof Error ? err.message : String(err)}`); }
+  };
+  const pad = (n: number): string => "x".repeat(n);
+  const bedroom = { type: "room", id: "bedroom" } as const;
+  for (const n of [1, 2, 2000, 2001, 5000]) {
+    roundTrips(`createRoom name ${n}`, (st) => { st.createRoom({ name: pad(n) }); });
+    roundTrips(`createBelonging name ${n}`, (st) => { st.createBelonging({ name: pad(n), kinds: ["k"], defaultHome: bedroom }); });
+    roundTrips(`createBox label ${n}`, (st) => { st.createBox({ label: pad(n), destination: "New home" }); });
+  }
+  for (const blank of ["", " ", "\t", "   "]) {
+    roundTrips(`createBox destination ${JSON.stringify(blank)}`, (st) => { st.createBox({ label: "Kitchen", destination: blank }); });
+    roundTrips(`correctPlacement note ${JSON.stringify(blank)}`, (st) => { st.correctPlacement("passport", bedroom, { note: blank }); });
+    roundTrips(`rejectProposal reason ${JSON.stringify(blank)}`, (st) => {
+      const pending = st.proposals().find((pr) => pr.status === "pending");
+      if (pending) st.rejectProposal(pending.id, blank);
+    });
+  }
+  for (const k of [1, 500, 501]) {
+    roundTrips(`kind length ${k}`, (st) => { st.createBelonging({ name: "K", kinds: [pad(k)], defaultHome: bedroom }); });
+  }
+  for (const count of [1, 500, 501]) {
+    roundTrips(`kind count ${count}`, (st) => { st.createBelonging({ name: "K", kinds: Array.from({ length: count }, (_, i) => `k${i}`), defaultHome: bedroom }); });
+  }
+  for (const d of [{ width: 0.001, depth: 0.001, height: 0.001 }, { width: 1e6, depth: 1, height: 1 }]) {
+    roundTrips(`dimensions ${JSON.stringify(d)}`, (st) => {
+      st.createBelonging({ name: "D", kinds: ["k"], defaultHome: bedroom,
+        dimensions: { ...d, unit: "m", source: "manual", verified: false } });
+    });
+  }
+  for (const n of [1, 2000, 2001]) {
+    roundTrips(`createContainer name ${n}`, (st) => { st.createContainer({ name: pad(n), kind: "tray", roomId: "bedroom" }); });
+  }
+  // The one asymmetry NOT resolved here, recorded rather than hidden. The writer accepts
+  // impossible geometry — a negative belonging dimension and a zero-area room plan — which
+  // import rejects as `must be positive`. Both are pre-existing write-path gaps (the base
+  // store has no dimension guard at all), so bounding them means changing a write path
+  // this slice does not own; dropping the import check instead would admit nonsense
+  // geometry into the Place Graph. Left for a write-validation slice, pinned here so the
+  // asymmetry is visible and this lock fails if either side changes.
+  const geometryAsymmetry: string[] = [];
+  const writeThenImport = (label: string, write: (store: Store) => void): void => {
+    const w = fresh();
+    try { write(w); } catch { return; }
+    const dump = JSON.parse(JSON.stringify(w.exportJson())) as ReturnType<Store["exportJson"]>;
+    try { fresh().importJson(dump); } catch { geometryAsymmetry.push(label); }
+  };
+  writeThenImport("negative belonging dimension", (st) => {
+    st.createBelonging({ name: "Neg", kinds: ["k"], defaultHome: bedroom,
+      dimensions: { width: -5, depth: 1, height: 1, unit: "m", source: "manual", verified: false } });
+  });
+  writeThenImport("zero-area room plan", (st) => { st.createRoom({ name: "Zero", plan: { x: 0, y: 0, w: 0, h: 0 } }); });
+  assert("write-path-impossible-geometry-is-not-yet-bounded", geometryAsymmetry.length === 2,
+    `documented gap: writer accepts what import refuses (${geometryAsymmetry.join(", ")}); write-validation slice`);
+
+  assert("import-accepts-everything-the-write-path-writes", selfInflicted.length === 0,
+    selfInflicted.length ? selfInflicted.slice(0, 4).join(" | ") : "no self-inflicted unimportable export across write-path boundaries");
+
+  // The store writes "" for a blank rejection reason; refusing it here would make the
+  // product's own export unreadable. Locks the round-trip end to end.
+  const blankReason = fresh();
+  const pendingProposal = blankReason.proposals().find((p) => p.status === "pending");
+  if (pendingProposal) {
+    blankReason.rejectProposal(pendingProposal.id, "");
+    const blankDump = blankReason.exportJson();
+    const blankTarget = fresh();
+    let blankThrew = "";
+    try { blankTarget.importJson(blankDump); } catch (err) { blankThrew = err instanceof Error ? err.message : String(err); }
+    assert("import-accepts-store-written-empty-optional-string", blankThrew === "",
+      blankThrew || "a blank reject reason still round-trips");
+  }
+
+  // `correctPlacement` passes a caller's note straight into an evidence `summary` with
+  // only `??` guarding it, so "" and whitespace reach the ledger. Locked end to end
+  // because a validator that demanded non-empty summaries would make the product's own
+  // export permanently unreadable — the same class as the long-name and blank-reason
+  // cases above, on a different field.
+  for (const blankNote of ["", "   "]) {
+    const noted = fresh();
+    noted.correctPlacement("passport", { type: "room", id: "bedroom" }, { note: blankNote });
+    const notedDump = JSON.parse(JSON.stringify(noted.exportJson())) as ReturnType<Store["exportJson"]>;
+    const notedTarget = fresh();
+    let notedThrew = "";
+    try { notedTarget.importJson(notedDump); } catch (err) { notedThrew = err instanceof Error ? err.message : String(err); }
+    assert(`import-accepts-store-written-blank-summary-${blankNote === "" ? "empty" : "whitespace"}`,
+      notedThrew === "", notedThrew || "a blank correctPlacement note still round-trips");
+  }
+
+  // ---- A2 boundary, stated honestly: NOT covered by shape validation.
+  // A structurally perfect reference to a room that does not exist is a
+  // REFERENTIAL INTEGRITY problem, not a field-shape problem. Shape validation
+  // accepts it, and this assertion pins that limit so a later reader cannot mistake
+  // this batch for full import validation. Closing it needs cross-record semantics
+  // over the catalog + existing ledger — a separate contract, deliberately not here.
+  const nonexistentRoom = rejected(commitWith([
+    { type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "room-does-not-exist" }, relation: "inside", confidence: 1 },
+  ]));
+  assert("import-shape-does-not-yet-check-place-existence", nonexistentRoom.threw === false,
+    "documented gap: referential integrity is a separate contract, not shape validation");
+
+  // Second documented gap, pinned for the same reason: `loadRecords` deserialises
+  // localStorage, which is equally user-writable, and is NOT validated by this change.
+  // Hardening it changes boot behaviour for anyone holding an already-invalid store, so
+  // it is a separate slice. This lock records the limit instead of implying it is closed.
+  // The fixture must be something the validator genuinely REFUSES, so this lock fails the
+  // moment the gap is closed. A well-formed fixture would pass either way and prove
+  // nothing. `set_box_status` with an unsupported status is invalid shape but still
+  // derives without crashing, so the assertion observes acceptance rather than a throw.
+  const invalidForImport = { version: 2, records: [
+    { recordType: "commit", id: "tampered", at: "2026-01-01T00:00:00.000Z", summary: "x",
+      ops: [{ type: "set_box_status", boxId: "box-essentials", status: "teleported" }] },
+  ] };
+  let importRefusesFixture = false;
+  try { fresh().importJson(invalidForImport); } catch { importRefusesFixture = true; }
+  assert("load-from-storage-fixture-is-genuinely-invalid", importRefusesFixture,
+    "the storage-gap fixture must be refused by importJson or the gap lock proves nothing");
+  const tamperedStorage = memStorage();
+  tamperedStorage.setItem("nestory-v2", JSON.stringify(invalidForImport));
+  const fromStorage = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: tamperedStorage });
+  assert("load-from-storage-is-not-yet-validated", fromStorage.exportJson().records.length === 1,
+    "documented gap: loadRecords accepts what importJson refuses; separate slice");
+
+  // ---- A3 — a refused import leaves records, seq, and STORAGE untouched.
+  // This is the contract that matters most: before the fix, a rejected dump had
+  // already replaced 66 records with 1 and written that to storage.
+  const storage = memStorage();
+  const guarded = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage });
+  // One real write FIRST: createStore never persists on construction, so without this
+  // `persistedBefore` would be null and the storage assertion would compare null to
+  // null — passing even if a refused import wrote garbage.
+  guarded.createBelonging({ name: "Persist primer", kinds: ["primer"], defaultHome: { type: "room", id: "bedroom" } });
+  const beforeCount = guarded.exportJson().records.length;
+  const beforeIds = guarded.exportJson().records.map((r) => r.id).join(",");
+  const persistedBefore = storage.getItem("nestory-v2");
+  assert("import-refusal-fixture-has-real-persisted-state",
+    typeof persistedBefore === "string" && persistedBefore.length > 0,
+    "storage must hold real content before the refusal or the storage lock proves nothing");
+  let refusedMessage = "";
+  try { guarded.importJson(commitWith([{ type: "drop_database" }])); }
+  catch (err) { refusedMessage = err instanceof Error ? err.message : String(err); }
+  const afterRecords = guarded.exportJson().records;
+  const persistedAfter = storage.getItem("nestory-v2");
+  assert("import-refusal-leaves-records-unchanged",
+    refusedMessage !== "" && afterRecords.length === beforeCount && afterRecords.map((r) => r.id).join(",") === beforeIds,
+    `${beforeCount} -> ${afterRecords.length}`);
+  assert("import-refusal-writes-nothing-to-storage",
+    persistedAfter === persistedBefore,
+    `persisted changed: ${persistedBefore !== persistedAfter}`);
+  // seq is observable ONLY through the id the store mints next (ids are
+  // `prefix-<seq base36>-<random>`); it never affects the record count. Compare the
+  // minted seq segment against an untouched store at the same point, so a refused
+  // import that silently reset seq is caught.
+  const seqOf = (mintedId: string): string => mintedId.split("-")[1] ?? "";
+  const control = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: memStorage() });
+  control.createBelonging({ name: "Persist primer", kinds: ["primer"], defaultHome: { type: "room", id: "bedroom" } });
+  const controlSeq = seqOf(control.createBelonging({ name: "Seq probe", kinds: ["probe"], defaultHome: { type: "room", id: "bedroom" } }));
+  const guardedSeq = seqOf(guarded.createBelonging({ name: "Seq probe", kinds: ["probe"], defaultHome: { type: "room", id: "bedroom" } }));
+  assert("import-refusal-leaves-seq-unchanged",
+    guardedSeq !== "" && guardedSeq === controlSeq,
+    `minted seq after refusal ${guardedSeq} vs untouched control ${controlSeq}`);
+
+  // A successful import after a refused one still works — the guard is not sticky.
+  // Uses the MUTATED dump so the marker's arrival proves the import actually ran.
+  const recovered = fresh();
+  try { recovered.importJson({ version: 2, records: [null] }); } catch { /* expected refusal */ }
+  recovered.importJson(goodDump);
+  assert("import-recovers-after-refusal",
+    recovered.exportJson().records.length === goodDump.records.length
+      && recovered.searchBelongings("round-trip marker").length === 1,
+    "a refused import does not block a later good one");
+});
+
+// =====================================================================
 // Agent answer contract
 // =====================================================================
 section("agent answer contract", () => {
