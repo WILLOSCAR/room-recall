@@ -16,6 +16,8 @@ import { tmpdir } from "node:os";
 
 import { catalog, buildSeedRecords, emptyCatalog } from "./data.ts";
 import { createStore } from "./store.ts";
+import { validatedLedgerRecords } from "./ledger-validation.ts";
+import { ROW_STATUSES } from "./types.ts";
 import { createAgentToolkit } from "./agent.ts";
 import type { AgentToolkit } from "./agent.ts";
 import { ask } from "./ask.ts";
@@ -557,17 +559,16 @@ section("P0.8b import trust boundary", () => {
       notedThrew === "", notedThrew || "a blank correctPlacement note still round-trips");
   }
 
-  // ---- A2 boundary, stated honestly: NOT covered by shape validation.
-  // A structurally perfect reference to a room that does not exist is a
-  // REFERENTIAL INTEGRITY problem, not a field-shape problem. Shape validation
-  // accepts it, and this assertion pins that limit so a later reader cannot mistake
-  // this batch for full import validation. Closing it needs cross-record semantics
-  // over the catalog + existing ledger — a separate contract, deliberately not here.
+  // ---- Referential integrity. This was a DOCUMENTED GAP in the previous slice: shape
+  // validation accepts a structurally perfect reference to a room that does not exist,
+  // and the gap lock recorded that limit. The semantics pass now closes it, so the lock
+  // is converted from "not yet checked" into the positive contract it was waiting for.
   const nonexistentRoom = rejected(commitWith([
     { type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "room-does-not-exist" }, relation: "inside", confidence: 1 },
   ]));
-  assert("import-shape-does-not-yet-check-place-existence", nonexistentRoom.threw === false,
-    "documented gap: referential integrity is a separate contract, not shape validation");
+  assert("import-rejects-placement-into-nonexistent-room",
+    nonexistentRoom.threw && /unknown Place Reference room:room-does-not-exist/.test(nonexistentRoom.message),
+    nonexistentRoom.message);
 
   // Second documented gap, pinned for the same reason: `loadRecords` deserialises
   // localStorage, which is equally user-writable, and is NOT validated by this change.
@@ -590,6 +591,380 @@ section("P0.8b import trust boundary", () => {
   const fromStorage = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: tamperedStorage });
   assert("load-from-storage-is-not-yet-validated", fromStorage.exportJson().records.length === 1,
     "documented gap: loadRecords accepts what importJson refuses; separate slice");
+
+  // Every reference class the semantics pass resolves. Each is SHAPE-PERFECT — the
+  // dumps below pass `validatedLedgerRecords` untouched — so each one also proves that
+  // shape is not being used as authority for meaning.
+  const danglingCases: Array<[string, unknown, RegExp]> = [
+    ["item", commitWith([{ type: "create_placement", itemId: "ghost-item", placeRef: { type: "room", id: "bedroom" }, relation: "inside", confidence: 1 }]),
+      /unknown Belonging ghost-item/],
+    ["container parent", commitWith([{ type: "create_container", container: { id: "orphan", name: "Orphan", kind: "box", parent: { type: "room", id: "nowhere" }, box: { label: "O", destination: "D", operationId: null } } }]),
+      /unknown Place Reference room:nowhere/],
+    ["state on a ghost", commitWith([{ type: "set_state", itemId: "ghost-2", state: "at_home" }]),
+      /unknown Belonging ghost-2/],
+    ["merge of ghosts", commitWith([{ type: "merge_belongings", keepId: "ghost-a", mergeId: "ghost-b" }]),
+      /unknown Belonging ghost-a/],
+    ["confirm a ghost container", commitWith([{ type: "confirm_container", containerId: "no-such-container" }]),
+      /unknown Container no-such-container/],
+    ["decide a ghost proposal", commitWith([{ type: "accept_proposal", proposalId: "no-such-proposal" }]),
+      /unknown Proposal no-such-proposal/],
+    ["box status on a ghost container", commitWith([{ type: "set_box_status", boxId: "no-such-container", status: "packed" }]),
+      /unknown Container no-such-container/],
+    ["evidence that does not exist", commitWith([{ type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "bedroom" }, relation: "inside", confidence: 1, evidenceIds: ["ev-ghost"] }]),
+      /unknown Evidence ev-ghost/],
+    ["row on a ghost operation", commitWith([{ type: "set_op_row_status", opId: "no-op", rowId: "no-row", status: "found" }]),
+      /unknown Operation row no-op:no-row/],
+  ];
+  for (const [label, payload, pattern] of danglingCases) {
+    const shapeOk = (() => { try { validatedLedgerRecords(payload, "Probe"); return true; } catch { return false; } })();
+    const outcome = rejected(payload);
+    assert(`import-rejects-dangling-${label.replace(/[^a-z]+/gi, "-").toLowerCase()}`,
+      shapeOk && outcome.threw && pattern.test(outcome.message),
+      shapeOk ? outcome.message : `fixture was refused by SHAPE, so it cannot prove the semantics pass`);
+  }
+
+  // A `reset_to_seed` record must confer NOTHING on later records in the same dump.
+  // `derive()` treats it as a no-op when replaying an imported ledger, so crediting the
+  // seed's ids would let a dump reference containers the store will never know — which
+  // reproduced the exact fabricated answer this validation exists to prevent.
+  const resetGrantsNothing = rejected({ version: 2, records: [
+    { recordType: "commit", id: "r-reset", at: "2026-01-01T00:00:00.000Z", summary: "reset", ops: [{ type: "reset_to_seed" }] },
+    { recordType: "commit", id: "c-after", at: "2026-01-01T00:00:00.000Z", summary: "use a seed-commit container",
+      ops: [{ type: "create_placement", itemId: "passport", placeRef: { type: "container", id: "box-essentials" }, relation: "inside", confidence: 1 }] },
+  ] });
+  assert("import-reset-to-seed-confers-no-references",
+    resetGrantsNothing.threw && /unknown Place Reference container:box-essentials/.test(resetGrantsNothing.message),
+    resetGrantsNothing.message);
+
+  // ...and the same reference is refused without the reset too, so the lock above is
+  // about the reset vehicle rather than about that container being unknown in general.
+  const noResetSameRef = rejected(commitWith([
+    { type: "create_placement", itemId: "passport", placeRef: { type: "container", id: "box-essentials" }, relation: "inside", confidence: 1 },
+  ]));
+  assert("import-seed-commit-container-is-unknown-without-a-reset",
+    noResetSameRef.threw && /unknown Place Reference container:box-essentials/.test(noResetSameRef.message),
+    noResetSameRef.message);
+
+  // No import may leave a placement whose chain cannot be rendered. This asserts the
+  // PRODUCT outcome rather than the validator's internals: whatever a dump does, the
+  // answer must never name an empty place.
+  const noEmptyPlace = fresh();
+  for (const attempt of [
+    { version: 2, records: [
+      { recordType: "commit", id: "r1", at: "2026-01-01T00:00:00.000Z", summary: "reset", ops: [{ type: "reset_to_seed" }] },
+      { recordType: "commit", id: "c1", at: "2026-01-01T00:00:00.000Z", summary: "x",
+        ops: [{ type: "create_placement", itemId: "passport", placeRef: { type: "container", id: "box-essentials" }, relation: "inside", confidence: 1 }] },
+    ] },
+    commitWith([{ type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "nowhere" }, relation: "inside", confidence: 1 }]),
+  ]) {
+    try { noEmptyPlace.importJson(attempt); } catch { /* expected */ }
+  }
+  const afterAttempts = noEmptyPlace.locate("passport");
+  assert("no-import-can-produce-an-answer-naming-an-empty-place",
+    afterAttempts.ok === false || afterAttempts.sentence.includes("Bedside drawer"),
+    afterAttempts.sentence);
+
+  // The same fabrication originates at the WRITE path, with no import involved: an
+  // unresolvable place produced "... is probably in the ." live. Every writer that takes
+  // a place must refuse one the Place Graph does not contain, or the gate above merely
+  // makes the resulting export unrestorable instead of preventing the bad state.
+  const ghost = { type: "room", id: "ghost-room" } as const;
+  const writerRefuses = (label: string, drive: (store: Store) => void): void => {
+    const st = fresh();
+    let threw = "";
+    try { drive(st); } catch (err) { threw = err instanceof Error ? err.message : String(err); }
+    assert(`write-path-refuses-${label}`, threw !== "", threw || "the writer accepted an unresolvable reference");
+  };
+  writerRefuses("an-unresolvable-default-home", (st) => { st.createBelonging({ name: "Ghosted", kinds: ["k"], defaultHome: ghost }); });
+  writerRefuses("an-unresolvable-placement", (st) => { st.correctPlacement("passport", ghost); });
+  writerRefuses("an-unresolvable-review-target", (st) => {
+    const out = st.markNotThere("passport");
+    st.acceptProposal(out.proposalId, { placeRef: { type: "container", id: "invented" } });
+  });
+  writerRefuses("a-row-status-on-an-unknown-row", (st) => {
+    const t = catalog.operationTemplates[0];
+    if (!t) throw new Error("no template");
+    st.setRowStatus(st.startOperation(t.id), "row-hallucinated", "found");
+  });
+  writerRefuses("a-status-on-an-unknown-operation", (st) => { st.setOperationStatus("ghost-op", "done"); });
+  // `setItemState` took a caller-supplied item id unvalidated while its two siblings above
+  // were guarded, so it wrote a commit the reader then refused — the store's own export
+  // became unreadable, including on self-restore.
+  writerRefuses("a-state-change-on-an-unknown-item", (st) => { st.setItemState("hallucinated-item-id", "with_me"); });
+  // Domain as well as existence. `setRowStatus` and `setBoxStatus` check both; this one
+  // checked only existence, so it wrote a status the reader refuses — the same
+  // writer/reader disagreement, one enum short instead of one reference short.
+  // A proposal is a suggestion, never authority: a CONCRETE placeRef stored in
+  // `suggestedOps` is re-checked at accept time, not only the one supplied at Review.
+  // Guarding only the Review branch let an accept MINT a fresh fabricating commit
+  // ("... is probably in the .") through this writer, reachable via the pinned
+  // `loadRecords` gap.
+  writerRefuses("accepting-a-proposal-whose-stored-place-no-longer-resolves", () => {
+    const other = fresh();
+    other.importJson({ version: 2, records: [
+      { recordType: "observation", id: "o-sp", type: "manual_note", at: "2026-02-01T00:00:00.000Z" },
+      { recordType: "commit", id: "c-sp", at: "2026-02-01T00:00:00.000Z", summary: "a room that will be referenced",
+        sourceObservationIds: [], ops: [{ type: "create_room", room: { id: "vanishing", name: "Vanishing", plan: { x: 0, y: 0, w: 1, h: 1 } } }] },
+      { recordType: "proposal", id: "p-sp", type: "placement_correction", at: "2026-02-02T00:00:00.000Z",
+        sourceObservationIds: ["o-sp"], summary: "put it there",
+        suggestedOps: [{ type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "vanishing" }, relation: "inside", confidence: 0.9 }] },
+    ] });
+    // The room DOES exist here, so this accept must succeed — the refusal case is driven
+    // through storage below, where the reference never resolved at all.
+    other.acceptProposal("p-sp");
+    // Now the real refusal: a store booted from unvalidated storage holding a proposal
+    // whose concrete place never existed.
+    const tampered = memStorage();
+    tampered.setItem("nestory-v2", JSON.stringify({ version: 2, records: [
+      ...(JSON.parse(JSON.stringify(fresh().exportJson())) as ReturnType<Store["exportJson"]>).records,
+      { recordType: "observation", id: "o-gh", type: "manual_note", at: "2026-02-01T00:00:00.000Z" },
+      { recordType: "proposal", id: "p-gh", type: "placement_correction", at: "2026-02-01T00:00:00.000Z",
+        sourceObservationIds: ["o-gh"], summary: "ghost place",
+        suggestedOps: [{ type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "ghost-room" }, relation: "inside", confidence: 0.9 }] },
+    ] }));
+    const booted = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: tampered });
+    booted.acceptProposal("p-gh");
+  });
+
+  writerRefuses("an-out-of-domain-operation-status", (st) => {
+    const t = catalog.operationTemplates.find((x) => x.type === "kit");
+    if (!t) throw new Error("no kit template");
+    st.setOperationStatus(st.startOperation(t.id), "paused" as never);
+  });
+  // Accepting a proposal re-runs ops that were coherent when the proposal was MADE. A
+  // suggested `create_*` whose id has since been taken replaced the real record in place:
+  // the answer a person reads silently changed (REAL SHELF -> SUGGESTED) and the export
+  // could not be restored. Reachable from the Accept button once such a proposal exists.
+  // All FOUR id-taking op types, not just the three found by review. `create_operation`
+  // was the fourth: a stale suggestion replaced a real kit in place (REAL KIT ->
+  // SUGGESTED KIT) and left an unrestorable export. Enumerating the op union beat waiting
+  // for the next round to find it.
+  // All FOUR id-taking op types, not just the three found by review. `create_operation`
+  // was the fourth: a stale suggestion replaced a real kit in place (REAL KIT ->
+  // SUGGESTED KIT) and left an unrestorable export. Enumerating the op union beat waiting
+  // for the next round to find it.
+  //
+  // Each fixture must make the id free AT IMPORT and taken BY ACCEPT — one dump where a
+  // LATER commit claims the same id. A fixture pointing at a catalog id instead is refused
+  // by the IMPORT, so the accept guard is never exercised and the lock passes vacuously;
+  // two of these were written that way first and proved unlocked under mutation.
+  const staleCreateCases: Array<[string, unknown, unknown]> = [
+    ["room",
+      { type: "create_room", room: { id: "clash-room", name: "SUGGESTED", plan: { x: 0, y: 0, w: 1, h: 1 } } },
+      { type: "create_room", room: { id: "clash-room", name: "REAL ROOM", plan: { x: 0, y: 0, w: 2, h: 2 } } }],
+    ["belonging",
+      { type: "create_belonging", belonging: { id: "clash-item", name: "SUGGESTED", kinds: ["k"], importance: "normal", defaultHome: { type: "room", id: "bedroom" } } },
+      { type: "create_belonging", belonging: { id: "clash-item", name: "REAL ITEM", kinds: ["k"], importance: "normal", defaultHome: { type: "room", id: "bedroom" } } }],
+    ["container",
+      { type: "create_container", container: { id: "clash-box", name: "SUGGESTED", kind: "shelf", parent: { type: "room", id: "bedroom" } } },
+      { type: "create_container", container: { id: "clash-box", name: "REAL SHELF", kind: "shelf", parent: { type: "room", id: "bedroom" } } }],
+    ["operation",
+      { type: "create_operation", operation: { id: "clash-op", type: "kit", name: "SUGGESTED KIT", startedAt: "2026-02-01T00:00:00.000Z", status: "active", rows: [] } },
+      { type: "create_operation", operation: { id: "clash-op", type: "kit", name: "REAL KIT", startedAt: "2026-02-02T00:00:00.000Z", status: "active", rows: [] } }],
+  ];
+  for (const [label, suggested, real] of staleCreateCases) {
+    writerRefuses(`accepting-a-proposal-that-would-replace-an-existing-${label}`, () => {
+      const other = fresh();
+      other.importJson({ version: 2, records: [
+        { recordType: "observation", id: `o-${label}`, type: "manual_note", at: "2026-02-01T00:00:00.000Z" },
+        { recordType: "proposal", id: `p-${label}`, type: "contents_update", at: "2026-02-01T00:00:00.000Z",
+          sourceObservationIds: [`o-${label}`], summary: "stale suggestion", suggestedOps: [suggested] },
+        { recordType: "commit", id: `c-${label}`, at: "2026-02-02T00:00:00.000Z", summary: "the real record",
+          sourceObservationIds: [], ops: [real] },
+      ] });
+      other.acceptProposal(`p-${label}`);
+    });
+  }
+
+
+  writerRefuses("accepting-a-proposal-that-would-replace-a-real-record", (st) => {
+    const realId = st.createContainer({ name: "Real shelf", kind: "shelf", roomId: "bedroom" });
+    const staleProposal = { version: 2, records: [
+      { recordType: "observation", id: "obs-stale", type: "manual_note", at: "2026-02-01T00:00:00.000Z" },
+      { recordType: "proposal", id: "p-stale", type: "container_refresh", at: "2026-02-01T00:00:00.000Z",
+        sourceObservationIds: ["obs-stale"], summary: "suggest a container",
+        suggestedOps: [{ type: "create_container", container: { id: realId, name: "SUGGESTED", kind: "shelf", parent: { type: "room", id: "bedroom" } } }] },
+    ] };
+    // The proposal cannot be imported once the id is taken, so build the state the other
+    // way round: import first (id free in replay order), then create, then accept.
+    const other = fresh();
+    other.importJson(staleProposal);
+    other.createContainer({ name: "Real shelf", kind: "shelf", roomId: "bedroom" });
+    other.acceptProposal("p-stale");
+  });
+  // `unpackItem` takes a caller-supplied target and writes it straight into a placement.
+  // It was the one place-taking writer that never called the guard, and it reproduced the
+  // fabricated sentence at confidence 0.92 with no import involved. The write-path sweep
+  // could not catch it because that sweep only ever passes VALID places.
+  writerRefuses("an-unresolvable-unpack-target", (st) => { st.unpackItem("passport", ghost); });
+  // A `state` ref resolves through `placeNode` unconditionally — it synthesises a node from
+  // the id itself — so existence alone cannot judge it, and the guard let any string
+  // through while the import pass checks LIFECYCLE_STATES. The two passes must agree.
+  const bogusState = { type: "state", id: "not_a_state" } as const;
+  writerRefuses("a-bogus-lifecycle-state-as-a-placement", (st) => { st.correctPlacement("passport", bogusState); });
+  writerRefuses("a-bogus-lifecycle-state-as-a-default-home", (st) => { st.createBelonging({ name: "Ghosted", kinds: ["k"], defaultHome: bogusState }); });
+  writerRefuses("a-bogus-lifecycle-state-as-an-unpack-target", (st) => { st.unpackItem("passport", bogusState); });
+  writerRefuses("a-bogus-lifecycle-state-as-a-review-target", (st) => {
+    const out = st.markNotThere("passport");
+    st.acceptProposal(out.proposalId, { placeRef: bogusState });
+  });
+  // ...and a REAL lifecycle state must still be usable as a place, or the guard is too blunt.
+  const validState = fresh();
+  let validStateThrew = "";
+  try { validState.correctPlacement("passport", { type: "state", id: "with_me" }); }
+  catch (err) { validStateThrew = err instanceof Error ? err.message : String(err); }
+  const validStateDump = JSON.parse(JSON.stringify(validState.exportJson())) as ReturnType<Store["exportJson"]>;
+  let validStateImport = "";
+  try { fresh().importJson(validStateDump); } catch (err) { validStateImport = err instanceof Error ? err.message : String(err); }
+  assert("write-path-accepts-a-real-lifecycle-state-as-a-place",
+    validStateThrew === "" && validStateImport === "",
+    validStateThrew || validStateImport || "state:with_me writes and re-imports");
+
+  // ...and the live answer stays honest after those refusals: no fabricated place.
+  const afterWriterRefusals = fresh();
+  for (const attempt of [
+    () => afterWriterRefusals.correctPlacement("passport", ghost),
+    () => afterWriterRefusals.createBelonging({ name: "Ghosted", kinds: ["k"], defaultHome: ghost }),
+  ]) { try { attempt(); } catch { /* expected */ } }
+  const honest = afterWriterRefusals.locate("passport");
+  assert("write-path-refusals-leave-the-answer-honest",
+    honest.ok && honest.sentence.includes("Bedside drawer"), honest.sentence);
+
+  // Cross-catalog import is refused, and this is a DELIBERATE behaviour change worth
+  // pinning: a demo-home dump imported into an own-home store references catalog items
+  // that store has no catalog for. The base accepted it and answered honestly ("no
+  // memory of ..."), so this is a stricter stance rather than a bug fix — the dump is
+  // refused up front instead of installing records whose subjects do not exist. Pinned
+  // so the trade-off is visible and any future change to it is deliberate.
+  const ownHome = createStore({ catalog: emptyCatalog, seedFactory: () => [], now: () => NOW, storage: null });
+  const demoDump = JSON.parse(JSON.stringify(fresh().exportJson())) as ReturnType<Store["exportJson"]>;
+  let crossThrew = "";
+  try { ownHome.importJson(demoDump); } catch (err) { crossThrew = err instanceof Error ? err.message : String(err); }
+  assert("import-refuses-a-dump-whose-catalog-subjects-are-absent",
+    crossThrew !== "" && /references unknown Belonging/.test(crossThrew),
+    crossThrew || "a demo dump is refused by an own-home store");
+  assert("import-refusal-leaves-the-own-home-store-empty-not-half-filled",
+    ownHome.exportJson().records.length === 0, `${ownHome.exportJson().records.length} records`);
+
+  // An id collision must NOT be treated as a merge. On the base, importing an own-home
+  // dump whose room id is `bedroom` silently REPLACED the demo room of that id in place
+  // — the user's room name overwrote a real one. That is the harm; refusing is correct.
+  // The message tells the person what to do (import into a fresh home).
+  const ownSource = createStore({ catalog: emptyCatalog, seedFactory: () => [], now: () => NOW, storage: null });
+  const ownRoom = ownSource.createRoom({ name: "Bedroom" });
+  ownSource.createBelonging({ name: "Lamp", kinds: ["light"], defaultHome: { type: "room", id: ownRoom } });
+  const ownDump = JSON.parse(JSON.stringify(ownSource.exportJson())) as ReturnType<Store["exportJson"]>;
+  const collision = rejected(ownDump);
+  assert("import-refuses-to-replace-an-existing-place-in-situ",
+    collision.threw && /would replace the existing Room bedroom/.test(collision.message)
+      && /fresh home/.test(collision.message),
+    collision.message);
+  // ...and a create whose id is genuinely free still works, so this is not blanket
+  // hostility to imported creates.
+  const freshCreate = rejected({ version: 2, records: [
+    { recordType: "commit", id: "c-new", at: "2026-01-01T00:00:00.000Z", summary: "new room",
+      ops: [{ type: "create_room", room: { id: "attic", name: "Attic", plan: { x: 0, y: 0, w: 2, h: 2 } } }] },
+  ] });
+  assert("import-accepts-a-create-whose-id-is-free", freshCreate.threw === false, freshCreate.message);
+
+  // Replacing an existing belonging or merging one into itself is refused for the same
+  // reason: both mutate a real record in place rather than resolving to one.
+  const replaceItem = rejected(commitWith([{ type: "create_belonging", belonging: { id: "passport", name: "Fake passport", kinds: ["k"], importance: "normal", defaultHome: { type: "room", id: "bedroom" } } }]));
+  assert("import-refuses-to-replace-an-existing-belonging",
+    replaceItem.threw && /would replace the existing Belonging passport/.test(replaceItem.message), replaceItem.message);
+  const selfMerge = rejected(commitWith([{ type: "merge_belongings", keepId: "passport", mergeId: "passport" }]));
+  assert("import-refuses-merging-a-belonging-into-itself",
+    selfMerge.threw && /cannot merge a Belonging into itself/.test(selfMerge.message), selfMerge.message);
+
+  // A commit may decide more than one proposal. Whether it must LINK each is a separate
+  // Review-integrity rule; enforcing it here refused a legitimate export.
+  const twoDecisions = fresh();
+  const pendingPair = twoDecisions.proposals().filter((pr) => pr.status === "pending");
+  const pairFirst = pendingPair[0];
+  const pairSecond = pendingPair[1];
+  if (pairFirst && pairSecond) {
+    const paired = { version: 2, records: [
+      ...(JSON.parse(JSON.stringify(twoDecisions.exportJson())) as ReturnType<Store["exportJson"]>).records,
+      { recordType: "commit", id: "c-two", at: "2026-02-01T00:00:00.000Z", summary: "decide two",
+        sourceProposalId: pairFirst.id, sourceObservationIds: [],
+        ops: [{ type: "accept_proposal", proposalId: pairFirst.id }, { type: "accept_proposal", proposalId: pairSecond.id }] },
+    ] };
+    let pairThrew = "";
+    try { fresh().importJson(paired); } catch (err) { pairThrew = err instanceof Error ? err.message : String(err); }
+    assert("import-accepts-one-commit-deciding-two-proposals", pairThrew === "", pairThrew);
+  }
+  // An already-decided proposal cannot be decided again — that IS resolution.
+  const doubleDecide = fresh();
+  const onePending = doubleDecide.proposals().find((pr) => pr.status === "pending");
+  if (onePending) {
+    const twice = { version: 2, records: [
+      ...(JSON.parse(JSON.stringify(doubleDecide.exportJson())) as ReturnType<Store["exportJson"]>).records,
+      { recordType: "commit", id: "d1", at: "2026-02-01T00:00:00.000Z", summary: "accept", sourceProposalId: onePending.id, sourceObservationIds: [], ops: [{ type: "accept_proposal", proposalId: onePending.id }] },
+      { recordType: "commit", id: "d2", at: "2026-02-02T00:00:00.000Z", summary: "accept again", sourceProposalId: onePending.id, sourceObservationIds: [], ops: [{ type: "accept_proposal", proposalId: onePending.id }] },
+    ] };
+    const twiceOut = rejected(twice);
+    assert("import-rejects-deciding-an-already-decided-proposal",
+      twiceOut.threw && /already-decided Proposal/.test(twiceOut.message), twiceOut.message);
+  }
+  // Box status follows the writer: any container, not only kind "box".
+  const suitcase = fresh();
+  const caseId = suitcase.createContainer({ name: "Trip suitcase", kind: "suitcase", roomId: "bedroom" });
+  suitcase.setBoxStatus(caseId, "packed");
+  const caseDump = JSON.parse(JSON.stringify(suitcase.exportJson())) as ReturnType<Store["exportJson"]>;
+  let caseThrew = "";
+  try { fresh().importJson(caseDump); } catch (err) { caseThrew = err instanceof Error ? err.message : String(err); }
+  assert("import-accepts-box-status-on-any-container-the-writer-allows", caseThrew === "", caseThrew);
+
+  // Reference classes this pass does NOT resolve, pinned so "every reference resolves"
+  // cannot be read as complete. None can produce a confident wrong PLACE answer — a
+  // ghost operation simply renders nothing — so they are lower severity than the
+  // placement classes, but they are real and belong in a later slice.
+  const unresolvedClasses: Array<[string, unknown]> = [
+    ["box operationId", commitWith([{ type: "create_container", container: { id: "b-op", name: "Box", kind: "box", parent: { type: "room", id: "bedroom" }, box: { label: "L", destination: "D", operationId: "ghost-op" } } }])],
+    ["operation kitId", commitWith([{ type: "create_operation", operation: { id: "op-k", type: "kit", kitId: "ghost-kit", name: "Kit run", startedAt: "2026-01-01T00:00:00.000Z", status: "active", rows: [] } }])],
+    ["row reqId", commitWith([{ type: "create_operation", operation: { id: "op-r", type: "kit", name: "Kit run", startedAt: "2026-01-01T00:00:00.000Z", status: "active", rows: [{ id: "r1", reqId: "ghost-req", reqLabels: ["x"], level: "required", itemId: null, status: "to_get", note: null, mergedRequirement: false }] } }])],
+  ];
+  const stillAccepted = unresolvedClasses.filter(([, payload]) => rejected(payload).threw === false).map(([label]) => label);
+  assert("import-does-not-yet-resolve-non-placement-reference-classes",
+    stillAccepted.length === unresolvedClasses.length,
+    `documented gap: ${stillAccepted.join(", ")} still accepted; a later slice, and none yields a wrong place answer`);
+
+  // Order matters, not just membership: a dump may legitimately create a room and then
+  // place something in it. Refusing forward references would break real exports, so the
+  // ledger is replayed rather than checked against a static set.
+  const createsThenUses = rejected({ version: 2, records: [
+    { recordType: "commit", id: "c-make", at: "2026-01-01T00:00:00.000Z", summary: "Add a room and use it",
+      ops: [
+        { type: "create_room", room: { id: "study", name: "Study", plan: { x: 0, y: 0, w: 3, h: 3 } } },
+        { type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "study" }, relation: "inside", confidence: 1 },
+      ] },
+  ] });
+  assert("import-accepts-a-reference-created-earlier-in-the-same-dump",
+    createsThenUses.threw === false, createsThenUses.message || "create-then-use is accepted");
+
+  const usesThenCreates = rejected({ version: 2, records: [
+    { recordType: "commit", id: "c-early", at: "2026-01-01T00:00:00.000Z", summary: "Use before create",
+      ops: [{ type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "study" }, relation: "inside", confidence: 1 }] },
+    { recordType: "commit", id: "c-late", at: "2026-01-02T00:00:00.000Z", summary: "Create after use",
+      ops: [{ type: "create_room", room: { id: "study", name: "Study", plan: { x: 0, y: 0, w: 3, h: 3 } } }] },
+  ] });
+  assert("import-rejects-a-reference-used-before-it-is-created",
+    usesThenCreates.threw && /unknown Place Reference room:study/.test(usesThenCreates.message),
+    usesThenCreates.message);
+
+  // A proposal only SUGGESTS. Its ops must be coherent, but must not enter the accepted
+  // set — otherwise an imported proposal could authorise a later commit without Review.
+  const proposalDoesNotGrant = rejected({ version: 2, records: [
+    { recordType: "observation", id: "obs-1", type: "manual_note", at: "2026-01-01T00:00:00.000Z" },
+    { recordType: "proposal", id: "p-1", type: "placement_correction", at: "2026-01-01T00:00:00.000Z",
+      sourceObservationIds: ["obs-1"], summary: "Suggest a new room",
+      suggestedOps: [{ type: "create_room", room: { id: "ghost-room", name: "Ghost", plan: { x: 0, y: 0, w: 1, h: 1 } } }] },
+    { recordType: "commit", id: "c-uses", at: "2026-01-02T00:00:00.000Z", summary: "Use the suggested room",
+      ops: [{ type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "ghost-room" }, relation: "inside", confidence: 1 }] },
+  ] });
+  assert("import-does-not-let-a-proposal-grant-what-review-has-not-committed",
+    proposalDoesNotGrant.threw && /unknown Place Reference room:ghost-room/.test(proposalDoesNotGrant.message),
+    proposalDoesNotGrant.message);
 
   // ---- A3 — a refused import leaves records, seq, and STORAGE untouched.
   // This is the contract that matters most: before the fix, a rejected dump had
@@ -629,6 +1004,136 @@ section("P0.8b import trust boundary", () => {
   assert("import-refusal-leaves-seq-unchanged",
     guardedSeq !== "" && guardedSeq === controlSeq,
     `minted seq after refusal ${guardedSeq} vs untouched control ${controlSeq}`);
+
+  // A3 for the SEMANTIC path specifically. The previous slice measured this for shape
+  // refusals; a semantic refusal happens later in the same function, so it needs its own
+  // measurement rather than an assumption that the ordering still holds.
+  const semStorage = memStorage();
+  const semGuarded = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: semStorage });
+  semGuarded.createBelonging({ name: "Semantic primer", kinds: ["primer"], defaultHome: { type: "room", id: "bedroom" } });
+  const semBeforeCount = semGuarded.exportJson().records.length;
+  const semBeforeIds = semGuarded.exportJson().records.map((r) => r.id).join(",");
+  const semPersistedBefore = semStorage.getItem("nestory-v2");
+  assert("semantic-refusal-fixture-has-real-persisted-state",
+    typeof semPersistedBefore === "string" && semPersistedBefore.length > 0,
+    "storage must hold real content before the refusal or the storage assertion proves nothing");
+  let semRefused = "";
+  try {
+    semGuarded.importJson(commitWith([
+      { type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "room-does-not-exist" }, relation: "inside", confidence: 1 },
+    ]));
+  } catch (err) { semRefused = err instanceof Error ? err.message : String(err); }
+  const semAfter = semGuarded.exportJson().records;
+  assert("semantic-refusal-leaves-records-unchanged",
+    semRefused !== "" && semAfter.length === semBeforeCount && semAfter.map((r) => r.id).join(",") === semBeforeIds,
+    `${semBeforeCount} -> ${semAfter.length}`);
+  assert("semantic-refusal-writes-nothing-to-storage",
+    semStorage.getItem("nestory-v2") === semPersistedBefore,
+    `persisted changed: ${semStorage.getItem("nestory-v2") !== semPersistedBefore}`);
+  const semSeqOf = (mintedId: string): string => mintedId.split("-")[1] ?? "";
+  const semControl = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: memStorage() });
+  semControl.createBelonging({ name: "Semantic primer", kinds: ["primer"], defaultHome: { type: "room", id: "bedroom" } });
+  const semControlSeq = semSeqOf(semControl.createBelonging({ name: "Seq probe", kinds: ["probe"], defaultHome: { type: "room", id: "bedroom" } }));
+  const semGuardedSeq = semSeqOf(semGuarded.createBelonging({ name: "Seq probe", kinds: ["probe"], defaultHome: { type: "room", id: "bedroom" } }));
+  assert("semantic-refusal-leaves-seq-unchanged",
+    semGuardedSeq !== "" && semGuardedSeq === semControlSeq,
+    `minted seq after semantic refusal ${semGuardedSeq} vs untouched control ${semControlSeq}`);
+
+  // THE INVARIANT, extended to semantics: whatever the store's own write path produces
+  // must re-import. The previous slice locked this for field boundaries; a hand-picked
+  // sequence is not enough, because a single unexercised method is exactly how the last
+  // instance hid (`unpackItem` emitting a box status against a room). This drives EVERY
+  // public write method and re-imports each resulting export.
+  const semanticSelfInflicted: string[] = [];
+  const skippedWrites: string[] = [];
+  const writeRoundTrips = (label: string, drive: (store: Store) => void): void => {
+    const w = fresh();
+    // A silent skip would hide a FALSE REJECTION: if a guard wrongly refuses valid input,
+    // the scenario never reaches the import check and the sweep still reads green. Record
+    // every skip and assert the count is zero, so a refusal cannot masquerade as a pass.
+    try { drive(w); }
+    catch (err) { skippedWrites.push(`${label}: ${err instanceof Error ? err.message : String(err)}`); return; }
+    const dump = JSON.parse(JSON.stringify(w.exportJson())) as ReturnType<Store["exportJson"]>;
+    try { fresh().importJson(dump); }
+    catch (err) { semanticSelfInflicted.push(`${label}: ${err instanceof Error ? err.message : String(err)}`); }
+  };
+  const inBedroom = { type: "room", id: "bedroom" } as const;
+  writeRoundTrips("createRoom", (st) => { st.createRoom({ name: "Study" }); });
+  writeRoundTrips("createContainer", (st) => { st.createContainer({ name: "Tray", kind: "tray", roomId: "bedroom" }); });
+  writeRoundTrips("createBox", (st) => { st.createBox({ label: "Kitchen", destination: "New home" }); });
+  writeRoundTrips("createBelonging", (st) => { st.createBelonging({ name: "Lamp", kinds: ["light"], defaultHome: inBedroom }); });
+  writeRoundTrips("createBelonging into a new container", (st) => {
+    const c = st.createContainer({ name: "Shelf", kind: "shelf", roomId: "bedroom" });
+    st.createBelonging({ name: "Book", kinds: ["book"], defaultHome: { type: "container", id: c } });
+  });
+  writeRoundTrips("correctPlacement", (st) => { st.correctPlacement("passport", inBedroom, { note: "moved it" }); });
+  writeRoundTrips("setItemState", (st) => { st.setItemState("passport", "with_me"); });
+  writeRoundTrips("snapshotContainer", (st) => { st.snapshotContainer("entry-tray", "usb-c charger, coins"); });
+  writeRoundTrips("acceptProposal", (st) => { const pr = st.proposals().find((x) => x.status === "pending"); if (pr) st.acceptProposal(pr.id); });
+  writeRoundTrips("acceptProposal (all pending)", (st) => { for (const pr of st.proposals().filter((x) => x.status === "pending")) st.acceptProposal(pr.id); });
+  writeRoundTrips("rejectProposal", (st) => { const pr = st.proposals().find((x) => x.status === "pending"); if (pr) st.rejectProposal(pr.id, "not right"); });
+  writeRoundTrips("rejectProposal blank reason", (st) => { const pr = st.proposals().find((x) => x.status === "pending"); if (pr) st.rejectProposal(pr.id, ""); });
+  writeRoundTrips("setBoxStatus on a box", (st) => { st.setBoxStatus("box-essentials", "packed"); });
+  writeRoundTrips("setBoxStatus on a non-box", (st) => { const c = st.createContainer({ name: "Trip suitcase", kind: "suitcase", roomId: "bedroom" }); st.setBoxStatus(c, "packed"); });
+  writeRoundTrips("assignToBox", (st) => { st.assignToBox("passport", "box-essentials"); });
+  writeRoundTrips("assignToBox then unpack", (st) => { st.assignToBox("passport", "box-essentials"); st.unpackItem("passport"); });
+  writeRoundTrips("assignToBox two items then unpack one", (st) => {
+    st.assignToBox("passport", "box-essentials");
+    st.assignToBox("earphones", "box-essentials");
+    st.unpackItem("passport");
+  });
+  writeRoundTrips("unpackItem from its default home", (st) => { st.unpackItem("passport"); });
+  writeRoundTrips("unpackItem after a room placement", (st) => { st.correctPlacement("passport", inBedroom); st.unpackItem("passport"); });
+  writeRoundTrips("unpackItem out of a box", (st) => { st.correctPlacement("passport", { type: "container", id: "box-essentials" }); st.unpackItem("passport"); });
+  writeRoundTrips("unpackItem to an explicit place", (st) => { st.unpackItem("passport", inBedroom); });
+  writeRoundTrips("markNotThere", (st) => { st.markNotThere("passport"); });
+  writeRoundTrips("markNotThere then accept the proposal", (st) => {
+    const out = st.markNotThere("passport");
+    st.acceptProposal(out.proposalId, { placeRef: inBedroom });
+  });
+  writeRoundTrips("confirmContainer", (st) => { st.confirmContainer("bedside-drawer"); });
+  // EVERY template, selected by id rather than by index. An earlier version used
+  // `operationTemplates[0]`, which is the `move` template — it has no rows, so the
+  // `view.type === "kit"` branch was never taken and `setRowStatus` was NEVER CALLED
+  // inside this sweep. The scenario read green while testing nothing, which is how a
+  // whole writer stayed unswept. Assertions below prove each row scenario really ran.
+  let rowScenariosRun = 0;
+  for (const t of catalog.operationTemplates) {
+    writeRoundTrips(`startOperation ${t.id}`, (st) => { st.startOperation(t.id); });
+    writeRoundTrips(`setOperationStatus after ${t.id}`, (st) => { st.setOperationStatus(st.startOperation(t.id), "done"); });
+    for (const status of ROW_STATUSES) {
+      writeRoundTrips(`setRowStatus ${status} on ${t.id}`, (st) => {
+        const opId = st.startOperation(t.id);
+        const view = st.operationView(opId);
+        const row = view && view.type === "kit" ? view.rows[0] : undefined;
+        if (!row) return; // `move` operations legitimately have no rows
+        st.setRowStatus(opId, row.id, status);
+        rowScenariosRun += 1;
+      });
+    }
+  }
+  assert("write-path-sweep-actually-exercised-row-status", rowScenariosRun >= ROW_STATUSES.length,
+    `${rowScenariosRun} setRowStatus scenarios ran; a kit template must be driven, not just \`move\``);
+  writeRoundTrips("reset", (st) => { st.reset(); });
+  writeRoundTrips("reset then write", (st) => { st.reset(); st.createRoom({ name: "After" }); st.createBelonging({ name: "Post", kinds: ["p"], defaultHome: inBedroom }); });
+  writeRoundTrips("write, reset, write", (st) => { st.createRoom({ name: "Before" }); st.reset(); st.createRoom({ name: "After" }); });
+  writeRoundTrips("long lived-in session", (st) => {
+    const r = st.createRoom({ name: "Study" });
+    const c = st.createContainer({ name: "Shelf", kind: "shelf", roomId: r });
+    st.createBelonging({ name: "Book", kinds: ["book"], defaultHome: { type: "container", id: c } });
+    st.createBox({ label: "Move", destination: "New place" });
+    st.correctPlacement("passport", { type: "container", id: c }, { note: "" });
+    st.setItemState("passport", "packed");
+    const pr = st.proposals().find((x) => x.status === "pending"); if (pr) st.acceptProposal(pr.id);
+    st.snapshotContainer("entry-tray", "coins");
+    st.unpackItem("passport");
+  });
+  assert("import-accepts-everything-the-write-path-writes-semantically",
+    semanticSelfInflicted.length === 0,
+    semanticSelfInflicted.length ? semanticSelfInflicted.slice(0, 4).join(" | ") : "every driven write path re-imports");
+  assert("write-path-sweep-skipped-nothing",
+    skippedWrites.length === 0,
+    skippedWrites.length ? skippedWrites.slice(0, 4).join(" | ") : "no valid scenario was refused by a writer");
 
   // A successful import after a refused one still works — the guard is not sticky.
   // Uses the MUTATED dump so the marker's arrival proves the import actually ran.

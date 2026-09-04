@@ -17,8 +17,8 @@ import type {
   ScoredBelongingView, StorageLike, Store, StoreOptions, UnpackPriorityEntry,
   WhichContainerHit
 } from "./types.ts";
-import { BOX_STATUSES, IMPORTANCE_SCORE, LIFECYCLE_STATES, ROW_STATUSES } from "./types.ts";
-import { validatedLedgerRecords } from "./ledger-validation.ts";
+import { BOX_STATUSES, IMPORTANCE_SCORE, LIFECYCLE_STATES, OPERATION_STATUSES, ROW_STATUSES } from "./types.ts";
+import { validatedLedgerRecords, validateLedgerSemantics } from "./ledger-validation.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -289,6 +289,22 @@ export function createStore(options: StoreOptions): Store {
       return c ? { type: "container", id: c.id, name: c.name, kind: c.kind, box: c.box ?? null } : null;
     }
     return { type: "state", id: ref.id, name: ref.id };
+  }
+
+  /** Refuse a place the Place Graph does not contain. Writing an unresolvable reference
+   *  produced a confident answer naming an empty place ("... is probably in the ."), and
+   *  it also made the resulting export unreadable once imports check references. The
+   *  cheapest honest place to stop it is where it enters. */
+  function requirePlace(ref: PlaceRef, what: string): PlaceRef {
+    // A `state` ref resolves through `placeNode` unconditionally — it synthesises a node
+    // from the id itself — so existence alone cannot judge it. The import pass checks
+    // state ids against LIFECYCLE_STATES; this must agree, or the writer accepts a place
+    // the reader refuses and the resulting export cannot be restored.
+    if (ref.type === "state" && !LIFECYCLE_STATES.includes(ref.id as LifecycleState)) {
+      throw new Error(`${what} names an unknown lifecycle state: ${ref.id}`);
+    }
+    if (!placeNode(ref)) throw new Error(`${what} names a place that does not exist: ${ref.type}:${ref.id}`);
+    return ref;
   }
 
   function findNode<T extends PlaceNode["type"]>(chain: PlaceNode[], type: T): Extract<PlaceNode, { type: T }> | null {
@@ -727,6 +743,8 @@ export function createStore(options: StoreOptions): Store {
   function createBelonging(input: CreateBelongingInput): string {
     const name = input.name?.trim();
     if (!name) throw new Error("Belonging needs a name.");
+    if (input.defaultHome) requirePlace(input.defaultHome, "Default home");
+    if (input.currentPlace) requirePlace(input.currentPlace, "Current place");
     const itemId = id("item");
     const ev = appendEvidence("user_confirmation", `Created belonging ${name}`);
     const ops: CommitOp[] = [{
@@ -751,6 +769,10 @@ export function createStore(options: StoreOptions): Store {
 
   function setItemState(itemId: string, lifecycle: LifecycleState): void {
     if (!LIFECYCLE_STATES.includes(lifecycle)) throw new Error(`Unknown state ${lifecycle}`);
+    // The item must exist. `setRowStatus` and `setOperationStatus` already check their
+    // references; omitting it here let a caller-supplied id commit and then made the
+    // store's own export unreadable — the writer/reader disagreement this change removes.
+    if (!belongingOf(itemId)) throw new Error(`Unknown belonging ${itemId}`);
     appendCommit({
       summary: `Set ${belongingOf(itemId)?.name ?? itemId} state: ${lifecycle}`,
       ops: [{ type: "set_state", itemId, state: lifecycle }]
@@ -761,6 +783,7 @@ export function createStore(options: StoreOptions): Store {
   function correctPlacement(itemId: string, placeRef: PlaceRef, opts: { relation?: Relation; note?: string | null } = {}): CommitRecord {
     const b = belongingOf(itemId);
     if (!b) throw new Error("Unknown belonging");
+    requirePlace(placeRef, "Placement");
     const ev = appendEvidence("user_confirmation", opts.note ?? `You placed ${b.name} here`);
     const ops: CommitOp[] = [];
     if (state.placements.get(itemId)?.active) {
@@ -841,9 +864,32 @@ export function createStore(options: StoreOptions): Store {
     if (!p) throw new Error("No pending proposal with that id");
     const ops: CommitOp[] = [];
     for (const op of p.suggestedOps) {
-      if (op.type === "create_placement" && !op.placeRef) {
-        if (!extra.placeRef) throw new Error("This correction needs a target place (extra.placeRef).");
-        ops.push({ ...op, placeRef: extra.placeRef });
+      // A proposal's ops were coherent when it was made, not necessarily now. Accepting a
+      // suggested `create_*` whose id has since been taken REPLACES the real record in
+      // place (`derive()` overwrites), silently changing the answer a person reads and
+      // leaving an export that cannot be restored. Apply the same id-freeness rule the
+      // import pass applies, rather than trusting a stale suggestion.
+      if (op.type === "create_room" && state.rooms.has(op.room.id)) {
+        throw new Error(`This proposal would replace the existing Room ${op.room.id}`);
+      }
+      if (op.type === "create_container" && state.containers.has(op.container.id)) {
+        throw new Error(`This proposal would replace the existing Container ${op.container.id}`);
+      }
+      if (op.type === "create_belonging" && state.belongings.has(op.belonging.id)) {
+        throw new Error(`This proposal would replace the existing Belonging ${op.belonging.id}`);
+      }
+      if (op.type === "create_operation" && state.operations.has(op.operation.id)) {
+        throw new Error(`This proposal would replace the existing Operation ${op.operation.id}`);
+      }
+      if (op.type === "create_placement") {
+        // A proposal is a suggestion, never authority, so the target is re-checked at
+        // accept time whether it came from Review or was stored in the suggestion. Only
+        // the Review branch was guarded, so accepting a proposal whose stored placeRef had
+        // become unresolvable MINTED a new fabricating commit — "... is probably in the ."
+        // — through this very writer.
+        const target = op.placeRef ?? extra.placeRef;
+        if (!target) throw new Error("This correction needs a target place (extra.placeRef).");
+        ops.push({ ...op, placeRef: requirePlace(target, op.placeRef ? "Suggested place" : "Review target place") });
       } else {
         ops.push({ ...op });
       }
@@ -948,6 +994,12 @@ export function createStore(options: StoreOptions): Store {
 
   function setRowStatus(opId: string, rowId: string, status: RowStatus, note?: string | null): CommitRecord {
     if (!ROW_STATUSES.includes(status)) throw new Error(`Unknown row status ${status}`);
+    // The op and row must exist. An id that resolves to nothing — a hallucinated row id
+    // from the agent surface, say — committed silently and then made the export
+    // unreadable.
+    const target = state.operations.get(opId);
+    if (!target) throw new Error(`Unknown operation ${opId}`);
+    if (!(target.rows ?? []).some((row) => row.id === rowId)) throw new Error(`Unknown row ${rowId} on operation ${opId}`);
     const op: CommitOp = note !== undefined
       ? { type: "set_op_row_status", opId, rowId, status, note }
       : { type: "set_op_row_status", opId, rowId, status };
@@ -955,6 +1007,12 @@ export function createStore(options: StoreOptions): Store {
   }
 
   function setOperationStatus(opId: string, status: OperationStatus): CommitRecord {
+    // Both halves, matching `setRowStatus` and `setBoxStatus`: the operation must exist AND
+    // the status must be in its domain. The existence half alone left the writer accepting
+    // a value the reader refuses, which is the same disagreement that makes an export
+    // unrestorable — one enum short rather than one reference short.
+    if (!OPERATION_STATUSES.includes(status)) throw new Error(`Unknown operation status ${status}`);
+    if (!state.operations.has(opId)) throw new Error(`Unknown operation ${opId}`);
     return appendCommit({ summary: `Operation ${opId}: ${status}`, ops: [{ type: "set_op_status", opId, status }] });
   }
 
@@ -1005,8 +1063,15 @@ export function createStore(options: StoreOptions): Store {
   function unpackItem(itemId: string, placeRef: PlaceRef | null = null): CommitRecord {
     const b = belongingOf(itemId);
     if (!b) throw new Error("Unknown belonging");
-    const target = placeRef ?? b.defaultHome;
-    const fromBoxId = state.placements.get(itemId)?.active?.placeRef.id ?? null;
+    const target = requirePlace(placeRef ?? b.defaultHome, "Unpack target");
+    // Only a BOX can take a box status. The previous placement may be a room, a piece
+    // of furniture or a non-box container, and emitting `set_box_status` against one of
+    // those wrote an op that refers to no box at all — making the store's own export
+    // unimportable once references are checked.
+    const previousRef = state.placements.get(itemId)?.active?.placeRef ?? null;
+    const fromBoxId = previousRef?.type === "container" && containerOf(previousRef.id)?.kind === "box"
+      ? previousRef.id
+      : null;
     const ev = appendEvidence("user_confirmation", `Unpacked ${b.name} to ${chainText(chainFor(target))}`);
     const ops: CommitOp[] = [
       { type: "contradict_placement", itemId, reason: "unpacked", evidenceIds: [ev.id] },
@@ -1036,6 +1101,11 @@ export function createStore(options: StoreOptions): Store {
     // storage exactly as they were. The validator owns the whole boundary, including
     // the top-level shape, so there is no separate pre-check to disagree with it.
     const imported = validatedLedgerRecords(data, "Import");
+    // Shape is not authority for meaning. A structurally perfect dump can still point
+    // at a room, item or proposal that does not exist; deriving from it produced a
+    // confident answer naming an empty place. Both passes must succeed before any
+    // state changes, so a semantic refusal is as clean as a shape refusal.
+    validateLedgerSemantics(imported, catalog);
     records = imported;
     seq = records.length;
     persist();
