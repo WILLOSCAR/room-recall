@@ -1057,6 +1057,13 @@ function describeOp(op: CommitOp): string {
     case "merge_belongings": return `Merge ${itemName(op.mergeId)} into ${itemName(op.keepId)}`;
     case "confirm_container": return `Confirm contents freshness of ${containerName(op.containerId)}`;
     case "set_state": return `Set ${itemName(op.itemId)} state to ${op.state}`;
+    // Named explicitly rather than falling through: the default rendered a bare
+    // "create operation" with no id and no name, so a Review card gave the person nothing
+    // to judge before pressing Accept.
+    case "create_operation": return `Start operation: ${op.operation.name}`;
+    case "create_room": return `Add room: ${op.room.name}`;
+    case "create_container": return `Add container: ${op.container.name}`;
+    case "create_belonging": return `Add belonging: ${op.belonging.name}`;
     default: return op.type.replace(/_/g, " ");
   }
 }

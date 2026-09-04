@@ -5,16 +5,21 @@
 // replaces the whole home memory, and the failure only surfaces later — after the
 // replacement has already been persisted.
 //
-// This module validates the SHAPE of every record: required fields, types, value
-// domains, numeric ranges, timestamps, and duplicate ids. It deliberately does NOT
-// check referential integrity — whether a `placeRef` names a room that exists,
-// whether an `itemId` resolves to a real belonging, or whether a proposal was
-// already decided. Those are cross-record semantics over the catalog and the
-// existing ledger, they need a different input (the catalog plus a baseline), and
-// they are a separate contract. A dump that passes here is well-formed, not
-// necessarily meaningful.
+// Validation happens in two passes, deliberately separate because they answer
+// different questions and need different inputs:
+//
+//   `validatedLedgerRecords` — SHAPE. Required fields, types, value domains, numeric
+//   ranges, timestamps, duplicate ids. Needs only the dump. A record that passes is
+//   well-formed.
+//
+//   `validateLedgerSemantics` — MEANING. Whether each reference actually resolves:
+//   does this `placeRef` name a room that exists, does this `itemId` resolve to a
+//   belonging, was this proposal still pending. Needs the catalog and the ledger
+//   replayed in order, because a dump may legitimately create a room and then place
+//   something in it. Well-formed is not the same as meaningful, and shape is never
+//   treated as authority for meaning.
 import type {
-  AnyRecord, Belonging, CommitOp, Container, OperationData, PhotoMedia, PlaceRef, Room
+  AnyRecord, Belonging, Catalog, CommitOp, Container, OperationData, PhotoMedia, PlaceRef, Room
 } from "./types.ts";
 import {
   BOX_STATUSES, CONTAINER_KINDS, LIFECYCLE_STATES as LIFECYCLE_STATE_VALUES,
@@ -348,4 +353,210 @@ export function validatedLedgerRecords(data: unknown, source: string): AnyRecord
     }
     return record as unknown as AnyRecord;
   });
+}
+
+// ===================================================================== semantics
+// Pass two: do the references actually resolve? The ledger is replayed in order
+// against a set of known ids that starts from the catalog and grows as records
+// create rooms, containers and belongings — so a dump that creates a room and then
+// places something in it is accepted, while a dump that points at something never
+// created is refused. This is what shape validation structurally cannot decide.
+
+interface LedgerSemantics {
+  rooms: Set<string>;
+  furniture: Set<string>;
+  containers: Set<string>;
+  belongings: Set<string>;
+  evidence: Set<string>;
+  observations: Set<string>;
+  proposals: Map<string, "pending" | "accepted" | "rejected">;
+  operations: Map<string, Set<string>>;
+}
+
+function catalogSemantics(catalog: Catalog): LedgerSemantics {
+  return {
+    rooms: new Set(catalog.rooms.map((room) => room.id)),
+    furniture: new Set(catalog.furniture.map((furniture) => furniture.id)),
+    containers: new Set(catalog.containers.map((container) => container.id)),
+    belongings: new Set(catalog.belongings.map((belonging) => belonging.id)),
+    evidence: new Set(),
+    observations: new Set(),
+    proposals: new Map(),
+    operations: new Map()
+  };
+}
+
+function cloneSemantics(source: LedgerSemantics): LedgerSemantics {
+  return {
+    rooms: new Set(source.rooms),
+    furniture: new Set(source.furniture),
+    containers: new Set(source.containers),
+    belongings: new Set(source.belongings),
+    evidence: new Set(source.evidence),
+    observations: new Set(source.observations),
+    proposals: new Map(source.proposals),
+    operations: new Map([...source.operations].map(([id, rows]) => [id, new Set(rows)]))
+  };
+}
+
+function semanticPlace(ref: PlaceRef, semantics: LedgerSemantics, path: string): void {
+  const exists = ref.type === "room" ? semantics.rooms.has(ref.id)
+    : ref.type === "furniture" ? semantics.furniture.has(ref.id)
+    : ref.type === "container" ? semantics.containers.has(ref.id)
+    : LIFECYCLE_STATES.has(ref.id);
+  if (!exists) throw new Error(`${path} has unknown Place Reference ${ref.type}:${ref.id}`);
+}
+
+function semanticItem(itemId: string, semantics: LedgerSemantics, path: string): void {
+  if (!semantics.belongings.has(itemId)) throw new Error(`${path} references unknown Belonging ${itemId}`);
+}
+
+function applySemanticOps(
+  ops: readonly CommitOp[],
+  semantics: LedgerSemantics,
+  path: string,
+  proposal: boolean
+): void {
+  ops.forEach((op, index) => {
+    const opPath = `${path}[${index}]`;
+    switch (op.type) {
+      case "create_placement":
+        semanticItem(op.itemId, semantics, `${opPath}.itemId`);
+        if (op.placeRef) semanticPlace(op.placeRef, semantics, `${opPath}.placeRef`);
+        else if (!proposal) throw new Error(`${opPath}.placeRef must be concrete in a Commit`);
+        for (const evidenceId of op.evidenceIds ?? []) {
+          if (!semantics.evidence.has(evidenceId)) throw new Error(`${opPath}.evidenceIds references unknown Evidence ${evidenceId}`);
+        }
+        break;
+      case "contradict_placement":
+        semanticItem(op.itemId, semantics, `${opPath}.itemId`);
+        for (const evidenceId of op.evidenceIds ?? []) {
+          if (!semantics.evidence.has(evidenceId)) throw new Error(`${opPath}.evidenceIds references unknown Evidence ${evidenceId}`);
+        }
+        break;
+      case "set_state": semanticItem(op.itemId, semantics, `${opPath}.itemId`); break;
+      case "create_belonging":
+        // Creating over an existing id silently REPLACES it in `derive()` — an import
+        // could rename a real belonging. Resolution includes "this id is free".
+        if (semantics.belongings.has(op.belonging.id)) throw new Error(`${opPath} would replace the existing Belonging ${op.belonging.id}`);
+        semanticPlace(op.belonging.defaultHome, semantics, `${opPath}.belonging.defaultHome`);
+        semantics.belongings.add(op.belonging.id);
+        break;
+      case "create_room":
+        // Creating over an existing id silently REPLACES it in `derive()`. On the base a
+        // dump from another home whose ids collide overwrote a real room in place. Refuse
+        // instead, and say what to do: such a dump belongs in a fresh home, not merged
+        // into one that already has those ids.
+        if (semantics.rooms.has(op.room.id)) throw new Error(`${opPath} would replace the existing Room ${op.room.id}; import this dump into a fresh home instead of merging it into one that already uses that id`);
+        semantics.rooms.add(op.room.id);
+        break;
+      case "create_container":
+        if (semantics.containers.has(op.container.id)) throw new Error(`${opPath} would replace the existing Container ${op.container.id}`);
+        semanticPlace(op.container.parent, semantics, `${opPath}.container.parent`);
+        semantics.containers.add(op.container.id);
+        break;
+      case "set_box_status":
+        // Existence only. `setBoxStatus` accepts any container, so requiring kind "box"
+        // here would refuse an export the store itself produced.
+        if (!semantics.containers.has(op.boxId)) throw new Error(`${opPath}.boxId references unknown Container ${op.boxId}`);
+        break;
+      case "confirm_container":
+        if (!semantics.containers.has(op.containerId)) throw new Error(`${opPath}.containerId references unknown Container ${op.containerId}`);
+        break;
+      case "create_operation": {
+        if (semantics.operations.has(op.operation.id)) throw new Error(`${opPath} would replace the existing Operation ${op.operation.id}`);
+        const rows = new Set<string>();
+        for (const row of op.operation.rows ?? []) {
+          if (row.itemId) semanticItem(row.itemId, semantics, `${opPath}.operation.rows.${row.id}.itemId`);
+          rows.add(row.id);
+        }
+        semantics.operations.set(op.operation.id, rows);
+        break;
+      }
+      case "set_op_row_status":
+        if (!semantics.operations.get(op.opId)?.has(op.rowId)) throw new Error(`${opPath} references unknown Operation row ${op.opId}:${op.rowId}`);
+        break;
+      case "set_op_status":
+        if (!semantics.operations.has(op.opId)) throw new Error(`${opPath}.opId references unknown Operation ${op.opId}`);
+        break;
+      case "merge_belongings":
+        semanticItem(op.keepId, semantics, `${opPath}.keepId`);
+        semanticItem(op.mergeId, semantics, `${opPath}.mergeId`);
+        if (op.keepId === op.mergeId) throw new Error(`${opPath} cannot merge a Belonging into itself`);
+        break;
+      case "accept_proposal":
+      case "reject_proposal": {
+        // Resolution only: the proposal must exist and still be undecided. Whether a
+        // commit must LINK the proposal it decides is a separate Review-integrity rule,
+        // and enforcing it here refused a legitimate commit deciding two proposals.
+        const status = semantics.proposals.get(op.proposalId);
+        if (status === undefined) throw new Error(`${opPath}.proposalId references unknown Proposal ${op.proposalId}`);
+        if (status !== "pending") throw new Error(`${opPath}.proposalId references an already-decided Proposal ${op.proposalId}`);
+        semantics.proposals.set(op.proposalId, op.type === "accept_proposal" ? "accepted" : "rejected");
+        break;
+      }
+      case "reset_to_seed": break;
+    }
+  });
+}
+
+function foldSemantics(records: readonly AnyRecord[], semantics: LedgerSemantics): void {
+  records.forEach((record, index) => {
+    const path = `Record ${index + 1}`;
+    if (record.recordType === "evidence") {
+      semantics.evidence.add(record.id);
+      return;
+    }
+    if (record.recordType === "observation") {
+      if (record.itemId) semanticItem(record.itemId, semantics, `${path}.itemId`);
+      if (record.containerId && !semantics.containers.has(record.containerId)) throw new Error(`${path}.containerId references unknown Container ${record.containerId}`);
+      semantics.observations.add(record.id);
+      return;
+    }
+    if (record.recordType === "proposal") {
+      for (const observationId of record.sourceObservationIds) {
+        if (!semantics.observations.has(observationId)) throw new Error(`${path}.sourceObservationIds references unknown Observation ${observationId}`);
+      }
+      // A proposal only SUGGESTS, so its ops are checked against a copy: they must be
+      // coherent, but they must not add anything to the accepted set until a commit
+      // accepts them. This keeps Observation -> Proposal -> Review -> Commit intact.
+      applySemanticOps(record.suggestedOps, cloneSemantics(semantics), `${path}.suggestedOps`, true);
+      semantics.proposals.set(record.id, "pending");
+      return;
+    }
+
+    if (record.sourceProposalId && !semantics.proposals.has(record.sourceProposalId)) {
+      throw new Error(`${path}.sourceProposalId references unknown Proposal ${record.sourceProposalId}`);
+    }
+    for (const observationId of record.sourceObservationIds ?? []) {
+      if (!semantics.observations.has(observationId)) throw new Error(`${path}.sourceObservationIds references unknown Observation ${observationId}`);
+    }
+    const reset = record.ops.some((op) => op.type === "reset_to_seed");
+    if (reset) {
+      if (record.ops.length !== 1) throw new Error(`${path} reset_to_seed must be the only operation in its Commit`);
+      // A reset record grants NOTHING to later records in the same dump. `derive()`
+      // treats `reset_to_seed` as a no-op when replaying an imported ledger — it does
+      // not re-run the seed commits — so crediting the seed's ids here would let a
+      // dump reference containers the store will never know, producing exactly the
+      // confident answer naming an empty place that this validation exists to stop.
+      // The reset is still recorded (append-only history is preserved); it simply
+      // confers no authority.
+      return;
+    }
+    applySemanticOps(record.ops, semantics, `${path}.ops`, false);
+  });
+}
+
+/** Check that every reference in `records` resolves, replaying the ledger in order.
+ *
+ *  The known-id set starts from the catalog and grows only as the records themselves
+ *  create rooms, containers and belongings — matching what `derive()` will actually
+ *  know after the import. A `reset_to_seed` record confers nothing, because `derive()`
+ *  treats it as a no-op on an imported ledger rather than re-running the seed commits.
+ *
+ *  Throws on the first unresolved reference, naming the record and path. Like the
+ *  shape pass it is pure: it reads, it never writes, so a caller that only installs
+ *  records after both passes return cannot half-apply a bad dump. */
+export function validateLedgerSemantics(records: readonly AnyRecord[], catalog: Catalog): void {
+  foldSemantics(records, catalogSemantics(catalog));
 }
