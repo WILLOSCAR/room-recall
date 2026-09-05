@@ -488,6 +488,30 @@ export interface StorageLike {
   setItem(key: string, value: string): void;
 }
 
+/** Why a boot fell back to the seed instead of the saved ledger, and where the
+ *  unreadable bytes were preserved. Reported by `Store.storageRecovery()`. */
+export interface StorageRecovery {
+  /** The validator's own message — why the saved ledger could not be trusted. */
+  reason: string;
+  /** The storage key whose value could not be read. Left exactly as it was found. */
+  originalKey: string;
+  /** Key the bytes were COPIED to, or null if the copy itself failed (quota / private
+   *  mode). Null does not mean data was lost — the original key is untouched either way. */
+  preservedAt: string | null;
+  originalBytes: number;
+  recoveredAt: string;
+  /** True when THIS boot fell back to the seed. False when the saved ledger loaded fine
+   *  and this notice is only reporting an unreadable copy kept aside by an EARLIER boot —
+   *  the person's own records are loaded, so the interface must not claim otherwise. */
+  seededThisBoot: boolean;
+  /** True when this session's changes are NOT being written to storage, because the
+   *  unreadable original could not be secured anywhere else and overwriting it would
+   *  destroy the person's only copy. The interface must say so plainly: silently
+   *  discarding work while reporting success is a worse failure than the crash this
+   *  path replaced. */
+  savingBlocked: boolean;
+}
+
 export interface StoreOptions {
   catalog: Catalog;
   seedFactory?: () => AnyRecord[];
@@ -552,6 +576,11 @@ export interface Store {
   chainFor(ref: PlaceRef | null): PlaceNode[];
   chainText(chain: PlaceNode[]): string;
   lifecycleOf(itemId: string): LifecycleState;
+  /** What happened if the saved ledger could not be read at boot, else null.
+   *  Non-null means this session started from the seed rather than from saved state;
+   *  the unreadable bytes were copied aside (`preservedAt`) and the original key was
+   *  left untouched, so nothing was destroyed to make the app usable again. */
+  storageRecovery(): StorageRecovery | null;
 
   // write
   createRoom(input: CreateRoomInput): string;

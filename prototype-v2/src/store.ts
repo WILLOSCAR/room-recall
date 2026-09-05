@@ -8,13 +8,13 @@ import type {
   ActivationSummary, AnyRecord, AttentionSummary, BelongingEntity, BelongingView, BoxStatus, Catalog,
   CommitOp, CommitRecord, ContainerContentsView, ContainerEntity, ContainerView,
   ContainerWithContentsView, CreateBelongingInput, CreateBoxInput, CreateContainerInput,
-  CreateRoomInput, DerivedState,
+  CreateRoomInput, DerivedState, Dimensions3D,
   EvidenceKind, EvidenceRecord, ExportDump, Kit, KitReadiness, KitRow, KitRowView,
   LifecycleState, LocateAnswer, LocateSuccess, MoveReadiness, ObservationRecord,
   OperationData, OperationStatus, OperationView, PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
   PlanPin, PlanRect, ProposalRecord, ProposalStatus, ProposalView, Relation, RetrievalPlanGroup,
   RetrievalPlanItem, Room, RowStatus,
-  ScoredBelongingView, StorageLike, Store, StoreOptions, UnpackPriorityEntry,
+  ScoredBelongingView, StorageLike, StorageRecovery, Store, StoreOptions, UnpackPriorityEntry,
   WhichContainerHit
 } from "./types.ts";
 import { BOX_STATUSES, IMPORTANCE_SCORE, LIFECYCLE_STATES, OPERATION_STATUSES, ROW_STATUSES } from "./types.ts";
@@ -37,6 +37,11 @@ export function createStore(options: StoreOptions): Store {
     persistKey = "nestory-v2"
   } = options;
 
+  const quarantineKey = `${persistKey}-unreadable`;
+  // Set by loadRecords BEFORE the first `records` assignment below, so it is already
+  // accurate by the time anything can observe it.
+  let recovery: StorageRecovery | null = null;
+
   let records: AnyRecord[] = loadRecords();
   let seq = records.length;
   const listeners = new Set<(state: DerivedState) => void>();
@@ -46,25 +51,172 @@ export function createStore(options: StoreOptions): Store {
     return seedFactory ? seedFactory() : [];
   }
 
+  // Stored state is UNTRUSTED input, exactly like an imported file: the bytes in
+  // localStorage can be stale, hand-edited, or written by an older build. Before this
+  // gate they were replayed unchecked, and `derive()` runs AFTER loadRecords returns,
+  // so loadRecords' own try/catch could not contain the damage. Two failure modes were
+  // reproduced on the shipped build: an unreadable record threw during derive and left
+  // the app permanently unbootable (the bad bytes stay in storage, so every reload
+  // crashes again), and a shape-perfect record naming a place that does not exist
+  // booted fine and then answered "Passport is probably in the ." — fabricating a
+  // location, which the product contract forbids.
+  //
+  // So the same two passes that guard `importJson` guard this boundary. What differs is
+  // the FAILURE BEHAVIOUR. An import is a deliberate act that can be refused and
+  // retried; a boot cannot. Refusing here would replace a crash with a different
+  // unbootable state, so an unreadable ledger degrades to a usable home instead:
+  //
+  //   - the raw bytes are COPIED to a quarantine key, never deleted or rewritten;
+  //   - the original key is left exactly as found (nothing persists until the person
+  //     makes their own first write), so the evidence survives this boot;
+  //   - the store starts from the seed so the app is usable;
+  //   - `storageRecovery()` reports what happened, so the interface can disclose it
+  //     rather than pretending a fresh home was always there.
+  //
+  // This never repairs by deletion: no `reset()`, no `removeItem`, no rewrite of the
+  // unreadable value. Recovering the original data stays possible after the fact.
   function loadRecords(): AnyRecord[] {
+    // A quarantine copy from an EARLIER boot must still be disclosed. Once the person
+    // writes anything the live key becomes readable again, so every later boot would
+    // look ordinary while their unreadable original sat in storage unmentioned by any
+    // surface and unreclaimable. Noted first, then overwritten below if THIS boot also
+    // fails — the current failure is the more useful thing to report.
     if (storage) {
-      try {
-        const raw = storage.getItem(persistKey);
-        if (raw) {
-          const parsed: unknown = JSON.parse(raw);
-          if (parsed && typeof parsed === "object" && Array.isArray((parsed as { records?: unknown }).records)) {
-            const stored = (parsed as { records: AnyRecord[] }).records;
-            if (stored.length) return stored;
+      let held: string | null = null;
+      try { held = storage.getItem(quarantineKey); } catch { held = null; }
+      if (held !== null) {
+        recovery = {
+          reason: "An earlier saved home memory could not be read, and was kept aside.",
+          originalKey: persistKey,
+          preservedAt: quarantineKey,
+          originalBytes: held.length,
+          recoveredAt: new Date(now()).toISOString(),
+          seededThisBoot: false,
+          savingBlocked: false
+        };
+      }
+    }
+    if (storage) {
+      let raw: string | null = null;
+      try { raw = storage.getItem(persistKey); } catch { return seedRecords(); }
+      if (raw) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(raw); } catch {
+          return quarantine(raw, "Your saved home memory could not be read (it is not valid JSON).");
+        }
+        const storedRecords = parsed && typeof parsed === "object"
+          ? (parsed as { records?: unknown }).records : undefined;
+        // An empty or absent array falls through to the seed exactly as before this
+        // gate: that is a separate, already-recorded question about what an empty
+        // ledger should mean, and it is deliberately not decided here.
+        if (Array.isArray(storedRecords) && storedRecords.length) {
+          try {
+            const valid = validatedLedgerRecords(parsed, "Saved home memory");
+            validateLedgerSemantics(valid, catalog);
+            return valid;
+          } catch (err) {
+            return quarantine(raw, err instanceof Error ? err.message : String(err));
           }
         }
-      } catch { /* fall through to seed */ }
+      }
     }
     return seedRecords();
   }
 
+  // Copy the unreadable value aside and record why. Purely additive: the original key
+  // is not touched here. If the copy itself fails (quota, private mode) the original is
+  // still in place, so the notice says so rather than claiming a copy that does not exist.
+  //
+  // An existing quarantine copy is NEVER overwritten. Once a boot has recovered, the live
+  // key fills with seed-derived writes as the person carries on using the app, so a LATER
+  // corruption would otherwise clobber the only surviving copy of their real data with
+  // something worthless — silent, permanent loss, and exactly what this slice exists to
+  // prevent. First copy wins; later ones report the one already held.
+  function quarantine(raw: string, reason: string): AnyRecord[] {
+    let preservedAt: string | null = null;
+    let preservedBytes = 0;
+    try {
+      // Two slots, in order. An earlier copy is NEVER overwritten — it is the more
+      // likely to hold real work — but this original still needs somewhere to go, or
+      // writes would be blocked forever to protect it. If both slots are taken by
+      // different originals, no copy is claimed: the notice must not point the person
+      // at bytes that are not theirs.
+      for (const slot of [quarantineKey, `${quarantineKey}-2`]) {
+        const held = storage?.getItem(slot) ?? null;
+        if (held === raw) { preservedAt = slot; preservedBytes = raw.length; break; }
+        if (held === null) {
+          storage?.setItem(slot, raw);
+          preservedAt = slot;
+          preservedBytes = raw.length;
+          break;
+        }
+      }
+    } catch { preservedAt = null; preservedBytes = 0; }
+    recovery = {
+      reason,
+      originalKey: persistKey,
+      preservedAt,
+      // Describes whatever is actually AT preservedAt, not the value that failed.
+      originalBytes: preservedAt ? preservedBytes : raw.length,
+      recoveredAt: new Date(now()).toISOString(),
+      seededThisBoot: true,
+      savingBlocked: false
+    };
+    return seedRecords();
+  }
+
+  // Persisting after a recovery must not destroy the ledger the recovery preserved.
+  // The person's next ordinary write would otherwise overwrite `persistKey` — and when
+  // the quarantine copy failed (quota, the likeliest cause of a truncated ledger in the
+  // first place) that key holds their ONLY copy. The banner would be promising
+  // recoverability while the product deleted the thing to be recovered.
+  //
+  // So while a recovery is unresolved, the last-resort copy is secured BEFORE the live
+  // key is overwritten. If it cannot be secured, the live key is left alone and the
+  // session's writes stay in memory: losing this session's edits is recoverable, losing
+  // the person's whole home memory is not.
   function persist(): void {
     if (!storage) return;
+    if (recovery && !securedBeforeOverwrite()) {
+      // Refusing to write is right — overwriting `persistKey` here would destroy the
+      // person's only copy — but it must never look like success. Recorded so the
+      // interface can say plainly that changes are not being saved.
+      recovery = { ...recovery, savingBlocked: true };
+      return;
+    }
+    if (recovery?.savingBlocked) recovery = { ...recovery, savingBlocked: false };
     try { storage.setItem(persistKey, JSON.stringify({ version: 2, records })); } catch { /* quota/full: ignore */ }
+  }
+
+  // True once the unreadable original is safely held somewhere other than `persistKey`.
+  // Retries the copy each time, because the quota that blocked it may have since eased.
+  // If the quarantine key is already occupied by an EARLIER, different original, this
+  // one has nowhere safe to go: a second key would be a second thing to explain, and
+  // overwriting the older copy is the data loss this whole path exists to prevent. So it
+  // reports failure, and `persist()` leaves the live key alone — this session's edits stay
+  // in memory. Losing a session's edits is recoverable; losing a home memory is not.
+  function securedBeforeOverwrite(): boolean {
+    if (!storage || !recovery) return true;
+    if (recovery.preservedAt) return true;
+    let original: string | null = null;
+    try { original = storage.getItem(persistKey); } catch { return false; }
+    if (original === null) return true;          // nothing left to protect
+    try {
+      // The primary slot may hold an EARLIER original, which must not be overwritten.
+      // A single secondary slot breaks what would otherwise be a permanent deadlock:
+      // writes blocked forever, so the live key never becomes readable, so the block
+      // never lifts. Two slots is the bound — more would be unexplainable to the person.
+      for (const slot of [quarantineKey, `${quarantineKey}-2`]) {
+        const held = storage.getItem(slot);
+        if (held === original) { recovery = { ...recovery, preservedAt: slot, originalBytes: original.length }; return true; }
+        if (held === null) {
+          storage.setItem(slot, original);
+          recovery = { ...recovery, preservedAt: slot, originalBytes: original.length };
+          return true;
+        }
+      }
+      return false;
+    } catch { return false; }                    // still no room: keep the original
   }
 
   function notify(): void {
@@ -716,11 +868,36 @@ export function createStore(options: StoreOptions): Store {
     return { x: maxX + 0.2, y: 0, w: 2.2, h: 2.0 };
   }
 
+  // Geometry the ledger validator will refuse must not be written in the first place.
+  // The writer used to accept a negative or zero dimension straight from `inputNumber()`
+  // (which only guards `Number.isFinite`), and that was survivable while only `importJson`
+  // enforced the rule. Once the BOOT gate enforces it too, a reader stricter than its own
+  // writer means an ordinary typo in the product's own form silently discards the person's
+  // work on the next reload — the inverse of the defect this slice exists to fix. So the
+  // rule is enforced at the earliest owner, at the moment of the write, where it can still
+  // be reported to the person instead of losing their record later.
+  function requireDimensions(d: Dimensions3D): Dimensions3D {
+    for (const [axis, value] of [["Width", d.width], ["Depth", d.depth], ["Height", d.height]] as const) {
+      if (!Number.isFinite(value) || value <= 0) throw new Error(`${axis} must be a positive number.`);
+    }
+    return d;
+  }
+
+  function requirePlan(plan: PlanRect): PlanRect {
+    for (const [axis, value] of [["width", plan.w], ["height", plan.h]] as const) {
+      if (!Number.isFinite(value) || value <= 0) {
+        throw new Error(`Room ${axis} must be a positive number.`);
+      }
+    }
+    if (!Number.isFinite(plan.x) || !Number.isFinite(plan.y)) throw new Error("Room position must be a finite number.");
+    return plan;
+  }
+
   function createRoom(input: CreateRoomInput): string {
     const name = input.name?.trim();
     if (!name) throw new Error("Room needs a name.");
     const roomId = slugId("room", name, (candidate) => state.rooms.has(candidate));
-    const room: Room = { id: roomId, name, plan: input.plan ?? nextRoomSlot() };
+    const room: Room = { id: roomId, name, plan: input.plan ? requirePlan(input.plan) : nextRoomSlot() };
     appendCommit({ summary: `Add room: ${name}`, ops: [{ type: "create_room", room }] });
     return roomId;
   }
@@ -745,6 +922,9 @@ export function createStore(options: StoreOptions): Store {
     if (!name) throw new Error("Belonging needs a name.");
     if (input.defaultHome) requirePlace(input.defaultHome, "Default home");
     if (input.currentPlace) requirePlace(input.currentPlace, "Current place");
+    // Validated with the other preconditions, BEFORE anything is appended: checking it
+    // at the op-construction site left an orphan evidence record behind on refusal.
+    const dimensions = input.dimensions ? requireDimensions(input.dimensions) : undefined;
     const itemId = id("item");
     const ev = appendEvidence("user_confirmation", `Created belonging ${name}`);
     const ops: CommitOp[] = [{
@@ -755,7 +935,7 @@ export function createStore(options: StoreOptions): Store {
         kinds: input.kinds ?? [],
         importance: input.importance ?? "normal",
         defaultHome: input.defaultHome,
-        ...(input.dimensions ? { dimensions: input.dimensions } : {}),
+        ...(dimensions ? { dimensions } : {}),
         ...(input.source ? { source: input.source } : {})
       }
     }];
@@ -1124,6 +1304,7 @@ export function createStore(options: StoreOptions): Store {
     attention, activation, operationsView, operationView, retrievalPlan, unpackPriority,
     proposals, commitsView, exportJson, planPinFor, chainFor, chainText,
     lifecycleOf,
+    storageRecovery: () => recovery,
     // write
     createRoom, createContainer,
     createBelonging, setItemState, correctPlacement, markNotThere,
