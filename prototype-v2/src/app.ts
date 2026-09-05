@@ -263,7 +263,10 @@ function toast(msg: string): void {
 function act<T>(fn: () => T, okMsg: string | null): T | null {
   try {
     const out = fn();
-    if (okMsg) toast(okMsg);
+    // A write that could not be saved must not be confirmed as if it had been. While
+    // saving is blocked the store keeps changes in memory only — real for this session,
+    // then gone — so the toast says that instead of "Room added".
+    if (okMsg) toast(store.storageRecovery()?.savingBlocked ? `⚠ ${okMsg} — but NOT saved. See the notice above.` : okMsg);
     return out;
   } catch (err) {
     toast(`⚠ ${err instanceof Error ? err.message : String(err)}`);
@@ -301,7 +304,12 @@ function render(): void {
   renderSidebar();
   renderTopbar();
   if (mode === null) {
-    must<HTMLElement>("view").innerHTML = renderWelcome();
+    // The welcome chooser is reachable WITH an unreadable ledger in storage: whenever the
+    // records key survives but the mode key does not (selective site-data clearing, a
+    // profile migration, a partial write). Without the notice here the person is invited
+    // to pick a fresh home while their unread record sits in storage — the same failure
+    // the shell-level notice fixed one level down.
+    must<HTMLElement>("view").innerHTML = renderRecoveryNotice() + renderWelcome();
     decorateUi();
     return;
   }
@@ -309,7 +317,12 @@ function render(): void {
     home: renderHome, ask: renderAsk, capture: renderCapture, setup: renderSetup, spaces: renderSpaces, belongings: renderBelongings,
     operations: renderOperations, review: renderReview, plan: renderPlan, ledger: renderLedger
   };
-  must<HTMLElement>("view").innerHTML = renderer[ui.view]() + renderModal();
+  // The saved-state recovery notice belongs to the SHELL, not to one view. A recovered
+  // boot can land anywhere — in "own" mode an unreadable ledger derives an empty home,
+  // so the app opens on `setup` and would otherwise invite the person to build a home
+  // from scratch while their real record sits unread in storage. Rendering it here means
+  // no view can be reached without the disclosure.
+  must<HTMLElement>("view").innerHTML = renderRecoveryNotice() + renderer[ui.view]() + renderModal();
   decorateUi();
 }
 
@@ -679,6 +692,46 @@ function renderAnswerCard(a: LocateAnswer | null): string {
       <button data-action="answer-show-plan">Show on plan</button>
       <button class="ghost" data-action="open-item" data-id="${esc(a.itemId)}">Open item</button>
     </div>
+  </div>`;
+}
+
+// Saved-state recovery notice — rendered by the SHELL above every view, because a
+// recovered boot can land on any of them. If the ledger in storage could not be read,
+// the store started from the seed so the app is usable, but the person must be told, or
+// the interface would silently claim a home memory that is not theirs.
+//
+// This is a DISCLOSURE, not a decision: nothing was deleted, the original is still in
+// storage, and the notice names exactly where the unreadable copy was kept. It offers no
+// "clear my data" button on purpose — destroying the evidence is the one repair this
+// slice refuses to make easy.
+function renderRecoveryNotice(): string {
+  const recovery = store.storageRecovery();
+  if (!recovery) return "";
+  // The reason comes from the validator and can quote a value the person typed, so it is
+  // escaped and BOUNDED — an unbounded message would push the rest of the notice, which
+  // is the part that matters, off the screen.
+  const reason = recovery.reason.length > 240 ? `${recovery.reason.slice(0, 240)}…` : recovery.reason;
+  // Say only what is true. The saved bytes are kept, but they are kept BECAUSE this build
+  // could not read them — and Import runs the same two checks, so it will refuse them too.
+  // Claiming "it can be recovered" would promise a route the product does not have.
+  const whereItIsKept = recovery.preservedAt
+    ? `Your original data is untouched: the unreadable copy is kept under <code>${esc(recovery.originalKey)}</code> and a second copy under <code>${esc(recovery.preservedAt)}</code> (${recovery.originalBytes} bytes).`
+    : `Your original data is untouched under <code>${esc(recovery.originalKey)}</code> (${recovery.originalBytes} bytes). No second copy could be made, so this is the only copy and nothing will be written over it.`;
+  // Saying nothing here would be the worst outcome available: the person keeps working,
+  // sees each change confirmed, and loses all of it on reload. If writes are being
+  // refused to protect their only copy, that is the fact they need first.
+  const blockedWarning = recovery.savingBlocked
+    ? `<p class="muted" style="margin:6px 0"><strong>Changes you make now are not being saved.</strong> Writing would overwrite the only copy of your original data, so this session is kept in memory only and will be lost when you close or reload this page.</p>`
+    : "";
+  return `<div class="card" style="border-left:4px solid var(--amber);margin-bottom:14px" data-testid="storage-recovery-banner" role="status">
+    <div class="op-head"><h3>Your saved home memory could not be read</h3></div>
+    <p class="muted" style="margin:6px 0">${esc(reason)}</p>
+    <p class="muted" style="margin:6px 0">Nothing was deleted. ${whereItIsKept}</p>
+    ${blockedWarning}
+    <p class="muted" style="margin:6px 0">This app cannot repair it for you yet: Import runs the same checks that rejected it, so it would refuse the file too. The data is preserved so it can be repaired later or by hand — it is not restorable from inside the app today.</p>
+    ${recovery.seededThisBoot
+      ? `<p class="muted" style="margin:6px 0">Meanwhile this session starts from ${mode === "own" ? "an empty home" : "the demo home"}, so what you see here is not your own record.</p>`
+      : `<p class="muted" style="margin:6px 0">Your current records loaded normally — this notice is about the earlier copy that is still kept aside.</p>`}
   </div>`;
 }
 

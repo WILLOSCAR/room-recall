@@ -467,12 +467,29 @@ section("P0.8b import trust boundary", () => {
   // a field the previous fix did not cover — so this drives every write method AT and
   // BEYOND its boundaries in one pass rather than pinning a few sample lengths.
   const selfInflicted: string[] = [];
+  // Export -> import is only half the question. The BOOT path now runs the same two
+  // passes, so a writer whose output boot refuses loses the person's work on reload
+  // rather than merely failing an export. That is how the geometry regression reached a
+  // green suite, so every write below is also driven through a real storage round trip:
+  // write, construct a NEW store from the storage the write produced, and require the
+  // records to come back with no recovery.
+  const lostOnReload: string[] = [];
   const roundTrips = (label: string, write: (store: Store) => void): void => {
     const writer = fresh();
     try { write(writer); } catch { return; } // the writer refusing its own input is fine
     const dump = JSON.parse(JSON.stringify(writer.exportJson())) as ReturnType<Store["exportJson"]>;
     try { fresh().importJson(dump); }
     catch (err) { selfInflicted.push(`${label}: ${err instanceof Error ? err.message : String(err)}`); }
+
+    const storage = memStorage();
+    const persisted = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage });
+    try { write(persisted); } catch { return; }
+    const wrote = persisted.exportJson().records.length;
+    const rebooted = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage });
+    const recovered = rebooted.storageRecovery();
+    if (recovered !== null || rebooted.exportJson().records.length !== wrote) {
+      lostOnReload.push(`${label}: wrote ${wrote}, reloaded ${rebooted.exportJson().records.length}${recovered ? ` — ${recovered.reason}` : ""}`);
+    }
   };
   const pad = (n: number): string => "x".repeat(n);
   const bedroom = { type: "room", id: "bedroom" } as const;
@@ -504,17 +521,20 @@ section("P0.8b import trust boundary", () => {
   for (const n of [1, 2000, 2001]) {
     roundTrips(`createContainer name ${n}`, (st) => { st.createContainer({ name: pad(n), kind: "tray", roomId: "bedroom" }); });
   }
-  // The one asymmetry NOT resolved here, recorded rather than hidden. The writer accepts
-  // impossible geometry — a negative belonging dimension and a zero-area room plan — which
-  // import rejects as `must be positive`. Both are pre-existing write-path gaps (the base
-  // store has no dimension guard at all), so bounding them means changing a write path
-  // this slice does not own; dropping the import check instead would admit nonsense
-  // geometry into the Place Graph. Left for a write-validation slice, pinned here so the
-  // asymmetry is visible and this lock fails if either side changes.
+  // This asymmetry is now CLOSED, and closing it was forced by the boot gate. The writer
+  // used to accept impossible geometry — a negative belonging dimension, a zero-area room
+  // plan — that import rejects. Harmless while only `importJson` enforced the rule; once
+  // the BOOT path enforces it too, a reader stricter than its own writer means an ordinary
+  // typo in the product's own form silently discards the person's work on the next reload.
+  // Measured on the pre-fix candidate: write 68 records, reload, get 66 seed records back.
+  // So the rule moved to the earliest owner, the write itself, where it can still be shown
+  // to the person. This lock was written to fail when that happened; it now asserts the
+  // positive contract instead.
   const geometryAsymmetry: string[] = [];
+  const refusedAtWrite: string[] = [];
   const writeThenImport = (label: string, write: (store: Store) => void): void => {
     const w = fresh();
-    try { write(w); } catch { return; }
+    try { write(w); } catch { refusedAtWrite.push(label); return; }
     const dump = JSON.parse(JSON.stringify(w.exportJson())) as ReturnType<Store["exportJson"]>;
     try { fresh().importJson(dump); } catch { geometryAsymmetry.push(label); }
   };
@@ -523,11 +543,42 @@ section("P0.8b import trust boundary", () => {
       dimensions: { width: -5, depth: 1, height: 1, unit: "m", source: "manual", verified: false } });
   });
   writeThenImport("zero-area room plan", (st) => { st.createRoom({ name: "Zero", plan: { x: 0, y: 0, w: 0, h: 0 } }); });
-  assert("write-path-impossible-geometry-is-not-yet-bounded", geometryAsymmetry.length === 2,
-    `documented gap: writer accepts what import refuses (${geometryAsymmetry.join(", ")}); write-validation slice`);
+  assert("write-path-impossible-geometry-is-refused-at-the-write",
+    geometryAsymmetry.length === 0 && refusedAtWrite.length === 2,
+    `writer must refuse impossible geometry outright (refused: ${refusedAtWrite.join(", ") || "none"}; still asymmetric: ${geometryAsymmetry.join(", ") || "none"})`);
+
+  // The whole point of bounding the writer: work done through the product's own form must
+  // survive a reload. Before the fix this lost the person's belonging on the next boot.
+  const survivalStorage = memStorage();
+  const survivor = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: survivalStorage });
+  survivor.createBelonging({ name: "Bookshelf", kinds: ["furniture"], defaultHome: bedroom,
+    dimensions: { width: 0.8, depth: 0.3, height: 1.8, unit: "m", source: "manual", verified: false } });
+  const survivorCount = survivor.exportJson().records.length;
+  const afterReload = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: survivalStorage });
+  assert("valid-geometry-written-by-the-product-survives-a-reload",
+    afterReload.exportJson().records.length === survivorCount && afterReload.storageRecovery() === null,
+    `wrote ${survivorCount}, reloaded ${afterReload.exportJson().records.length}, recovery ${JSON.stringify(afterReload.storageRecovery())}`);
+
+  // A refused write must leave NOTHING behind — no orphan evidence record. Checking the
+  // dimension at the op-construction site instead of with the preconditions did exactly
+  // that, and a partial write is the failure mode this project's import work exists to stop.
+  const noPartial = fresh();
+  const beforePartial = noPartial.exportJson().records.length;
+  try {
+    noPartial.createBelonging({ name: "Bad", kinds: ["k"], defaultHome: bedroom,
+      dimensions: { width: -5, depth: 1, height: 1, unit: "m", source: "manual", verified: false } });
+  } catch { /* expected */ }
+  assert("refused-geometry-write-leaves-no-partial-record",
+    noPartial.exportJson().records.length === beforePartial,
+    `refusal appended ${noPartial.exportJson().records.length - beforePartial} record(s)`);
 
   assert("import-accepts-everything-the-write-path-writes", selfInflicted.length === 0,
     selfInflicted.length ? selfInflicted.slice(0, 4).join(" | ") : "no self-inflicted unimportable export across write-path boundaries");
+
+  // The reader must never be stricter than the writer: anything the product writes must
+  // still be there after a reload. This is the lock the geometry regression needed.
+  assert("work-written-by-the-product-always-survives-a-reload", lostOnReload.length === 0,
+    lostOnReload.length ? lostOnReload.slice(0, 4).join(" | ") : "no write-path output is refused by its own boot");
 
   // The store writes "" for a blank rejection reason; refusing it here would make the
   // product's own export unreadable. Locks the round-trip end to end.
@@ -570,14 +621,17 @@ section("P0.8b import trust boundary", () => {
     nonexistentRoom.threw && /unknown Place Reference room:room-does-not-exist/.test(nonexistentRoom.message),
     nonexistentRoom.message);
 
-  // Second documented gap, pinned for the same reason: `loadRecords` deserialises
-  // localStorage, which is equally user-writable, and is NOT validated by this change.
-  // Hardening it changes boot behaviour for anyone holding an already-invalid store, so
-  // it is a separate slice. This lock records the limit instead of implying it is closed.
-  // The fixture must be something the validator genuinely REFUSES, so this lock fails the
-  // moment the gap is closed. A well-formed fixture would pass either way and prove
-  // nothing. `set_box_status` with an unsupported status is invalid shape but still
-  // derives without crashing, so the assertion observes acceptance rather than a throw.
+  // The second documented gap, CLOSED by this slice. P2 pinned it with a lock that
+  // asserted `loadRecords` accepts what `importJson` refuses, deliberately written to
+  // FAIL the moment the gap closed. It has closed, so that lock is now inverted into
+  // the positive contract it was holding a place for.
+  //
+  // Boot is not import. An import can be refused and retried; a boot cannot, and the
+  // bad bytes stay in storage, so a refusal here would brick the app on every reload
+  // instead of once. The contract is therefore: validate with the SAME two passes, but
+  // degrade to a usable seeded home, preserve the unreadable bytes, and disclose it.
+  // The fixture must still be something the validator genuinely refuses, or the lock
+  // below would pass on a well-formed dump and prove nothing.
   const invalidForImport = { version: 2, records: [
     { recordType: "commit", id: "tampered", at: "2026-01-01T00:00:00.000Z", summary: "x",
       ops: [{ type: "set_box_status", boxId: "box-essentials", status: "teleported" }] },
@@ -585,12 +639,254 @@ section("P0.8b import trust boundary", () => {
   let importRefusesFixture = false;
   try { fresh().importJson(invalidForImport); } catch { importRefusesFixture = true; }
   assert("load-from-storage-fixture-is-genuinely-invalid", importRefusesFixture,
-    "the storage-gap fixture must be refused by importJson or the gap lock proves nothing");
+    "the storage fixture must be refused by importJson or the locks below prove nothing");
+
+  const tamperedRaw = JSON.stringify(invalidForImport);
   const tamperedStorage = memStorage();
-  tamperedStorage.setItem("nestory-v2", JSON.stringify(invalidForImport));
-  const fromStorage = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: tamperedStorage });
-  assert("load-from-storage-is-not-yet-validated", fromStorage.exportJson().records.length === 1,
-    "documented gap: loadRecords accepts what importJson refuses; separate slice");
+  tamperedStorage.setItem("nestory-v2", tamperedRaw);
+  let bootThrew: string | null = null;
+  let fromStorage: Store | null = null;
+  try {
+    fromStorage = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: tamperedStorage });
+  } catch (err) { bootThrew = err instanceof Error ? err.message : String(err); }
+  assert("load-from-storage-boots-instead-of-refusing", bootThrew === null && fromStorage !== null,
+    bootThrew ?? "boot returned no store");
+  assert("load-from-storage-rejects-what-import-rejects",
+    (fromStorage?.exportJson().records.length ?? 0) !== 1,
+    "loadRecords must no longer accept a ledger importJson refuses");
+  assert("load-from-storage-degrades-to-a-usable-home",
+    (fromStorage?.exportJson().records.length ?? 0) === buildSeedRecords(NOW).length,
+    fromStorage?.exportJson().records.length);
+  const storageRecovery = fromStorage?.storageRecovery() ?? null;
+  assert("load-from-storage-discloses-the-recovery",
+    storageRecovery !== null && typeof storageRecovery.reason === "string" && storageRecovery.reason.length > 0,
+    storageRecovery);
+  // The non-destructive contract: the unreadable value is COPIED aside, and the
+  // original key is left exactly as it was found. Nothing is repaired by deletion.
+  assert("load-from-storage-preserves-the-original-bytes",
+    tamperedStorage.getItem("nestory-v2") === tamperedRaw,
+    "the unreadable original must survive untouched");
+  assert("load-from-storage-preserves-a-readable-copy",
+    storageRecovery?.preservedAt === "nestory-v2-unreadable"
+      && tamperedStorage.getItem("nestory-v2-unreadable") === tamperedRaw,
+    { preservedAt: storageRecovery?.preservedAt });
+  // A boot that recovered must never answer from the ledger it refused.
+  assert("load-from-storage-recovered-boot-answers-honestly",
+    !/in the \.|in the$/.test(fromStorage?.locate("passport").sentence ?? ""),
+    fromStorage?.locate("passport").sentence);
+  // Reload stability: recovery is idempotent, not a brick that returns next boot.
+  const reboots = [0, 1, 2].map(() => {
+    try {
+      const s = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: tamperedStorage });
+      return s.exportJson().records.length === buildSeedRecords(NOW).length;
+    } catch { return false; }
+  });
+  assert("load-from-storage-recovery-survives-reloads", reboots.every(Boolean), reboots);
+
+  // A VALID saved ledger must pass through this gate untouched — the case an
+  // over-eager validator would break. Byte-identical, no quarantine key written.
+  const savedStorage = memStorage();
+  const savedDump = JSON.stringify({ version: 2, records: fresh().exportJson().records });
+  savedStorage.setItem("nestory-v2", savedDump);
+  const savedBoot = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: savedStorage });
+  assert("load-from-storage-valid-ledger-loads-unchanged",
+    JSON.stringify(savedBoot.exportJson().records) === JSON.stringify(JSON.parse(savedDump).records)
+      && savedBoot.storageRecovery() === null
+      && savedStorage.getItem("nestory-v2-unreadable") === null,
+    { recovery: savedBoot.storageRecovery(), quarantined: savedStorage.getItem("nestory-v2-unreadable") !== null });
+
+  // A SECOND corruption must never clobber the first preserved copy. After a recovered
+  // boot the live key fills with seed-derived writes as the person keeps using the app,
+  // so overwriting the quarantine on a later corruption would replace the only surviving
+  // copy of their real data with something worthless — silent, permanent loss, and the
+  // exact outcome this slice exists to prevent. First copy wins.
+  const twiceStorage = memStorage();
+  const precious = JSON.stringify({ version: 2, records: [
+    ...buildSeedRecords(NOW),
+    { recordType: "written-by-a-newer-build", id: "precious-marker" },
+  ] });
+  twiceStorage.setItem("nestory-v2", precious);
+  createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: twiceStorage });
+  assert("load-from-storage-first-corruption-is-preserved",
+    (twiceStorage.getItem("nestory-v2-unreadable") ?? "").includes("precious-marker"),
+    "the first quarantine must hold the real data or the lock below proves nothing");
+  twiceStorage.setItem("nestory-v2", "{ a different, worthless corruption");
+  createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: twiceStorage });
+  assert("load-from-storage-second-corruption-does-not-clobber-the-copy",
+    (twiceStorage.getItem("nestory-v2-unreadable") ?? "").includes("precious-marker"),
+    `the preserved copy was overwritten: ${(twiceStorage.getItem("nestory-v2-unreadable") ?? "").slice(0, 60)}`);
+
+  // Independent review found these three, each a way the recovery could betray its own
+  // promise. Locked here because all three passed a typecheck and a green suite.
+
+  // (1) THE BANNER'S PROMISE MUST BE TRUE. After a recovery the person's next ordinary
+  // write called persist(), overwriting the live key — and when the quarantine copy
+  // failed (quota: the likeliest cause of a truncated ledger in the first place) that key
+  // held their ONLY copy. The notice promised recoverability while the product destroyed
+  // the thing to be recovered. Storage that refuses the quarantine write is the fixture.
+  const MARK = "irreplaceable-marker";
+  const preciousLedger = JSON.stringify({ version: 2, records: [
+    ...buildSeedRecords(NOW),
+    { recordType: "a-newer-build-wrote-this", id: MARK },
+  ] });
+  const quotaStorage = memStorage();
+  const realSet = quotaStorage.setItem.bind(quotaStorage);
+  quotaStorage.setItem = (k: string, v: string) => {
+    if (k.endsWith("-unreadable")) throw new Error("quota exceeded");
+    realSet(k, v);
+  };
+  quotaStorage.setItem("nestory-v2", preciousLedger);
+  const quotaStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: quotaStorage });
+  assert("recovery-under-quota-reports-no-copy-was-made",
+    quotaStore.storageRecovery()?.preservedAt === null,
+    "the fixture must produce a failed quarantine copy or the lock below proves nothing");
+  quotaStore.createRoom({ name: "Study" });   // one ordinary write, the moment of loss
+  const survivesQuota = ["nestory-v2", "nestory-v2-unreadable"]
+    .some((k) => (quotaStorage.getItem(k) ?? "").includes(MARK));
+  assert("recovery-write-never-destroys-the-only-copy", survivesQuota,
+    "the person's original was overwritten by their next write while the banner promised it was kept");
+
+  // (2) THE DISCLOSURE MUST OUTLIVE THE BOOT THAT CAUSED IT. Once the person writes, the
+  // live key is readable again and every later boot looked ordinary — while the
+  // unreadable original sat in storage, unmentioned by any surface.
+  const durableStorage = memStorage();
+  durableStorage.setItem("nestory-v2", preciousLedger);
+  const firstBoot = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: durableStorage });
+  assert("recovery-disclosed-on-the-boot-that-recovered",
+    firstBoot.storageRecovery()?.seededThisBoot === true, firstBoot.storageRecovery());
+  firstBoot.createRoom({ name: "Study" });
+  const laterBoot = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: durableStorage });
+  assert("recovery-still-disclosed-after-a-write-and-reload",
+    laterBoot.storageRecovery() !== null,
+    "the quarantine copy is still held but no longer disclosed anywhere");
+  // ...and that later notice must NOT claim the person is looking at a starter home,
+  // because their own records loaded fine this time.
+  assert("later-disclosure-does-not-claim-a-seeded-session",
+    laterBoot.storageRecovery()?.seededThisBoot === false
+      && laterBoot.exportJson().records.some((r) => r.id === "room-study" || r.recordType === "commit"),
+    laterBoot.storageRecovery());
+
+  // (4) WHEN AN OLDER COPY IS KEPT, DO NOT POINT AT IT AS IF IT WERE THIS LEDGER.
+  // "First copy wins" was right, but the notice still claimed `preservedAt` and reported
+  // the CURRENT value's byte count — sending the person to a key holding unrelated bytes
+  // while their real original sat untouched at the live key.
+  const staleQ = memStorage();
+  staleQ.setItem("nestory-v2-unreadable", "{ an older, unrelated scrap");
+  staleQ.setItem("nestory-v2", preciousLedger);
+  const staleStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: staleQ });
+  // Whatever key is named must actually hold THIS ledger — never the older, unrelated one.
+  const claimed = staleStore.storageRecovery()?.preservedAt;
+  assert("recovery-never-points-at-an-older-unrelated-copy",
+    !claimed || (staleQ.getItem(claimed) ?? "").includes(MARK),
+    `pointed at ${claimed}, which does not hold this ledger`);
+  assert("older-copy-is-still-not-overwritten",
+    staleQ.getItem("nestory-v2-unreadable") === "{ an older, unrelated scrap",
+    "the older copy must survive");
+  assert("recovery-original-bytes-describe-what-is-actually-preserved",
+    staleStore.storageRecovery()?.originalBytes === preciousLedger.length,
+    staleStore.storageRecovery()?.originalBytes);
+  // ...and with no copy claimed, the live original must survive the next write.
+  staleStore.createRoom({ name: "Study" });
+  assert("live-original-survives-when-no-new-copy-could-be-made",
+    ["nestory-v2", "nestory-v2-unreadable", "nestory-v2-unreadable-2"]
+      .some((k) => (staleQ.getItem(k) ?? "").includes(MARK)),
+    "the person's real ledger was overwritten while no copy of it existed");
+
+  // (5) A REFUSED WRITE MUST NEVER LOOK LIKE SUCCESS. Guarding persist() introduced a
+  // worse failure than the one it fixed: with the quarantine slot occupied by an EARLIER
+  // original, writes were refused forever — so the live key never became readable and the
+  // block never lifted — while the UI toasted "Room added" and the checklist ticked. The
+  // person watched their work be confirmed and lost all of it on reload, repeatedly.
+  // A single secondary slot breaks the deadlock; if even that is unavailable the refusal
+  // is REPORTED (savingBlocked) so the interface can say changes are not being saved.
+  const occupied = memStorage();
+  occupied.setItem("nestory-v2-unreadable", "{ an older, different original");
+  occupied.setItem("nestory-v2-unreadable-2", "{ a second older original");
+  occupied.setItem("nestory-v2", "{ this boot's corruption");
+  const blockedStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: occupied });
+  assert("occupied-quarantine-probe-reaches-the-blocked-branch",
+    blockedStore.storageRecovery()?.preservedAt === null,
+    "fixture must produce the no-copy branch or the locks below prove nothing");
+  const roomsBefore = blockedStore.state.rooms.size;
+  blockedStore.createRoom({ name: "Study" });
+  const afterWrite = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: occupied });
+  const persistedOk = afterWrite.state.rooms.size === roomsBefore + 1;
+  const reportedBlocked = blockedStore.storageRecovery()?.savingBlocked === true;
+  assert("a-write-either-persists-or-is-reported-as-not-saved", persistedOk || reportedBlocked,
+    `write neither landed (rooms ${afterWrite.state.rooms.size} vs ${roomsBefore + 1}) nor was reported blocked`);
+  assert("older-original-survives-the-blocked-write",
+    occupied.getItem("nestory-v2-unreadable") === "{ an older, different original",
+    "the earlier original must never be overwritten to make room");
+  // With no slot at all available, the refusal must be REPORTED rather than silent.
+  const noSlots = memStorage();
+  noSlots.setItem("nestory-v2-unreadable", "{ older original A");
+  noSlots.setItem("nestory-v2-unreadable-2", "{ older original B");
+  noSlots.setItem("nestory-v2", "{ this boot's corruption");
+  const noSlotStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: noSlots });
+  noSlotStore.createRoom({ name: "Study" });
+  assert("unsaveable-session-is-disclosed-not-silent",
+    noSlotStore.storageRecovery()?.savingBlocked === true,
+    "writes were discarded with no way for the interface to say so");
+  assert("unsaveable-session-still-protects-both-originals",
+    noSlots.getItem("nestory-v2-unreadable") === "{ older original A"
+      && noSlots.getItem("nestory-v2") === "{ this boot's corruption",
+    "originals must survive a blocked session");
+
+  // (6) THE SLOT COUNT IS BOUNDED AND NO ORIGINAL IS EVER LOST. A second quarantine slot
+  // exists only to break the deadlock above; if it could grow without bound it would be a
+  // storage leak, and if a later corruption could displace an earlier original it would be
+  // the data loss this path exists to prevent. Six distinct corruptions, then the checks.
+  const boundedStorage = memStorage();
+  for (let i = 1; i <= 6; i++) {
+    boundedStorage.setItem("nestory-v2", `{ distinct corruption ${i}`);
+    createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: boundedStorage });
+  }
+  const slotKeys = ["nestory-v2-unreadable", "nestory-v2-unreadable-2", "nestory-v2-unreadable-3"]
+    .filter((k) => boundedStorage.getItem(k) !== null);
+  assert("quarantine-slots-are-bounded-at-two", slotKeys.length <= 2, slotKeys);
+  assert("earliest-original-is-never-displaced",
+    boundedStorage.getItem("nestory-v2-unreadable") === "{ distinct corruption 1",
+    boundedStorage.getItem("nestory-v2-unreadable"));
+  assert("newest-original-is-still-protected-in-place",
+    boundedStorage.getItem("nestory-v2") === "{ distinct corruption 6",
+    boundedStorage.getItem("nestory-v2"));
+  // Repeated IDENTICAL corruption must not consume the spare slot.
+  const idempotent = memStorage();
+  idempotent.setItem("nestory-v2", "{ the same corruption");
+  for (let i = 0; i < 4; i++) createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: idempotent });
+  assert("identical-corruption-does-not-consume-the-spare-slot",
+    idempotent.getItem("nestory-v2-unreadable-2") === null,
+    "a repeated identical failure must reuse the copy it already made");
+
+  // (3) A BOUNDED REASON. The validator quotes offending values, which can be text the
+  // person typed; an unbounded message would push the rest of the notice off screen.
+  const longName = "x".repeat(3000);
+  const longStorage = memStorage();
+  longStorage.setItem("nestory-v2", JSON.stringify({ version: 2, records: [
+    { recordType: "commit", id: "c-long", at: "2026-01-01T00:00:00.000Z", summary: "x",
+      ops: [{ type: "set_box_status", boxId: "box-essentials", status: longName }] },
+  ] }));
+  const longStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: longStorage });
+  assert("recovery-reason-is-produced-for-a-long-value",
+    (longStore.storageRecovery()?.reason.length ?? 0) > 0, longStore.storageRecovery()?.reason.length);
+
+  // A dangling reference is shape-perfect, so only the semantics pass catches it.
+  // This is the case that reproduced the fabricated "in the ." answer publicly.
+  const danglingRaw = JSON.stringify({ version: 2, records: [
+    ...JSON.parse(savedDump).records,
+    { recordType: "commit", id: "commit-dangling-boot", at: new Date(NOW + 60_000).toISOString(),
+      summary: "dangling", sourceProposalId: null, sourceObservationIds: [],
+      ops: [{ type: "create_placement", itemId: "passport", placeRef: { type: "room", id: "ghost-room" }, relation: "inside", confidence: 0.9, evidenceIds: [] }] },
+  ] });
+  const danglingStorage = memStorage();
+  danglingStorage.setItem("nestory-v2", danglingRaw);
+  const danglingShapeOk = (() => { try { validatedLedgerRecords(JSON.parse(danglingRaw), "Probe"); return true; } catch { return false; } })();
+  const danglingBoot = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: danglingStorage });
+  assert("load-from-storage-catches-shape-perfect-dangling-reference",
+    danglingShapeOk && danglingBoot.storageRecovery() !== null
+      && !/in the \.|in the$/.test(danglingBoot.locate("passport").sentence),
+    danglingShapeOk ? danglingBoot.locate("passport").sentence : "fixture was refused by SHAPE, so it cannot prove the semantics pass");
+
 
   // Every reference class the semantics pass resolves. Each is SHAPE-PERFECT — the
   // dumps below pass `validatedLedgerRecords` untouched — so each one also proves that
@@ -1778,6 +2074,75 @@ async function runBrowserSmoke(): Promise<void> {
     assert("own-mode-opens-setup", await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="view-setup"]'))`));
     assert("own-activation-checklist", await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="activation-checklist"]'))`));
     await shot("nestory-setup.png");
+
+    // The saved-state recovery notice must be reachable from EVERY view, not just Home.
+    // This regressed once and was caught by review: in "own" mode an unreadable ledger
+    // derives an empty home, so the app opens on `setup` — and a Home-only banner left
+    // the person being invited to build a home from scratch while their real record sat
+    // unread in storage. The notice is rendered by the shell for that reason. The probe
+    // drives the REAL boot: write an unreadable ledger, reload, and look at the DOM.
+    const recoveryViews = await evalPage<{ landed: string; onLanding: boolean; everyView: string[]; missing: string[] }>(`(async () => {
+      localStorage.setItem("nestory-v2-own", "{ not json at all");
+      localStorage.removeItem("nestory-v2-own-unreadable");
+      location.reload();
+      return null;
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const recoveryDom = await evalPage<{ recovered: boolean; landed: string; onLanding: boolean; missing: string[] }>(`(() => {
+      const seen = (window.nestory.store.storageRecovery() !== null);
+      const landed = window.nestory.ui.view;
+      const onLanding = Boolean(document.querySelector('[data-testid="storage-recovery-banner"]'));
+      const missing = [];
+      for (const v of ["home", "ask", "capture", "setup", "spaces", "belongings", "operations", "review", "plan", "ledger"]) {
+        window.nestory.setView(v);
+        if (!document.querySelector('[data-testid="storage-recovery-banner"]')) missing.push(v);
+      }
+      return { recovered: seen, landed, onLanding, missing };
+    })()`);
+    assert("own-mode-unreadable-ledger-still-boots", recoveryDom.recovered === true,
+      "the probe must actually produce a recovered boot or the locks below prove nothing");
+    assert("recovery-notice-shown-on-the-landing-view", recoveryDom.onLanding === true,
+      `landed on ${recoveryDom.landed} with no recovery notice`);
+    assert("recovery-notice-shown-on-every-view", recoveryDom.missing.length === 0,
+      `views missing the recovery notice: ${recoveryDom.missing.join(", ")}`);
+    // The WELCOME chooser is reachable with an unreadable ledger in storage (records key
+    // survives, mode key does not). The ten-view sweep above cannot catch it because it
+    // never exercises `mode === null` — review found this one, not the locks.
+    await evalPage(`(() => {
+      localStorage.setItem("nestory-v2", "{ not json at all");
+      localStorage.removeItem("nestory-v2-unreadable");
+      localStorage.removeItem("nestory-v2-mode");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const welcomeState = await evalPage<{ mode: string | null; recovered: boolean; shown: boolean }>(`({
+      mode: window.nestory.mode,
+      recovered: window.nestory.store.storageRecovery() !== null,
+      shown: Boolean(document.querySelector('[data-testid="storage-recovery-banner"]')),
+    })`);
+    assert("welcome-screen-probe-actually-reaches-mode-null",
+      welcomeState.mode === null && welcomeState.recovered === true,
+      `probe did not reach the welcome screen with a recovery: ${JSON.stringify(welcomeState)}`);
+    assert("recovery-notice-shown-on-the-welcome-chooser", welcomeState.shown === true,
+      "the person is invited to pick a fresh home with no word that their record is unread");
+    await evalPage(`(() => {
+      localStorage.removeItem("nestory-v2");
+      localStorage.removeItem("nestory-v2-unreadable");
+      localStorage.setItem("nestory-v2-mode", "own");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+
+    // Leave own mode as the later assertions expect it: a clean, readable empty store.
+    await evalPage(`(() => { localStorage.removeItem("nestory-v2-own"); localStorage.removeItem("nestory-v2-own-unreadable"); location.reload(); })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    assert("recovery-probe-left-a-clean-own-store",
+      await evalPage<boolean>(`window.nestory.store.storageRecovery() === null && window.nestory.mode === "own"`),
+      "the probe must not leave a recovered store behind for later assertions");
 
     // Drive a minimal onboarding through the public hooks and watch the checklist complete.
     await evalPage(`(() => {
