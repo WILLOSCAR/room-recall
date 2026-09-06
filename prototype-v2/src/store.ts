@@ -94,6 +94,7 @@ export function createStore(options: StoreOptions): Store {
           seededThisBoot: false,
           savingBlocked: false
         };
+        recovery = { ...recovery, savingBlocked: !savingIsPossible() };
       }
     }
     if (storage) {
@@ -162,6 +163,9 @@ export function createStore(options: StoreOptions): Store {
       seededThisBoot: true,
       savingBlocked: false
     };
+    // Answer honestly from the start: if saving is already impossible, say so now
+    // rather than after the person's first write has been silently discarded.
+    recovery = { ...recovery, savingBlocked: !savingIsPossible() };
     return seedRecords();
   }
 
@@ -184,8 +188,17 @@ export function createStore(options: StoreOptions): Store {
       recovery = { ...recovery, savingBlocked: true };
       return;
     }
-    if (recovery?.savingBlocked) recovery = { ...recovery, savingBlocked: false };
-    try { storage.setItem(persistKey, JSON.stringify({ version: 2, records })); } catch { /* quota/full: ignore */ }
+    try {
+      storage.setItem(persistKey, JSON.stringify({ version: 2, records }));
+      if (recovery?.savingBlocked) recovery = { ...recovery, savingBlocked: false };
+    } catch {
+      // The write was rejected — quota, private mode, a full disk. Previously ignored,
+      // which meant the session went on reporting success while nothing was saved. When
+      // a recovery is already being disclosed, correct that disclosure rather than let
+      // it claim saving works. (Outside a recovery there is no notice to correct; that
+      // is a separate gap, deliberately not widened here.)
+      if (recovery) recovery = { ...recovery, savingBlocked: true };
+    }
   }
 
   // True once the unreadable original is safely held somewhere other than `persistKey`.
@@ -217,6 +230,42 @@ export function createStore(options: StoreOptions): Store {
       }
       return false;
     } catch { return false; }                    // still no room: keep the original
+  }
+
+  // Whether saving is possible RIGHT NOW, asked without writing anything. `persist()`
+  // learns this by trying and failing, which is one write too late: the person had
+  // already been told "Room added" for work that was never saved. This asks the same
+  // question read-only, so the warning can be shown at boot, before the first write.
+  //
+  // It is a pure probe on purpose. It must not create the quarantine copy as a side
+  // effect — that is `persist()`'s decision at the moment of an actual write, and
+  // copying here would change storage merely because the app was opened.
+  //
+  // KNOWN LIMIT, and the reason this is a prediction rather than a guarantee: a
+  // read-only probe cannot know that `setItem` will throw. If storage is out of quota
+  // the slot looks free, this returns true, and the refusal is only discovered by
+  // `persist()` — which then sets `savingBlocked` and the notice appears, exactly as it
+  // did before this change. So the boot answer is exact for storage that accepts writes
+  // and degrades to the previous on-write warning for storage that does not; it is never
+  // worse than what it replaced. Locked below with a throwing-`setItem` fixture so the
+  // boundary is visible rather than discovered later.
+  function savingIsPossible(): boolean {
+    if (!storage || !recovery) return true;
+    if (recovery.preservedAt) return true;       // the original is already safe elsewhere
+    let original: string | null = null;
+    try { original = storage.getItem(persistKey); } catch { return false; }
+    if (original === null) return true;          // nothing left to protect
+    try {
+      // Free or already-ours counts as room; the same two-slot bound as the writer. Both
+      // slots are load-bearing here: `quarantine()`'s copy can itself FAIL (a throwing
+      // `setItem`), which leaves `preservedAt` null with a slot still free, and this loop
+      // is then the only thing that finds it.
+      for (const slot of [quarantineKey, `${quarantineKey}-2`]) {
+        const held = storage.getItem(slot);
+        if (held === null || held === original) return true;
+      }
+    } catch { return false; }
+    return false;                                // both slots hold other originals
   }
 
   function notify(): void {

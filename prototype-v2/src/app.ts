@@ -720,8 +720,16 @@ function renderRecoveryNotice(): string {
   // Saying nothing here would be the worst outcome available: the person keeps working,
   // sees each change confirmed, and loses all of it on reload. If writes are being
   // refused to protect their only copy, that is the fact they need first.
+  // Two different reasons a write can be refused, and the notice must not give the wrong
+  // one. When no copy could be made, writing really would overwrite the only copy — that
+  // is the reason. When a copy DOES exist (`preservedAt` non-null), nothing is at risk of
+  // being overwritten and the write was simply rejected by storage; saying "the only copy"
+  // there both states a false cause and contradicts the sentence above it, which has just
+  // named the second copy. The part that is true either way leads in both.
   const blockedWarning = recovery.savingBlocked
-    ? `<p class="muted" style="margin:6px 0"><strong>Changes you make now are not being saved.</strong> Writing would overwrite the only copy of your original data, so this session is kept in memory only and will be lost when you close or reload this page.</p>`
+    ? `<p class="muted" style="margin:6px 0"><strong>Changes you make now are not being saved.</strong> ${recovery.preservedAt
+        ? "Your browser refused to save them — its storage is full or restricted. Nothing already saved is at risk; this session is kept in memory only and will be lost when you close or reload this page."
+        : "Writing would overwrite the only copy of your original data, so this session is kept in memory only and will be lost when you close or reload this page."}</p>`
     : "";
   return `<div class="card" style="border-left:4px solid var(--amber);margin-bottom:14px" data-testid="storage-recovery-banner" role="status">
     <div class="op-head"><h3>Your saved home memory could not be read</h3></div>

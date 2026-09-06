@@ -508,7 +508,13 @@ export interface StorageRecovery {
    *  unreadable original could not be secured anywhere else and overwriting it would
    *  destroy the person's only copy. The interface must say so plainly: silently
    *  discarding work while reporting success is a worse failure than the crash this
-   *  path replaced. */
+   *  path replaced.
+   *
+   *  Computed at boot so the warning precedes the first write, and re-evaluated on every
+   *  write. It is exact for storage that accepts writes. It can still read `false` at
+   *  boot when storage is out of quota — no read-only check can predict a throwing
+   *  `setItem` — in which case the first write discovers the refusal and sets it, which
+   *  is the behaviour this field had before boot-time computation existed. */
   savingBlocked: boolean;
 }
 

@@ -823,10 +823,208 @@ section("P0.8b import trust boundary", () => {
   noSlots.setItem("nestory-v2-unreadable-2", "{ older original B");
   noSlots.setItem("nestory-v2", "{ this boot's corruption");
   const noSlotStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: noSlots });
+  // The warning must be true BEFORE the first write, not learned by failing one. P3
+  // computed it lazily in `persist()`, so the person was told "Room added" and only then
+  // told it had not been saved — the work was already lost by the time the notice was
+  // accurate. The state is now computed at boot, read-only.
+  assert("unsaveable-session-is-disclosed-at-boot-before-any-write",
+    noSlotStore.storageRecovery()?.savingBlocked === true,
+    "the person can start building a home before being told nothing is being saved");
+  const noSlotWritesBefore = noSlots.getItem("nestory-v2-unreadable");
   noSlotStore.createRoom({ name: "Study" });
   assert("unsaveable-session-is-disclosed-not-silent",
     noSlotStore.storageRecovery()?.savingBlocked === true,
     "writes were discarded with no way for the interface to say so");
+  assert("boot-time-probe-did-not-consume-or-alter-a-slot",
+    noSlots.getItem("nestory-v2-unreadable") === noSlotWritesBefore,
+    "asking whether saving is possible must not itself write");
+
+  // The mirror case, which a too-eager version of this would break: when a slot IS
+  // available the boot must NOT cry wolf, and the write must genuinely persist.
+  const freeSlot = memStorage();
+  freeSlot.setItem("nestory-v2-unreadable", "{ an older original");
+  freeSlot.setItem("nestory-v2", "{ this boot's corruption");
+  const freeSlotStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: freeSlot });
+  assert("available-slot-boot-does-not-claim-saving-is-blocked",
+    freeSlotStore.storageRecovery()?.savingBlocked === false,
+    freeSlotStore.storageRecovery());
+  const roomsBeforeFree = freeSlotStore.state.rooms.size;
+  freeSlotStore.createRoom({ name: "Study" });
+  const freeSlotReboot = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: freeSlot });
+  assert("available-slot-write-actually-persists",
+    freeSlotReboot.state.rooms.size === roomsBeforeFree + 1,
+    `wrote 1 room, reloaded ${freeSlotReboot.state.rooms.size - roomsBeforeFree}`);
+
+  // And a HEALTHY store must gain no notice at all from this change.
+  const healthy = memStorage();
+  healthy.setItem("nestory-v2", JSON.stringify({ version: 2, records: fresh().exportJson().records }));
+  const healthyStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: healthy });
+  assert("healthy-store-gains-no-recovery-notice",
+    healthyStore.storageRecovery() === null && healthy.getItem("nestory-v2-unreadable") === null,
+    healthyStore.storageRecovery());
+
+  // THE PROMISE AND THE BEHAVIOUR MUST NOT DRIFT. `savingIsPossible()` (the boot probe)
+  // and `securedBeforeOverwrite()` (the writer's own check) duplicate the slot logic, so
+  // they could disagree: the boot says saving works, the write is then refused, and the
+  // person silently loses it — the exact defect this slice removes. Swept over every
+  // reachable combination of {slot1, slot2, live key}, asserting that whenever the notice
+  // claims saving is possible, a real write actually survives a reload.
+  const driftSlotValues = [null, "{ A", "{ B", "{ same"];
+  const driftLiveValues = ["{ corrupt", "{ same", JSON.stringify({ version: 2, records: fresh().exportJson().records })];
+  // `memStorage()` never throws, so on its own it cannot reach the family this feature
+  // exists for: quota is named in the source as the likeliest cause of a truncated
+  // ledger. A throwing `setItem` also makes `quarantine()`'s own copy fail, which leaves
+  // `preservedAt` null with a slot still FREE — the state a sweep over non-throwing
+  // storage can never produce, and the one an earlier equivalence claim wrongly ruled out.
+  const driftStorage = (throwing: boolean): StorageLike & { snapshot: Map<string, string> } => {
+    const m = new Map<string, string>();
+    return {
+      snapshot: m,
+      getItem: (k) => m.get(k) ?? null,
+      setItem: (k, v) => { if (throwing) throw new Error("quota exceeded"); m.set(k, v); },
+    };
+  };
+  const drifted: string[] = [];
+  let driftStates = 0;
+  let possibleClaims = 0;
+  for (const throwing of [false, true]) for (const q1 of driftSlotValues) for (const q2 of driftSlotValues) for (const live of driftLiveValues) {
+    const st = driftStorage(throwing);
+    if (q1) st.snapshot.set("nestory-v2-unreadable", q1);
+    if (q2) st.snapshot.set("nestory-v2-unreadable-2", q2);
+    st.snapshot.set("nestory-v2", live);
+    const store = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: st });
+    const rec = store.storageRecovery();
+    if (!rec) continue;
+    driftStates += 1;
+    if (rec.savingBlocked) continue;                       // claims blocked: nothing promised
+    possibleClaims += 1;
+    const before = store.exportJson().records.length;
+    store.createRoom({ name: "Study" });
+    const reloaded = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: st });
+    const persisted = reloaded.exportJson().records.length > before;
+    // On throwing storage the boot answer is a PREDICTION that cannot see a failing
+    // setItem; what must hold there is that the person is told before they lose more —
+    // `persist()` discovers the refusal and sets the flag, the pre-existing behaviour.
+    if (!persisted && !(throwing && store.storageRecovery()?.savingBlocked === true)) {
+      drifted.push(`throwing=${throwing} slot1=${q1 ?? "-"} slot2=${q2 ?? "-"} live=${live.slice(0, 12)}`);
+    }
+  }
+  assert("drift-sweep-actually-exercised-recovery-states", driftStates >= 10, driftStates);
+  assert("drift-sweep-actually-exercised-possible-claims", possibleClaims >= 5, possibleClaims);
+  assert("boot-promise-and-write-behaviour-never-disagree", drifted.length === 0,
+    drifted.length ? drifted.slice(0, 3).join(" | ") : "no state promises saving and then loses the write without saying so");
+
+  // The mirror direction, which the sweep above cannot see: a boot that claims BLOCKED
+  // while the write would actually have succeeded. That is a false alarm, and a warning
+  // people learn to ignore protects no one. Same sweep, opposite question.
+  const criedWolf: string[] = [];
+  let blockedClaims = 0;
+  for (const throwing of [false, true]) for (const q1 of driftSlotValues) for (const q2 of driftSlotValues) for (const live of driftLiveValues) {
+    const st = driftStorage(throwing);
+    if (q1) st.snapshot.set("nestory-v2-unreadable", q1);
+    if (q2) st.snapshot.set("nestory-v2-unreadable-2", q2);
+    st.snapshot.set("nestory-v2", live);
+    const store = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: st });
+    const rec = store.storageRecovery();
+    if (!rec || !rec.savingBlocked) continue;              // only the "blocked" claims
+    blockedClaims += 1;
+    const before = store.exportJson().records.length;
+    store.createRoom({ name: "Study" });
+    const reloaded = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: st });
+    if (reloaded.exportJson().records.length > before) {
+      criedWolf.push(`throwing=${throwing} slot1=${q1 ?? "-"} slot2=${q2 ?? "-"} live=${live.slice(0, 12)}`);
+    }
+  }
+  // Its OWN counter: reusing the shared one would let this pass vacuously if the
+  // population of blocked claims ever went to zero.
+  assert("false-alarm-sweep-actually-exercised-blocked-claims", blockedClaims >= 5, blockedClaims);
+  assert("boot-never-claims-blocked-when-saving-would-have-worked", criedWolf.length === 0,
+    criedWolf.length ? criedWolf.slice(0, 3).join(" | ") : "no false alarm across the swept states");
+
+  // THE BOUNDARY OF THE BOOT ANSWER, locked so it is visible rather than discovered.
+  // A read-only probe cannot know that `setItem` will throw, so on out-of-quota storage
+  // the boot answer can be `false` and the refusal is only found by the first write.
+  // What must ALWAYS hold is the outcome the person experiences: they end up warned, and
+  // no original is destroyed. This asserts that weaker-but-true contract explicitly,
+  // rather than letting the stronger boot-time claim quietly not apply here.
+  const p4QuotaMap = new Map<string, string>([
+    ["nestory-v2-unreadable", "{ an older original"],
+    ["nestory-v2", "{ this boot's corruption"],
+  ]);
+  const p4QuotaStorage: StorageLike = {
+    getItem: (k) => p4QuotaMap.get(k) ?? null,
+    setItem: () => { throw new Error("quota exceeded"); },
+  };
+  const p4QuotaStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: p4QuotaStorage });
+  assert("quota-boot-still-discloses-the-recovery", p4QuotaStore.storageRecovery() !== null,
+    "the recovery itself must still be reported when storage rejects every write");
+  p4QuotaStore.createRoom({ name: "Study" });
+  assert("quota-write-is-reported-as-not-saved",
+    p4QuotaStore.storageRecovery()?.savingBlocked === true,
+    "a rejected write must set the flag; ignoring the throw let the session claim success");
+  assert("quota-write-destroys-no-original",
+    p4QuotaMap.get("nestory-v2-unreadable") === "{ an older original"
+      && p4QuotaMap.get("nestory-v2") === "{ this boot's corruption" && p4QuotaMap.size === 2,
+    [...p4QuotaMap.keys()].join(", "));
+
+  // TRANSIENT QUOTA — the state where the SECOND slot is load-bearing and only the real
+  // implementation is correct. Storage is full during boot, so `quarantine()`'s copy
+  // fails and `preservedAt` stays null with slot 2 still free; quota then eases before
+  // the person's first write. A probe that ignored slot 2, or that wrote during boot,
+  // would cry wolf here — say blocked, then save anyway. Every fixture above pins
+  // `throwing` for a whole run, so none of them can reach this; without it the second
+  // slot rests on argument rather than on a lock.
+  const transientMap = new Map<string, string>([
+    ["nestory-v2-unreadable", "{ an older original"],
+    ["nestory-v2", "{ this boot's corruption"],
+  ]);
+  let quotaFull = true;
+  const transientStorage: StorageLike = {
+    getItem: (k) => transientMap.get(k) ?? null,
+    setItem: (k, v) => { if (quotaFull) throw new Error("quota exceeded"); transientMap.set(k, v); },
+  };
+  const transientStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: transientStorage });
+  assert("transient-quota-probe-reaches-the-uncopied-state",
+    transientStore.storageRecovery()?.preservedAt === null,
+    "the fixture must leave preservedAt null with a slot free, or the locks below prove nothing");
+  assert("transient-quota-boot-does-not-cry-wolf",
+    transientStore.storageRecovery()?.savingBlocked === false,
+    transientStore.storageRecovery());
+  quotaFull = false;                                   // quota eases before the first write
+  const transientBefore = transientStore.exportJson().records.length;
+  transientStore.createRoom({ name: "Study" });
+  const transientReload = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: transientStorage });
+  assert("transient-quota-boot-promise-was-true",
+    transientReload.exportJson().records.length > transientBefore,
+    "boot said saving was possible; the write must actually have survived");
+  assert("transient-quota-used-the-second-slot",
+    transientMap.get("nestory-v2-unreadable-2") === "{ this boot's corruption",
+    [...transientMap.keys()].join(", "));
+  assert("transient-quota-left-the-older-original-untouched",
+    transientMap.get("nestory-v2-unreadable") === "{ an older original",
+    transientMap.get("nestory-v2-unreadable"));
+
+  // Clearing: once saving becomes possible again the warning must go away, or it becomes
+  // a permanent false alarm the person learns to ignore.
+  // `StorageLike` is get/set only — the store never deletes, deliberately — so the slot
+  // is freed through a local backing map rather than by widening that interface.
+  const clearingMap = new Map<string, string>([
+    ["nestory-v2-unreadable", "{ older original A"],
+    ["nestory-v2-unreadable-2", "{ older original B"],
+    ["nestory-v2", "{ this boot's corruption"],
+  ]);
+  const clearing: StorageLike = {
+    getItem: (k) => clearingMap.get(k) ?? null,
+    setItem: (k, v) => { clearingMap.set(k, v); },
+  };
+  const clearingStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: clearing });
+  assert("clearing-case-starts-blocked", clearingStore.storageRecovery()?.savingBlocked === true,
+    "fixture must start blocked or the clearing lock proves nothing");
+  clearingMap.delete("nestory-v2-unreadable-2");   // a slot frees up mid-session
+  clearingStore.createRoom({ name: "Study" });
+  assert("warning-clears-once-saving-is-possible-again",
+    clearingStore.storageRecovery()?.savingBlocked === false,
+    clearingStore.storageRecovery());
   assert("unsaveable-session-still-protects-both-originals",
     noSlots.getItem("nestory-v2-unreadable") === "{ older original A"
       && noSlots.getItem("nestory-v2") === "{ this boot's corruption",
@@ -2082,14 +2280,20 @@ async function runBrowserSmoke(): Promise<void> {
     // unread in storage. The notice is rendered by the shell for that reason. The probe
     // drives the REAL boot: write an unreadable ledger, reload, and look at the DOM.
     const recoveryViews = await evalPage<{ landed: string; onLanding: boolean; everyView: string[]; missing: string[] }>(`(async () => {
-      localStorage.setItem("nestory-v2-own", "{ not json at all");
+      // The recordType carries an injection payload on purpose: the validator quotes the
+      // offending value verbatim into its message, which the notice then renders. A plain
+      // malformed string produces a reason with no "<" in it and could never exercise the
+      // escaping path this fixture also has to cover.
+      localStorage.setItem("nestory-v2-own", JSON.stringify({ version: 2, records: [
+        { recordType: '<img src=x onerror="alert(1)">', id: "x" },
+      ] }));
       localStorage.removeItem("nestory-v2-own-unreadable");
       location.reload();
       return null;
     })()`).catch(() => null);
     await sleep(900);
     await waitForApp();
-    const recoveryDom = await evalPage<{ recovered: boolean; landed: string; onLanding: boolean; missing: string[] }>(`(() => {
+    const recoveryDom = await evalPage<{ recovered: boolean; landed: string; onLanding: boolean; missing: string[]; text: string; heading: string; preservedAt: string | null; originalKey: string; visible: boolean; originalBytes: number | null; role: string | null; reasonEscaped: boolean; liveElementInBanner: boolean }>(`(() => {
       const seen = (window.nestory.store.storageRecovery() !== null);
       const landed = window.nestory.ui.view;
       const onLanding = Boolean(document.querySelector('[data-testid="storage-recovery-banner"]'));
@@ -2098,7 +2302,19 @@ async function runBrowserSmoke(): Promise<void> {
         window.nestory.setView(v);
         if (!document.querySelector('[data-testid="storage-recovery-banner"]')) missing.push(v);
       }
-      return { recovered: seen, landed, onLanding, missing };
+      const b = document.querySelector('[data-testid="storage-recovery-banner"]');
+      const h = b ? b.querySelector("h3") : null;
+      const rec = window.nestory.store.storageRecovery();
+      return { recovered: seen, landed, onLanding, missing,
+               preservedAt: rec ? rec.preservedAt : null,
+               originalKey: rec ? rec.originalKey : "",
+               visible: Boolean(b && b.offsetParent !== null && b.getClientRects().length > 0),
+               originalBytes: rec ? rec.originalBytes : null,
+               role: b ? b.getAttribute("role") : null,
+               reasonEscaped: Boolean(b && b.innerHTML.includes("&lt;img")),
+               liveElementInBanner: Boolean(b && b.querySelector("img")),
+               text: b ? b.textContent.replace(/\\s+/g, " ").trim() : "",
+               heading: h ? h.textContent.replace(/\\s+/g, " ").trim() : "" };
     })()`);
     assert("own-mode-unreadable-ledger-still-boots", recoveryDom.recovered === true,
       "the probe must actually produce a recovered boot or the locks below prove nothing");
@@ -2106,6 +2322,357 @@ async function runBrowserSmoke(): Promise<void> {
       `landed on ${recoveryDom.landed} with no recovery notice`);
     assert("recovery-notice-shown-on-every-view", recoveryDom.missing.length === 0,
       `views missing the recovery notice: ${recoveryDom.missing.join(", ")}`);
+    // Present in the DOM is not the same claim as seen by the person, and this slice is
+    // about being TOLD. Every lock here uses querySelector, which finds hidden elements
+    // happily — a banner with display:none passes all of them and the interface walk too.
+    assert("recovery-notice-is-actually-visible",
+      recoveryDom.visible === true,
+      "the notice is in the DOM but not rendered: querySelector cannot tell the difference");
+    // THE OWN-MODE ARM of the same mode ternary. The demo arm is pinned elsewhere; break
+    // only this one and the suite passed clean, telling an own-mode person with an empty
+    // home that they are looking at "the demo home". This fixture already renders it —
+    // `seededThisBoot=true`, `mode==="own"`, 0 rooms — the probe just never read the text.
+    assert("own-mode-seeded-boot-names-an-empty-home",
+      /an empty home/i.test(recoveryDom.text) && !/the demo home/i.test(recoveryDom.text),
+      `own-mode notice must describe an empty home: ${recoveryDom.text.slice(0, 200)}`);
+    // THE HEADING — the one sentence every recovery render shows, unasserted until now.
+    // "Everything is fine" in its place passed 345/345.
+    // Read the <h3> ITSELF: the reason sentence in the body also contains "could not be
+    // read", so a whole-banner textContent match cannot distinguish the two — a first
+    // attempt at this lock passed while the heading said "Everything is fine".
+    assert("recovery-notice-heading-states-the-problem",
+      /could not be read/i.test(recoveryDom.heading) && !/everything is fine/i.test(recoveryDom.heading),
+      `the heading must name the failure, got: ${recoveryDom.heading}`);
+    // THE INTERPOLATED VALUES, not the prose around them. Every sentence is now pinned,
+    // but the `<code>` keys inside them were not — and they are the only instruction the
+    // person has for finding their data, since the notice says it can be "repaired later
+    // or by hand". Hardcoding a wrong key passed clean. They are genuinely variable
+    // (`nestory-v2` vs `nestory-v2-own`, slot 1 vs slot 2), so a fixed string is wrong in
+    // most states. This fixture is own mode, which also distinguishes it from demo.
+    // `role="status"` is what makes the notice reach a screen-reader user at all. Changing
+    // it to "presentation" passes every text assertion while silently un-announcing the
+    // banner — the person who most depends on being told is the one who stops being told.
+    // The "cannot repair it for you yet" paragraph. Its whole purpose is to AVOID promising
+    // a route the product does not have — its own source comment says so — and replacing it
+    // with "You can restore this file at any time from Import" passed the suite clean. That
+    // is the exact false promise the paragraph exists to prevent, and Import provably
+    // refuses these bytes because Import is what quarantined them.
+    assert("recovery-notice-does-not-promise-in-app-restore",
+      /not restorable from inside the app today/i.test(recoveryDom.text)
+        && !/restore this file at any time/i.test(recoveryDom.text),
+      `the notice must not promise a route that does not exist: ${recoveryDom.text.slice(0, 200)}`);
+    assert("recovery-notice-is-announced-to-assistive-tech",
+      recoveryDom.role === "status",
+      `the notice must keep role=status, got: ${recoveryDom.role}`);
+    // Compared against the STORE's value, not a typed-out literal. Grepping for
+    // "nestory-v2-own" passes a hardcoded string too, because this fixture is own mode —
+    // so the lock caught a WRONG key but not a right-for-this-fixture one, which is wrong
+    // for every demo-mode user. Its sibling `...-preserved-slot` was already immune
+    // because it compares against `recoveryDom.preservedAt`; this now matches.
+    // Anchored in POSITION, not by substring. `text.includes(originalKey)` is satisfied by
+    // a neighbouring value: "nestory-v2-own-unreadable" contains "nestory-v2-own", so a key
+    // hardcoded to the demo value still passed the own-mode half. The key must appear where
+    // the sentence actually names it.
+    assert("recovery-notice-names-the-real-storage-key",
+      recoveryDom.originalKey.length > 0
+        && recoveryDom.text.includes(`kept under ${recoveryDom.originalKey} and`)
+        && !/WRONG/i.test(recoveryDom.text),
+      `the notice must name the key the data is actually under (${recoveryDom.originalKey}): ${recoveryDom.text.slice(0, 200)}`);
+    // Written first as `preservedAt === null || text.includes(...)`, this asserted NOTHING
+    // whenever the fixture drifted to a both-slots-full state — a reachable state tested
+    // elsewhere — and went green while measuring nothing. Every other lock in this family
+    // has an honesty guard; this one needed the same.
+    assert("preserved-slot-probe-actually-has-a-slot-to-name",
+      recoveryDom.preservedAt !== null,
+      "the fixture must produce a preserved copy or the lock below proves nothing");
+    assert("recovery-notice-names-the-real-preserved-slot",
+      recoveryDom.preservedAt !== null && recoveryDom.text.includes(recoveryDom.preservedAt),
+      `the notice must name the slot the copy is actually in: preservedAt=${recoveryDom.preservedAt}`);
+    // And the reason: the validator's own explanation, not a benign substitute. Same class
+    // as the heading — replacing it with "Nothing to report." passed clean.
+    // The byte count too. Lower stakes than the key — it sits beside a correct one — but
+    // it is how a person confirms they found the right thing, and a fixed 999999 passed
+    // clean. Cheap to pin against the real stored length.
+    assert("recovery-notice-reports-the-real-byte-count",
+      recoveryDom.originalBytes !== null
+        && recoveryDom.text.includes(`(${recoveryDom.originalBytes} bytes)`),
+      `the notice must report the real size, expected ${recoveryDom.originalBytes}: ${recoveryDom.text.slice(0, 200)}`);
+    // ESCAPING. The validator echoes stored bytes verbatim into `reason`, and stored bytes
+    // are untrusted by this store's own header comment — so the notice is an injection
+    // sink, and `esc()` is the only thing standing in front of it. Dropping it passed the
+    // whole suite. Asserted on innerHTML, not textContent: textContent shows the same
+    // string either way, which is exactly why the gap survived so long.
+    // THE LENGTH BOUND. The reason is attacker- or corruption-controlled in length: a
+    // 4000-char stored value yields a 4044-char validator message. Unbounded, it pushes
+    // the sentences this slice exists to deliver — where the data is kept, and that
+    // changes are not being saved — off the screen. A denial of disclosure, not a
+    // cosmetic issue, and removing the bound passed the whole suite.
+    //
+    // The slice-then-escape ORDER also matters and is asserted by consequence: escaping
+    // first would let the cut land mid-entity ("…&l…"). The escaped text must stay
+    // well-formed, so no bare "&" fragment may survive at the boundary.
+    const longReasonState = await evalPage<{ reasonLength: number; rendered: number; ellipsis: boolean; wellFormed: boolean }>(`(() => {
+      // 190 "A"s then "<b>" is not arbitrary: it places the "<" so that escaping FIRST
+      // and slicing second lands the 240-char cut inside "&lt;", leaving a dangling "&l"
+      // on screen. A payload with no entities (plain repeated characters) can never
+      // distinguish the two orders, so the mid-entity lock would be inert against the
+      // refactor it exists to stop. Padded to a hostile length as well.
+      const big = "A".repeat(190) + "<b>" + "y".repeat(3800);
+      localStorage.setItem("nestory-v2-own", JSON.stringify({ version: 2, records: [
+        { recordType: big, id: "x" },
+      ] }));
+      localStorage.removeItem("nestory-v2-own-unreadable");
+      localStorage.removeItem("nestory-v2-own-unreadable-2");
+      return { reasonLength: 0, rendered: 0, ellipsis: false, wellFormed: false };
+    })()`);
+    void longReasonState;
+    await evalPage(`location.reload()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const bounded = await evalPage<{ rawLength: number; rawReason: string; renderedLength: number; hasEllipsis: boolean; noticeStillComplete: boolean; renderedIsPrefixOfReason: boolean; htmlTail: string; textTail: string }>(`(() => {
+      const rec = window.nestory.store.storageRecovery();
+      const b = document.querySelector('[data-testid="storage-recovery-banner"]');
+      const ps = b ? [...b.querySelectorAll("p")] : [];
+      const reasonP = ps.length ? ps[0].textContent : "";
+      const reasonHtml = ps.length ? ps[0].innerHTML : "";
+      const whole = b ? b.textContent : "";
+      return {
+        rawLength: rec ? rec.reason.length : 0,
+        rawReason: rec ? rec.reason : "",
+        renderedLength: reasonP.length,
+        hasEllipsis: /…/.test(reasonP),
+        // The sentences that matter must still be present after the long reason.
+        noticeStillComplete: /Nothing was deleted/.test(whole) && /not your own record/.test(whole),
+        // Two things had to be right here, and the first version got neither.
+        //
+        // ANCHOR: the ellipsis is appended AFTER the cut, so an end-of-string anchor
+        // alone never sees the dangling fragment — the original pattern read clean while
+        // showing the person a broken entity. The optional trailing ellipsis fixes that.
+        //
+        // SOURCE: this must read innerHTML, not textContent. textContent DECODES, so a
+        // well-formed "&amp;" and a truncated "&a" can look identical after decoding —
+        // on an "&"-heavy reason the decoded text flags the CORRECT implementation as
+        // broken, a false alarm on working code. Only the raw markup distinguishes a
+        // complete entity from a cut one.
+        // The property that actually distinguishes the two orders is not a regex over the
+        // tail — no single pattern survived all payloads; an "&"-heavy reason flags the
+        // CORRECT code and a "<"-heavy one hides the mutant. It is that the visible text
+        // must be a genuine PREFIX of the validator's real reason. Slice-then-escape
+        // guarantees that. Escape-then-slice cuts inside an entity, so the decoded text
+        // contains a fragment ("&l") that never appeared in the source and the prefix
+        // relation breaks. Compared against the store's own reason, not a hand-copy.
+        renderedIsPrefixOfReason: rec ? rec.reason.startsWith(reasonP.replace(/\u2026$/, "")) : false,
+        htmlTail: reasonHtml.slice(-24),
+        textTail: reasonP.slice(-24),
+      };
+    })()`);
+    assert("long-reason-probe-really-produced-a-long-reason", bounded.rawLength > 1000, bounded.rawLength);
+    // The payload must contain an escapable character, or the prefix lock below cannot
+    // distinguish escape-then-slice from slice-then-escape at all — with a plain payload
+    // both orders produce identical output and the lock goes silently inert. The comment
+    // on the fixture says so; a comment is not executable, and every other thing in this
+    // slice that was guarded by reasoning rather than assertion eventually drifted.
+    // Testing merely that the reason CONTAINS an escapable character is not enough — the
+    // validator's own quote marks around the value satisfy that even for a plain payload.
+    // What makes the two orders diverge is an escapable character near the 240-char cut,
+    // where escaping first shifts the boundary into an entity.
+    assert("long-reason-payload-can-distinguish-escape-order",
+      /[&<>"']/.test(bounded.rawReason.slice(150, 260)),
+      "the fixture needs an escapable character near the cut, or the order lock is inert");
+    assert("recovery-notice-bounds-a-hostile-reason-length",
+      bounded.renderedLength < 400 && bounded.hasEllipsis === true,
+      `a ${bounded.rawLength}-char reason rendered ${bounded.renderedLength} chars, ellipsis=${bounded.hasEllipsis}`);
+    assert("bounded-reason-does-not-suppress-the-rest-of-the-notice",
+      bounded.noticeStillComplete === true,
+      "the sentences this notice exists to deliver must survive a hostile reason");
+    assert("bounded-reason-is-not-cut-mid-entity",
+      bounded.renderedIsPrefixOfReason === true,
+      `the shown text must be a real prefix of the reason; escape-then-slice breaks it. text=${JSON.stringify(bounded.textTail)}`);
+
+    assert("recovery-notice-escapes-the-validators-reason",
+      recoveryDom.reasonEscaped === true && recoveryDom.liveElementInBanner === false,
+      `reason must render escaped with no live element: escaped=${recoveryDom.reasonEscaped} live=${recoveryDom.liveElementInBanner}`);
+    // The fixture now feeds a shape-valid dump with a bad recordType, so the validator's
+    // message is the "unsupported value" one rather than a JSON-parse failure.
+    assert("recovery-notice-carries-the-validators-reason",
+      /unsupported value/i.test(recoveryDom.text) && !/nothing to report/i.test(recoveryDom.text),
+      `the notice must carry the real reason: ${recoveryDom.text.slice(0, 200)}`);
+    // THE BLOCKED SENTENCE MUST GIVE THE TRUE REASON. There are two ways a write gets
+    // refused and they are not interchangeable. When no copy could be made, writing
+    // really would overwrite the only copy. When a copy DOES exist, nothing is at risk
+    // and storage simply rejected the write — saying "the only copy" there is both a
+    // false cause and a self-contradiction, since the sentence above has just named the
+    // second copy. Review found exactly that; these read the rendered text, not the flag.
+    await evalPage(`(() => {
+      localStorage.clear();
+      localStorage.setItem("nestory-v2-mode", "demo");
+      localStorage.setItem("nestory-v2", "{ not json at all");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const quotaCopyState = await evalPage<{ preservedAt: string | null; clicked: boolean; blocked: boolean; text: string; originalKey: string }>(`(() => {
+      const st = window.nestory.store;
+      const preservedAt = st.storageRecovery() ? st.storageRecovery().preservedAt : null;
+      // Make every further write fail, then perform a real one through the app.
+      const realSet = Storage.prototype.setItem;
+      Storage.prototype.setItem = function () { throw new Error("quota exceeded"); };
+      let clicked = false;
+      try {
+        window.nestory.setView("home");
+        const btn = document.querySelector('[data-action="confirm-container"]');
+        if (btn) { btn.click(); clicked = true; }
+      } finally { Storage.prototype.setItem = realSet; }
+      const b = document.querySelector('[data-testid="storage-recovery-banner"]');
+      return { preservedAt, clicked,
+               originalKey: st.storageRecovery() ? st.storageRecovery().originalKey : "",
+               blocked: st.storageRecovery() ? st.storageRecovery().savingBlocked : false,
+               text: b ? b.textContent.replace(/\\s+/g, " ").trim() : "" };
+    })()`);
+    assert("quota-copy-probe-reached-a-blocked-state-with-a-copy",
+      quotaCopyState.preservedAt !== null && quotaCopyState.clicked === true && quotaCopyState.blocked === true,
+      `probe must produce blocked-with-a-copy: ${JSON.stringify(quotaCopyState).slice(0, 160)}`);
+    assert("blocked-notice-does-not-claim-only-copy-when-a-copy-exists",
+      !/only copy of your original data/.test(quotaCopyState.text),
+      "the notice gave a false cause: a second copy exists, so nothing would be overwritten");
+    // The SECOND mode. A key lock that only ever runs against one mode cannot tell a
+    // computed value from a literal that happens to match that mode — comparing against
+    // the store is not enough on its own. This probe is demo mode, so a hardcoded
+    // "nestory-v2-own" is visibly wrong here, and the pair pins the value as genuinely
+    // derived rather than coincidentally right.
+    assert("demo-mode-notice-names-the-demo-storage-key",
+      quotaCopyState.originalKey === "nestory-v2"
+        && quotaCopyState.text.includes("nestory-v2")
+        && !/nestory-v2-own/.test(quotaCopyState.text),
+      `demo mode must name nestory-v2, not an own-mode key: ${quotaCopyState.text.slice(0, 200)}`);
+    assert("blocked-notice-still-says-changes-are-not-being-saved",
+      /not being saved/.test(quotaCopyState.text),
+      `text was: ${quotaCopyState.text.slice(0, 400)}`);
+    // ...and the mirror of the pair above: when a copy DOES exist, say so, and never
+    // claim none could be made.
+    assert("copy-exists-notice-names-the-second-copy",
+      /second copy under/i.test(quotaCopyState.text),
+      "the person must be told where the second copy is kept");
+    assert("copy-exists-notice-does-not-claim-no-copy-was-made",
+      !/no second copy could be made/i.test(quotaCopyState.text),
+      "denying a copy that exists sends the person looking for data they already have");
+
+    // THE OTHER BRANCH, and the more dangerous one. When `preservedAt` is null the live
+    // key really does hold the only copy, so the notice must say exactly that. Review
+    // broke this sentence alone — swapping in "nothing already saved is at risk" — and
+    // the suite passed clean, which meant the branch that matters most was unlocked. It
+    // is reachable on ordinary non-throwing storage with both slots full: 39 states.
+    await evalPage(`(() => {
+      localStorage.clear();
+      localStorage.setItem("nestory-v2-mode", "demo");
+      localStorage.setItem("nestory-v2-unreadable", "{ older original A");
+      localStorage.setItem("nestory-v2-unreadable-2", "{ older original B");
+      localStorage.setItem("nestory-v2", "{ this boot's corruption");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const noCopyState = await evalPage<{ preservedAt: string | null; clicked: boolean; blocked: boolean; text: string }>(`(() => {
+      const st = window.nestory.store;
+      window.nestory.setView("home");
+      const btn = document.querySelector('[data-action="confirm-container"]');
+      let clicked = false;
+      if (btn) { btn.click(); clicked = true; }
+      const b = document.querySelector('[data-testid="storage-recovery-banner"]');
+      const rec = st.storageRecovery();
+      return { preservedAt: rec ? rec.preservedAt : null, clicked,
+               blocked: rec ? rec.savingBlocked : false,
+               text: b ? b.textContent.replace(/\\s+/g, " ").trim() : "" };
+    })()`);
+    assert("no-copy-probe-reached-a-blocked-state-without-a-copy",
+      noCopyState.preservedAt === null && noCopyState.clicked === true && noCopyState.blocked === true,
+      `probe must produce blocked-with-NO-copy: ${JSON.stringify(noCopyState).slice(0, 160)}`);
+    assert("no-copy-notice-says-the-live-key-is-the-only-copy",
+      /only copy of your original data/.test(noCopyState.text),
+      "the person holding their only copy must be told exactly that");
+    assert("no-copy-notice-does-not-claim-nothing-is-at-risk",
+      !/nothing already saved is at risk/i.test(noCopyState.text),
+      "the reassurance from the copy-exists branch must never leak into the no-copy branch");
+    // The SAME two-branch shape one paragraph up ("Nothing was deleted… ") was unlocked:
+    // a mutant claiming "a second copy was safely made" passed clean, telling someone
+    // holding their only copy that they have two. Same class of false reassurance, so it
+    // gets the same pairing — a positive assertion and a negative one, because a `!/re/`
+    // test alone passes trivially on empty text.
+    assert("no-copy-notice-says-no-second-copy-could-be-made",
+      /no second copy could be made/i.test(noCopyState.text),
+      "the person must be told plainly that no second copy exists");
+    assert("no-copy-notice-does-not-claim-a-second-copy-exists",
+      !/second copy under/i.test(noCopyState.text) && !/two independent copies/i.test(noCopyState.text),
+      "claiming a second copy that does not exist is the same lie, one paragraph up");
+    // THE LAST CONDITIONAL. `seededThisBoot` was asserted at the flag but its rendered
+    // text never read — the third instance of the same gap shape. This boot fell back to
+    // the seed, so the person is looking at demo furniture; saying "your current records
+    // loaded normally" here would be the fabricated home this whole path exists to
+    // prevent, and it passed clean until now.
+    assert("seeded-boot-says-what-you-see-is-not-your-own-record",
+      /not your own record/i.test(noCopyState.text),
+      "a seeded session must say so, or the person mistakes the demo home for theirs");
+    assert("seeded-boot-does-not-claim-records-loaded-normally",
+      !/loaded normally/i.test(noCopyState.text),
+      "the earlier-copy wording must never appear on a boot that actually fell back to the seed");
+    // ...and the mode sub-branch inside that same sentence. This fixture is demo mode, so
+    // it must name the demo home; saying "an empty home" here describes own mode and would
+    // misdescribe what is on screen.
+    assert("seeded-boot-in-demo-mode-names-the-demo-home",
+      /the demo home/i.test(noCopyState.text) && !/an empty home/i.test(noCopyState.text),
+      "the seeded-session sentence must describe the mode the person is actually in");
+
+    // THE MIRROR BRANCH: the person's OWN records loaded fine and the notice concerns an
+    // unreadable copy kept aside by an EARLIER boot. Saying "what you see here is not your
+    // own record" would be false in the opposite direction — it invites someone looking at
+    // their real home to discard it. Needs its own page state: a valid ledger plus a
+    // leftover quarantine copy.
+    await evalPage(`(() => {
+      const dump = JSON.stringify({ version: 2, records: window.nestory.store.exportJson().records });
+      localStorage.clear();
+      localStorage.setItem("nestory-v2-mode", "demo");
+      localStorage.setItem("nestory-v2", dump);
+      localStorage.setItem("nestory-v2-unreadable", "{ an older unreadable original");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const earlierCopyState = await evalPage<{ seeded: boolean | null; recovered: boolean; text: string }>(`(() => {
+      const rec = window.nestory.store.storageRecovery();
+      const b = document.querySelector('[data-testid="storage-recovery-banner"]');
+      return { seeded: rec ? rec.seededThisBoot : null, recovered: rec !== null,
+               text: b ? b.textContent.replace(/\\s+/g, " ").trim() : "" };
+    })()`);
+    assert("earlier-copy-probe-reached-a-non-seeded-recovery",
+      earlierCopyState.recovered === true && earlierCopyState.seeded === false,
+      `probe must load real records WITH a leftover copy: ${JSON.stringify(earlierCopyState).slice(0, 160)}`);
+    assert("non-seeded-boot-says-current-records-loaded-normally",
+      /loaded normally/i.test(earlierCopyState.text),
+      "the person's own records did load; the notice must say so");
+    assert("non-seeded-boot-does-not-claim-this-is-not-your-record",
+      !/not your own record/i.test(earlierCopyState.text),
+      "telling someone looking at their real home that it is not theirs invites them to discard it");
+
+    // A HEALTHY boot must render NO banner at all. Making it render unconditionally passed
+    // clean — every text lock still matched, because they only ever ran when it was there.
+    await evalPage(`(() => {
+      localStorage.clear();
+      localStorage.setItem("nestory-v2-mode", "demo");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const healthyDom = await evalPage<{ recovery: unknown; bannerPresent: boolean; records: number }>(`({
+      recovery: window.nestory.store.storageRecovery(),
+      bannerPresent: Boolean(document.querySelector('[data-testid="storage-recovery-banner"]')),
+      records: window.nestory.store.exportJson().records.length,
+    })`);
+    assert("healthy-boot-probe-really-is-healthy",
+      healthyDom.recovery === null && healthyDom.records > 10,
+      `fixture must be a healthy boot: ${JSON.stringify(healthyDom).slice(0, 140)}`);
+    assert("healthy-boot-renders-no-recovery-notice", healthyDom.bannerPresent === false,
+      "a healthy session must not be shown a recovery notice it has no reason to see");
+
     // The WELCOME chooser is reachable with an unreadable ledger in storage (records key
     // survives, mode key does not). The ten-view sweep above cannot catch it because it
     // never exercises `mode === null` — review found this one, not the locks.
