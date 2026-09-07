@@ -2721,6 +2721,120 @@ async function runBrowserSmoke(): Promise<void> {
     })()`);
     assert("own-activation-completes-in-dom", await evalPage<boolean>(`document.querySelector('[data-testid="activation-checklist"]')?.textContent?.includes("activated") ?? false`));
     await evalPage(`window.nestory.setView("plan")`);
+    // EVERY REFUSAL MUST CARRY THE PREFIX THAT MAKES IT AUDIBLE. Urgency is derived from the
+    // leading "⚠", so a failure message without it is announced politely and can be missed.
+    //
+    // INVERTED ON PURPOSE. The first version enumerated the wordings that existed the day it
+    // was written (`/^(Could not|Cannot|Add |Accept |...)/`), which pins a string list while
+    // the assertion NAME claims an invariant — a reviewer added `toast("Select a container
+    // first.")` and the suite passed 369/369. So the test now works the other way round: every
+    // toast literal must EITHER carry the prefix OR be named here as a genuine confirmation.
+    // A new message defaults to failing, and the failure says exactly what to do — classify
+    // it. That is the safe direction: an unclassified refusal is silent, and silence is the
+    // defect. Template forms are scanned too, since a refusal can be interpolated.
+    //
+    // WHY STATIC, stated accurately. An earlier version of this comment claimed the file-upload
+    // refusals could not be reached behaviourally; a reviewer disproved that by driving one
+    // through `DataTransfer` + a synthetic `File` + a `change` event, all within this harness's
+    // existing capabilities. The real reason is coverage economics: one source sweep pins every
+    // message at once, including future ones, where a behavioural probe pins the paths someone
+    // remembered to drive. It is the weaker instrument for any single message and the stronger
+    // one for the invariant. The ARIA behaviour itself is asserted in the browser below.
+    const CONFIRMATIONS_THAT_MAY_STAY_POLITE = [
+      "Visual draft ready — inspect every candidate before Review.",
+    ];
+    const appSrc = await readFile(new URL("./app.ts", import.meta.url), "utf8");
+    const toastLiterals = [
+      ...[...appSrc.matchAll(/toast\("((?:[^"\\]|\\.)*)"\)/g)].map((m) => m[1] ?? ""),
+      ...[...appSrc.matchAll(/toast\(`((?:[^`\\]|\\.)*)`\)/g)].map((m) => m[1] ?? ""),
+    ];
+    const unclassified = toastLiterals
+      .filter((t) => !t.startsWith("\u26a0"))
+      .filter((t) => !CONFIRMATIONS_THAT_MAY_STAY_POLITE.includes(t));
+    // Honesty guard: if the scan matched nothing at all, everything below is vacuous.
+    assert("toast-literal-scan-actually-found-the-messages",
+      toastLiterals.length >= 8 && toastLiterals.some((t) => t.startsWith("\u26a0")),
+      `the scan must find real toast messages, found ${toastLiterals.length}`);
+    assert("every-refusal-toast-carries-the-warning-prefix-that-makes-it-audible",
+      unclassified.length === 0,
+      `these messages are neither prefixed nor listed as confirmations, so they would be ` +
+      `announced politely and can be missed — prefix them or classify them: ${JSON.stringify(unclassified)}`);
+
+    // IMPORT MUST NOT CONFIRM ITSELF. It was the one user-facing write with its own try/catch
+    // and its own success toast, bypassing the single place where a write's outcome is judged.
+    // It replaces the whole ledger, so a silent failure costs everything.
+    //
+    // The first version paired a positive regex with a negative one meant to catch the reverted
+    // form; a reviewer showed the negative clause could not match it (`[^)]*` cannot cross the
+    // `)` inside `JSON.parse(String(...))`), and that a variant which calls act() AND then
+    // toasts separately passed. Replaced with a check on the import handler's own body: within
+    // it, `importJson` must appear inside an `act(` call, and no bare success toast may sit
+    // beside it. Scoped to the handler so an unrelated `toast("Imported.")` elsewhere cannot
+    // satisfy or break it.
+    const importHandler = (() => {
+      const at = appSrc.indexOf("reader.onload");
+      if (at < 0) return "";
+      return appSrc.slice(at, appSrc.indexOf("reader.readAsText", at));
+    })();
+    assert("import-handler-was-actually-located-for-inspection",
+      importHandler.includes("importJson"),
+      "the import handler body must be found, or the lock below proves nothing");
+    assert("import-reports-through-the-shared-write-path-not-its-own-toast",
+      /act\(\s*\(\)\s*=>\s*store\.importJson\(/.test(importHandler)
+        && !/toast\(\s*"Imported\./.test(importHandler),
+      `import must route its outcome through act() and must not toast success itself: ${JSON.stringify(importHandler.trim().slice(0, 220))}`);
+
+    // ---------------------------------------------------------------- toast audibility
+    // The toast is the only feedback several actions give, and it carried no live-region
+    // semantics at all, so a screen-reader user was told nothing by it — including when it
+    // reported a failure. Driven through real controls in a real browser.
+    const toastAria = await evalPage<{ warnRole: string | null; warnLive: string | null; warnText: string; okRole: string | null; okLive: string | null; okText: string }>(`(() => {
+      const read = () => {
+        const t = document.querySelector(".toast");
+        return { role: t ? t.getAttribute("role") : null, live: t ? t.getAttribute("aria-live") : null, text: t ? t.textContent.trim() : "" };
+      };
+      // A REFUSAL, whichever one this reaches. Submitting the add-belonging modal with an empty
+      // name is refused by the store and surfaced through the shared catch as a prefixed
+      // warning. An earlier comment claimed it exercised the no-container-selected guard; that
+      // branch is unreachable in the seeded home, because the default-home select is populated.
+      // The ARIA claim holds either way - a real refusal on a real warning path - but the
+      // comment named a branch the assertion never touched.
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      window.nestory.setView("belongings");
+      const opener = document.querySelector('[data-action="open-add-belonging"]');
+      if (opener) opener.click();
+      const submit = document.querySelector('[data-action="add-belonging-submit"]');
+      if (submit) submit.click();
+      const warn = read();
+      // A CONFIRMATION: adding a room through Setup succeeds and toasts politely.
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      window.nestory.ui.modal = null;
+      window.nestory.setView("setup");
+      const addRoom = document.querySelector('[data-action="setup-add-room"]');
+      if (addRoom) addRoom.click();
+      const ok = read();
+      // Leave the app exactly as the following assertions expect it: this probe navigated and
+      // opened a modal, and the plan assertion below reads the Plan view. Restoring here rather
+      // than making the next assertion tolerant, so it keeps testing what it was written for.
+      window.nestory.ui.modal = null;
+      window.nestory.setView("plan");
+      return { warnRole: warn.role, warnLive: warn.live, warnText: warn.text,
+               okRole: ok.role, okLive: ok.live, okText: ok.text };
+    })()`);
+    // Honesty guard: if neither control produced a toast, everything below would be vacuous.
+    assert("toast-probe-produced-both-a-refusal-and-a-confirmation",
+      toastAria.warnText.length > 0 && toastAria.okText.length > 0
+        && toastAria.warnText.startsWith("\u26a0") && !toastAria.okText.startsWith("\u26a0"),
+      JSON.stringify(toastAria));
+    assert("a-refusal-toast-is-an-assertive-live-region",
+      toastAria.warnRole === "alert" && toastAria.warnLive === "assertive",
+      JSON.stringify({ role: toastAria.warnRole, live: toastAria.warnLive, text: toastAria.warnText }));
+    // And a confirmation must NOT interrupt: making every toast assertive would train people
+    // to ignore the channel, which costs exactly the warnings this change exists to deliver.
+    assert("a-confirmation-toast-stays-polite",
+      toastAria.okRole === "status" && toastAria.okLive === "polite",
+      JSON.stringify({ role: toastAria.okRole, live: toastAria.okLive, text: toastAria.okText }));
+
     assert("own-plan-renders", await evalPage<boolean>(`Boolean(document.querySelector('[data-testid="plan-svg"]')) || Boolean(document.querySelector('[data-testid="plan-3d"]'))`));
     await shot("nestory-own-home.png");
 

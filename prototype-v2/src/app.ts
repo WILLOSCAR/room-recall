@@ -255,6 +255,14 @@ function toast(msg: string): void {
   const root = must<HTMLDivElement>("toast-root");
   const el = document.createElement("div");
   el.className = "toast";
+  // The toast is the only feedback some actions give, and it carried no live-region
+  // semantics at all — plain generic/StaticText in the accessibility tree — so a
+  // screen-reader user was told nothing by it, including when it reported a failure.
+  // A warning interrupts; an ordinary confirmation stays polite. The "⚠" prefix already
+  // marked warnings by convention, so it becomes the discriminator rather than a new flag.
+  const isWarning = msg.startsWith("⚠");
+  el.setAttribute("role", isWarning ? "alert" : "status");
+  el.setAttribute("aria-live", isWarning ? "assertive" : "polite");
   el.textContent = msg;
   root.appendChild(el);
   setTimeout(() => el.remove(), 2600);
@@ -1418,7 +1426,7 @@ document.addEventListener("click", (e) => {
     case "scan-send-review": {
       const containerId = inputValue("scan-target-container");
       const labels = ui.scanDraft?.proposals.filter((p) => p.kind === "item" && p.decision === "accepted").map((p) => p.label.split(" · ")[0]) ?? [];
-      if (!containerId || !labels.length) { toast("Accept at least one item candidate first."); break; }
+      if (!containerId || !labels.length) { toast("⚠ Accept at least one item candidate first."); break; }
       const out = act(() => store.snapshotContainer(containerId, labels.join(", "), ui.scanMedia), "Scan observations sent to Review — memory is unchanged until acceptance.");
       if (out) { ui.view = "review"; ui.scanMedia = null; render(); }
       break;
@@ -1426,7 +1434,7 @@ document.addEventListener("click", (e) => {
     case "capture-container-submit": {
       const containerId = inputValue("capture-container");
       const seen = inputValue("capture-container-text").trim();
-      if (!seen) { toast("Describe what is visible so the photo has a reviewable claim."); break; }
+      if (!seen) { toast("⚠ Describe what is visible so the photo has a reviewable claim."); break; }
       const out = act(() => store.snapshotContainer(containerId, seen, ui.scanMedia), "Container snapshot created as a Review proposal.");
       if (out) { ui.scanMedia = null; ui.view = "review"; render(); }
       break;
@@ -1438,8 +1446,8 @@ document.addEventListener("click", (e) => {
       const sourceRaw = inputValue("product-source");
       const source = sourceRaw === "scan" || sourceRaw === "manual" ? sourceRaw : "product";
       const kinds = inputValue("product-tags").split(",").map((s) => s.trim().toLowerCase().replace(/\s+/g, "-")).filter(Boolean);
-      if (!name || !defaultHome) { toast("Product name and default home are required."); break; }
-      if (!width || !depth || !height) { toast("Add all three dimensions so layout checks have a real volume."); break; }
+      if (!name || !defaultHome) { toast("⚠ Product name and default home are required."); break; }
+      if (!width || !depth || !height) { toast("⚠ Add all three dimensions so layout checks have a real volume."); break; }
       const out = act(() => store.createBelonging({
         name, kinds, importance: "normal", defaultHome: { type: "container", id: defaultHome }, source,
         dimensions: { width: width / 100, depth: depth / 100, height: height / 100, unit: "m", source, verified: source !== "scan" }
@@ -1475,7 +1483,7 @@ document.addEventListener("click", (e) => {
         ui.modal = null;
         render();
       } else if (!text) {
-        toast("Type what you can see first — the photo alone is evidence, not recognition.");
+        toast("⚠ Type what you can see first — the photo alone is evidence, not recognition.");
       }
       break;
     }
@@ -1497,7 +1505,7 @@ document.addEventListener("click", (e) => {
       const dimensions = width && depth && height
         ? { width: width / 100, depth: depth / 100, height: height / 100, unit: "m" as const, source: "manual" as const, verified: true }
         : undefined;
-      if (!def) { toast("Add a container first."); break; }
+      if (!def) { toast("⚠ Add a container first."); break; }
       const out = act(() => store.createBelonging({
         name, kinds, importance,
         defaultHome: { type: "container", id: def },
@@ -1633,7 +1641,7 @@ document.addEventListener("change", (e) => {
     if (!file) return;
     void downscalePhoto(file, 960)
       .then((photo) => { ui.scanMedia = photo; ui.scanDraft = null; render(); })
-      .catch(() => toast("Could not read that image."));
+      .catch(() => toast("⚠ Could not read that image."));
     return;
   }
   if (target instanceof HTMLInputElement && target.id === "import-file") {
@@ -1641,12 +1649,12 @@ document.addEventListener("change", (e) => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      try {
-        store.importJson(JSON.parse(String(reader.result)));
-        toast("Imported.");
-      } catch (err) {
-        toast(`⚠ ${err instanceof Error ? err.message : String(err)}`);
-      }
+      // Routed through act() like every other write. Import was the one user-facing write
+      // that bypassed it, so it alone reported success from its own try/catch — and it
+      // replaces the WHOLE ledger, making it the write most likely to be refused by storage
+      // and the one whose silent failure costs most. act() catches and reports errors
+      // identically, so the failure path is unchanged.
+      act(() => store.importJson(JSON.parse(String(reader.result))), "Imported.");
     };
     reader.readAsText(file);
   }
