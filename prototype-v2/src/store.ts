@@ -14,7 +14,7 @@ import type {
   OperationData, OperationStatus, OperationView, PhotoMedia, PlaceNode, PlacementSlot, PlacementView, PlaceRef,
   PlanPin, PlanRect, ProposalRecord, ProposalStatus, ProposalView, Relation, RetrievalPlanGroup,
   RetrievalPlanItem, Room, RowStatus,
-  ScoredBelongingView, StorageLike, StorageRecovery, Store, StoreOptions, UnpackPriorityEntry,
+  ScoredBelongingView, StorageLike, StorageRecovery, StorageWriteFailure, Store, StoreOptions, UnpackPriorityEntry,
   WhichContainerHit
 } from "./types.ts";
 import { BOX_STATUSES, IMPORTANCE_SCORE, LIFECYCLE_STATES, OPERATION_STATUSES, ROW_STATUSES } from "./types.ts";
@@ -41,6 +41,33 @@ export function createStore(options: StoreOptions): Store {
   // Set by loadRecords BEFORE the first `records` assignment below, so it is already
   // accurate by the time anything can observe it.
   let recovery: StorageRecovery | null = null;
+
+  // Set when a write to storage is REJECTED on an otherwise healthy store — quota
+  // exhausted, private mode, a full disk. Deliberately not folded into `recovery`: that
+  // reports an unreadable saved ledger, which is a different fact with a different
+  // remedy, and reusing it here would tell the person their saved data is broken when
+  // it is not. Cleared only by a write that actually succeeds.
+  let writeFailure: StorageWriteFailure | null = null;
+
+  // True once a write of OURS has actually landed in `persistKey` this session. After a boot
+  // that fell back to the seed, the stored bytes start out unreadable-by-this-build; the first
+  // landed write replaces them with records this build wrote, and from then on they are a real
+  // fallback. Session-scoped on purpose: it describes what this session has written, not what
+  // it found.
+  let ownSaveLanded = false;
+
+  // True when THIS boot actually parsed usable records out of `persistKey`. Distinct from
+  // "there are bytes there": an empty string, a foreign shape, or an older version all leave
+  // bytes that are not a save of this person's records.
+  let loadedFromStorage = false;
+
+  // Every refusal of a write, counted on BOTH paths. `writeFailure.unsavedChanges` cannot serve
+  // this: it is only touched by the quota path, while the protect-the-only-copy refusal takes
+  // `persist()`'s early return and never reaches it. A trigger built on that field was therefore
+  // blind to a whole family — every silent write under a standing block went unannounced. This
+  // counter is monotonic for the session and exists so the interface can ask the one question
+  // that matters: was THIS change refused?
+  let refusalCount = 0;
 
   let records: AnyRecord[] = loadRecords();
   let seq = records.length;
@@ -114,6 +141,7 @@ export function createStore(options: StoreOptions): Store {
           try {
             const valid = validatedLedgerRecords(parsed, "Saved home memory");
             validateLedgerSemantics(valid, catalog);
+            loadedFromStorage = true;
             return valid;
           } catch (err) {
             return quarantine(raw, err instanceof Error ? err.message : String(err));
@@ -186,18 +214,81 @@ export function createStore(options: StoreOptions): Store {
       // person's only copy — but it must never look like success. Recorded so the
       // interface can say plainly that changes are not being saved.
       recovery = { ...recovery, savingBlocked: true };
+      refusalCount += 1;
       return;
     }
     try {
       storage.setItem(persistKey, JSON.stringify({ version: 2, records }));
       if (recovery?.savingBlocked) recovery = { ...recovery, savingBlocked: false };
+      // A write that actually landed is the only thing that clears the failure. Not a
+      // retry being attempted, not time passing — storage accepting the bytes.
+      writeFailure = null;
+      ownSaveLanded = true;
     } catch {
-      // The write was rejected — quota, private mode, a full disk. Previously ignored,
-      // which meant the session went on reporting success while nothing was saved. When
-      // a recovery is already being disclosed, correct that disclosure rather than let
-      // it claim saving works. (Outside a recovery there is no notice to correct; that
-      // is a separate gap, deliberately not widened here.)
+      // The write was rejected — quota, private mode, a full disk. On a healthy store
+      // there is no recovery object to carry the fact, and it used to be dropped here:
+      // the session went on confirming every change while nothing reached storage, and
+      // the work vanished on reload with nothing ever having said so.
+      //
+      // This is recorded SEPARATELY from `recovery` rather than by minting one. A
+      // `StorageRecovery` means "a saved ledger could not be read", and none was — the
+      // saved data is fine and still loads. Fabricating one to carry a flag would state
+      // a false cause, which is the failure mode this path exists to prevent.
       if (recovery) recovery = { ...recovery, savingBlocked: true };
+      refusalCount += 1;
+      writeFailure = {
+        // What is certainly true: this change is in memory only, and storage still holds
+        // whatever the last successful write left there. Nothing was overwritten or lost
+        // from storage — the loss is of THIS session's unsaved changes, on reload.
+        //
+        // `since` is the FIRST still-unresolved rejection and must not be restamped on
+        // each later one: the exposure began with the earliest unsaved change, and moving
+        // the timestamp forward would understate how much work is at risk.
+        since: writeFailure ? writeFailure.since : nowIso(),
+        unsavedChanges: writeFailure ? writeFailure.unsavedChanges + 1 : 1,
+        // Asked at the moment of failure, not assumed. A store that has refused every
+        // write from the start (first run already out of quota, private mode) has nothing
+        // stored, so the notice must not speak of a "last successful save" that never
+        // happened.
+        //
+        // Byte PRESENCE is not save PROVENANCE. When THIS boot fell back to the seed, the
+        // bytes under `persistKey` are the ones it could NOT read — never a successful save,
+        // and the recovery notice has just said they are not restorable. Counting them would
+        // put "could not be read" and "exactly as it was at the last successful save" on the
+        // same screen: a false cause in the other direction.
+        //
+        // But a recovery does NOT always mean that. `loadRecords` also reports a LEFTOVER
+        // quarantine copy from an earlier boot (`seededThisBoot: false`), where the live key
+        // is perfectly readable, the person's own records loaded, and writes may have landed
+        // this session. Disqualifying on `recovery` alone told those people their data
+        // "cannot be read" while the recovery banner directly above said "Your current
+        // records loaded normally" — two banners contradicting each other about the same
+        // bytes. `seededThisBoot` is the discriminator, and it already exists.
+        // Read defensively: a throwing getItem means we cannot claim data exists.
+        hasStoredData: (() => {
+          // `seededThisBoot` is a BOOT-time fact and stops being the whole story the moment
+          // this build lands its own write: `persistKey` then holds records this build wrote
+          // and can re-read, so calling them unreadable is false — and the notice's "everything
+          // in this session will be gone" is false too, because the landed work survives a
+          // reload. Verified: after a seeded boot, a landed write, then quota exhaustion, a
+          // reboot recovers the landed room and loses only the refused one. Understating what
+          // survived is the worse error of the two: it pushes someone to re-enter work that is
+          // already on disk. So the disqualifier holds only until a write of ours lands.
+          if (ownSaveLanded) return true;              // we wrote it; it is ours and re-readable
+          if (recovery?.seededThisBoot) return false;   // this boot could not read what is there
+          // PROVENANCE, not presence. `getItem(persistKey) !== null` was the test, and the
+          // comment above already said presence is not provenance — then used presence anyway.
+          // Two reachable states got the reassurance wrongly: an EMPTY-STRING live key (an
+          // interrupted write, a partial sync) is `!== null` but is no save, and `loadRecords`
+          // treats it as absent and seeds without raising a recovery; and a FOREIGN or older
+          // shape (`{"version":1,"items":[…]}`) has no `records`, so it also falls through to
+          // the seed with no recovery, while the notice called those bytes the person's own
+          // "last successful save". Someone told their earlier data is safe will not export —
+          // and export is the one remedy that would have saved them. So the claim now requires
+          // that this boot actually LOADED usable records from those bytes.
+          return loadedFromStorage;
+        })()
+      };
     }
   }
 
@@ -1354,6 +1445,8 @@ export function createStore(options: StoreOptions): Store {
     proposals, commitsView, exportJson, planPinFor, chainFor, chainText,
     lifecycleOf,
     storageRecovery: () => recovery,
+    storageWriteFailure: () => writeFailure,
+    writeRefusalCount: () => refusalCount,
     // write
     createRoom, createContainer,
     createBelonging, setItemState, correctPlacement, markNotThere,

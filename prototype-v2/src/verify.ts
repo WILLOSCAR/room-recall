@@ -1068,6 +1068,357 @@ section("P0.8b import trust boundary", () => {
   assert("recovery-reason-is-produced-for-a-long-value",
     (longStore.storageRecovery()?.reason.length ?? 0) > 0, longStore.storageRecovery()?.reason.length);
 
+  // ---------------------------------------------------------------- P5: a refused write
+  // on a HEALTHY store must be disclosed. Everything above concerns a saved ledger that
+  // could not be READ. This is the other failure: the saved data is fine, and the write
+  // of a NEW change is rejected (quota, private mode, a full disk). There is no recovery
+  // object to carry the fact, and it used to be dropped — the session went on confirming
+  // every change while nothing reached storage, and the work vanished on reload with
+  // nothing having said so. Reproduced against the real interface before being changed.
+  //
+  // A storage that accepts a first write and then refuses every later one, which is what
+  // filling a real quota looks like from the store's side.
+  const refusingStorage = (): StorageLike & { writes: number } => {
+    const m = new Map<string, string>();
+    let writes = 0;
+    return {
+      getItem: (k) => m.get(k) ?? null,
+      setItem: (k, v) => {
+        // Only the app's own key is refused; the quarantine slots are irrelevant here
+        // because nothing is being recovered.
+        if (k === "nestory-v2" && writes >= 1) throw new DOMException("quota", "QuotaExceededError");
+        writes += 1; m.set(k, v);
+      },
+      get writes() { return writes; }
+    } as StorageLike & { writes: number };
+  };
+
+  const refuse = refusingStorage();
+  const refuseStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: refuse });
+  // The store's own construction does not write, so nothing is reported before a change.
+  assert("healthy-store-reports-no-write-failure-before-any-write",
+    refuseStore.storageWriteFailure() === null && refuseStore.storageRecovery() === null,
+    { wf: refuseStore.storageWriteFailure(), rec: refuseStore.storageRecovery() });
+
+  // The FIRST write succeeds, so it must stay silent: a false alarm is its own defect.
+  refuseStore.createRoom({ name: "P5 First Room" });
+  const afterFirst = refuse.getItem("nestory-v2");
+  assert("a-write-that-lands-reports-no-failure",
+    refuseStore.storageWriteFailure() === null && afterFirst !== null && afterFirst.includes("P5 First Room"),
+    { wf: refuseStore.storageWriteFailure(), persisted: afterFirst !== null });
+
+  // The SECOND write is refused. In memory it exists; in storage it must not, and the
+  // store must now say so. Before this slice, `storageWriteFailure()` did not exist and
+  // the rejection was swallowed by an empty `catch`.
+  const roomsBeforeRefusal = refuseStore.state.rooms.size;
+  refuseStore.createRoom({ name: "P5 Refused Room" });
+  const storedAfterRefusal = refuse.getItem("nestory-v2");
+  assert("a-refused-write-is-reported-not-swallowed",
+    refuseStore.storageWriteFailure() !== null
+      && refuseStore.state.rooms.size === roomsBeforeRefusal + 1     // memory advanced
+      && storedAfterRefusal === afterFirst                            // storage did not
+      && (storedAfterRefusal ?? "").includes("P5 Refused Room") === false,
+    { wf: refuseStore.storageWriteFailure(), storageUnchanged: storedAfterRefusal === afterFirst });
+
+  // The last SUCCESSFUL save is still intact and still loads. "Not saved" must never mean
+  // "what you had is gone" — a reboot on the same bytes must recover the first room.
+  const rebootAfterRefusal = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: { getItem: (k) => refuse.getItem(k), setItem: () => {} } });
+  assert("the-last-successful-save-survives-a-refusal",
+    rebootAfterRefusal.storageRecovery() === null
+      && [...rebootAfterRefusal.state.rooms.values()].some((r) => r.name === "P5 First Room")
+      && ![...rebootAfterRefusal.state.rooms.values()].some((r) => r.name === "P5 Refused Room"),
+    [...rebootAfterRefusal.state.rooms.values()].map((r) => r.name).slice(-3));
+
+  // `since` marks the FIRST unresolved refusal and must not be restamped by later ones:
+  // the exposure began with the earliest unsaved change, and moving the timestamp forward
+  // would understate how much work is at risk. Caught as a real defect during the walk —
+  // the first version of this code called `nowIso()` unconditionally.
+  const firstFailureSince = refuseStore.storageWriteFailure()?.since ?? null;
+  let tick = NOW;
+  const tickingRefuse = refusingStorage();
+  const tickingStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => (tick += 60_000), storage: tickingRefuse });
+  tickingStore.createRoom({ name: "T1" });                    // lands
+  tickingStore.createRoom({ name: "T2" });                    // refused -> since = t
+  const sinceAfterOne = tickingStore.storageWriteFailure()?.since ?? null;
+  tickingStore.createRoom({ name: "T3" });                    // refused -> must NOT restamp
+  tickingStore.createRoom({ name: "T4" });
+  const wfLater = tickingStore.storageWriteFailure();
+  // Read defensively: a mutant that returns null here must FAIL this assertion, not crash
+  // the section — a crash aborts the assertions that follow and hides what they would say.
+  assert("since-marks-the-first-refusal-not-the-latest",
+    wfLater !== null && sinceAfterOne !== null
+      && wfLater.since === sinceAfterOne && wfLater.unsavedChanges === 3,
+    { sinceAfterOne, later: wfLater });
+  assert("unsaved-changes-counts-every-refusal",
+    refuseStore.storageWriteFailure()?.unsavedChanges === 1 && (firstFailureSince?.length ?? 0) > 0,
+    refuseStore.storageWriteFailure());
+
+  // Only a write that ACTUALLY LANDS clears it. Not time passing, not a retry attempt.
+  const healingStorage = (): StorageLike & { allow: (v: boolean) => void } => {
+    const m = new Map<string, string>();
+    let refusing = false;
+    return {
+      getItem: (k) => m.get(k) ?? null,
+      setItem: (k, v) => { if (refusing && k === "nestory-v2") throw new DOMException("quota", "QuotaExceededError"); m.set(k, v); },
+      allow: (v: boolean) => { refusing = !v; }
+    } as StorageLike & { allow: (v: boolean) => void };
+  };
+  const heal = healingStorage();
+  const healStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: heal });
+  healStore.createRoom({ name: "Heal Base" });
+  heal.allow(false);
+  healStore.createRoom({ name: "Heal Refused" });
+  assert("healing-case-starts-in-failure", healStore.storageWriteFailure() !== null, healStore.storageWriteFailure());
+  heal.allow(true);
+  healStore.createRoom({ name: "Heal Retry" });
+  const healedRaw = heal.getItem("nestory-v2") ?? "";
+  assert("a-successful-write-clears-the-failure-and-saves-the-backlog",
+    healStore.storageWriteFailure() === null
+      && healedRaw.includes("Heal Refused")      // the earlier in-memory change is now saved
+      && healedRaw.includes("Heal Retry"),
+    { wf: healStore.storageWriteFailure(), hasBacklog: healedRaw.includes("Heal Refused") });
+
+  // The two states are INDEPENDENT. An unreadable ledger AND refused writes can hold at
+  // once, and neither may be reported as the other: a write failure must not claim the
+  // saved data is corrupt, and a recovery must not claim writes are being refused.
+  const bothStorage = (): StorageLike => {
+    const m = new Map<string, string>([["nestory-v2", "{ corrupt"]]);
+    return { getItem: (k) => m.get(k) ?? null,
+      setItem: (k, v) => { if (k === "nestory-v2") throw new DOMException("quota", "QuotaExceededError"); m.set(k, v); } };
+  };
+  const bothStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: bothStorage() });
+  assert("recovery-alone-does-not-set-a-write-failure",
+    bothStore.storageRecovery() !== null && bothStore.storageWriteFailure() === null,
+    { rec: Boolean(bothStore.storageRecovery()), wf: bothStore.storageWriteFailure() });
+  bothStore.createRoom({ name: "Both Room" });
+  assert("both-states-can-hold-at-once-and-stay-distinct",
+    bothStore.storageRecovery() !== null && bothStore.storageRecovery()!.savingBlocked === true
+      && bothStore.storageWriteFailure() !== null
+      // and the recovery's own fields are untouched by the write failure
+      && bothStore.storageRecovery()!.originalKey === "nestory-v2",
+    { savingBlocked: bothStore.storageRecovery()?.savingBlocked, wf: bothStore.storageWriteFailure() });
+  // Byte PRESENCE is not save PROVENANCE. In the compound state `persistKey` holds the
+  // bytes this build could NOT read, so counting them as a save would put "could not be
+  // read" and "exactly as it was at the last successful save" on the same screen. A
+  // reviewer reproduced that against this very fixture, which asserted the two states hold
+  // without ever inspecting what the copy would then claim.
+  assert("unreadable-bytes-do-not-count-as-a-successful-save",
+    bothStore.storageWriteFailure()?.hasStoredData === false,
+    bothStore.storageWriteFailure());
+
+  // A throwing `getItem` at the moment of failure cannot confirm anything is stored, so the
+  // defensive branch must report false rather than assume. Flipping it to `return true`
+  // passed the whole suite for a reviewer: the branch was reachable but untested. The
+  // understatement is the safe direction — it withholds a reassurance rather than inventing
+  // one — but "safe by accident" is not the same as locked.
+  const throwingReadRefusingWrite = (): StorageLike => ({
+    getItem: (k) => { if (k === "nestory-v2") throw new Error("read blocked"); return null; },
+    setItem: () => { throw new DOMException("quota", "QuotaExceededError"); }
+  });
+  const throwReadStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: throwingReadRefusingWrite() });
+  throwReadStore.createRoom({ name: "Throwing Read Room" });
+  assert("a-throwing-read-cannot-claim-stored-data-exists",
+    throwReadStore.storageWriteFailure() !== null
+      && throwReadStore.storageWriteFailure()?.hasStoredData === false,
+    throwReadStore.storageWriteFailure());
+
+  // A SEEDED BOOT STOPS BEING THE WHOLE STORY once a write of ours lands. `seededThisBoot` is a
+  // boot-time fact; the first landed write replaces the stored bytes with records this build
+  // wrote and can re-read, and those survive a reload. Disqualifying for the whole session told
+  // the person their saved data "cannot be read" and that "everything in this session will be
+  // gone" — both false, and understating what survived is the worse direction, because it pushes
+  // someone to re-enter work already on disk. A reviewer found this against a fully green suite:
+  // the 436 assertions covered six copy branches and could not distinguish this seventh state.
+  const seededThenLanded = (): StorageLike & { block: () => void } => {
+    const m = new Map<string, string>([["nestory-v2", "{ corrupt"]]);
+    let refusing = false;
+    return {
+      getItem: (k) => m.get(k) ?? null,
+      setItem: (k, v) => { if (refusing && k === "nestory-v2") throw new DOMException("quota", "QuotaExceededError"); m.set(k, v); },
+      block: () => { refusing = true; }
+    } as StorageLike & { block: () => void };
+  };
+  const stl = seededThenLanded();
+  const stlStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: stl });
+  assert("seeded-then-landed-probe-really-started-from-a-seeded-boot",
+    stlStore.storageRecovery()?.seededThisBoot === true,
+    stlStore.storageRecovery());
+  stlStore.createRoom({ name: "Landed After Recovery" });     // LANDS: the bytes are now ours
+  const stlRaw = stl.getItem("nestory-v2") ?? "";
+  const stlReadable = (() => { try { return Boolean(JSON.parse(stlRaw)); } catch { return false; } })();
+  stl.block();
+  stlStore.createRoom({ name: "Refused After Landing" });      // refused
+  assert("a-landed-write-after-a-seeded-boot-counts-as-a-successful-save",
+    stlReadable === true && stlRaw.includes("Landed After Recovery")
+      && stlStore.storageWriteFailure()?.hasStoredData === true,
+    { readable: stlReadable, wf: stlStore.storageWriteFailure() });
+  // And the ground truth the copy must not contradict: the landed work really does survive.
+  const stlReboot = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW,
+    storage: { getItem: (k) => stl.getItem(k), setItem: () => {} } });
+  const stlNames = [...stlReboot.state.rooms.values()].map((r) => r.name);
+  assert("the-landed-write-really-survives-and-only-the-refused-one-is-lost",
+    stlNames.includes("Landed After Recovery") && !stlNames.includes("Refused After Landing"),
+    stlNames.slice(-3));
+  // The mirror case stays correct: a seeded boot whose FIRST write is refused has landed
+  // nothing, so the unreadable-copy branch is still the true one there.
+  const stlNone = seededThenLanded();
+  const stlNoneStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: stlNone });
+  stlNone.block();
+  stlNoneStore.createRoom({ name: "Refused First" });
+  assert("a-seeded-boot-with-no-landed-write-still-reports-no-stored-data",
+    stlNoneStore.storageWriteFailure()?.hasStoredData === false,
+    stlNoneStore.storageWriteFailure());
+
+  // A REFUSAL ON THE EARLY-RETURN PATH MUST STILL BE COUNTED. `persist()` has two refusal
+  // paths: the storage rejection, and the protect-the-only-copy refusal that returns BEFORE
+  // attempting a write. Only the first ever touched `writeFailure`, so a disclosure trigger
+  // built on `unsavedChanges` was structurally blind to the second — under a standing block
+  // every silent write went unannounced, which a reviewer reproduced across five call sites.
+  // `writeRefusalCount()` counts both, which is what makes the trigger answer the question it
+  // claims to: was THIS change refused?
+  const blockedBoth = (): StorageLike => {
+    const m = new Map<string, string>([
+      ["nestory-v2-unreadable", "{ older original A"],
+      ["nestory-v2-unreadable-2", "{ older original B"],
+      ["nestory-v2", "{ this boot corruption"]]);
+    return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => { m.set(k, v); } };
+  };
+  const earlyReturnStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: blockedBoth() });
+  assert("early-return-probe-really-reached-a-standing-block-with-no-write-failure",
+    earlyReturnStore.storageRecovery()?.savingBlocked === true && earlyReturnStore.storageWriteFailure() === null,
+    { blocked: earlyReturnStore.storageRecovery()?.savingBlocked, wf: earlyReturnStore.storageWriteFailure() });
+  const erBefore = earlyReturnStore.writeRefusalCount();
+  earlyReturnStore.createRoom({ name: "Refused By Early Return" });
+  const erAfter = earlyReturnStore.writeRefusalCount();
+  assert("a-refusal-that-returns-before-writing-is-still-counted",
+    erAfter > erBefore,
+    `the early-return refusal must move the count: ${erBefore} -> ${erAfter}`);
+  // And a SECOND one, so the disclosure cannot degrade to first-only.
+  const erBefore2 = earlyReturnStore.writeRefusalCount();
+  earlyReturnStore.createRoom({ name: "Refused Again" });
+  assert("a-later-refusal-on-the-same-path-is-counted-too",
+    earlyReturnStore.writeRefusalCount() > erBefore2,
+    `a standing block must keep counting: ${erBefore2} -> ${earlyReturnStore.writeRefusalCount()}`);
+  // A READ must never move it, or the trigger would announce changes that never happened.
+  const erReadBefore = earlyReturnStore.writeRefusalCount();
+  earlyReturnStore.locate("passport"); earlyReturnStore.searchBelongings(""); earlyReturnStore.commitsView(5); earlyReturnStore.exportJson();
+  assert("reads-never-move-the-refusal-count",
+    earlyReturnStore.writeRefusalCount() === erReadBefore,
+    `reads moved the count: ${erReadBefore} -> ${earlyReturnStore.writeRefusalCount()}`);
+  // The quota path must count too, so the single trigger covers both.
+  const quotaOnly = (): StorageLike => {
+    const m = new Map<string, string>();
+    let n = 0;
+    return { getItem: (k) => m.get(k) ?? null,
+      setItem: (k, v) => { n += 1; if (n > 1 && k === "nestory-v2") throw new DOMException("quota", "QuotaExceededError"); m.set(k, v); } };
+  };
+  const qStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: quotaOnly() });
+  qStore.createRoom({ name: "Lands" });
+  const qBefore = qStore.writeRefusalCount();
+  qStore.createRoom({ name: "Refused By Quota" });
+  assert("a-quota-refusal-is-counted-on-the-same-counter",
+    qStore.writeRefusalCount() > qBefore && qStore.storageWriteFailure() !== null,
+    `${qBefore} -> ${qStore.writeRefusalCount()}`);
+
+  // `loadedFromStorage`'s own rung: a session that really LOADED the person's records and whose
+  // FIRST write is refused must not be told "nothing has been saved to this browser yet". Every
+  // other hasStoredData=true fixture routes through `ownSaveLanded`, so this rung had no test of
+  // its own in either direction — a reviewer deleted the assignment and the suite stayed green.
+  const savedThenReboot = (() => {
+    const m = new Map<string, string>();
+    let refusing = false;
+    const st: StorageLike = { getItem: (k) => m.get(k) ?? null,
+      setItem: (k, v) => { if (refusing && k === "nestory-v2") throw new DOMException("quota", "QuotaExceededError"); m.set(k, v); } };
+    const first = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: st });
+    first.createRoom({ name: "Saved In Session One" });          // lands, so the bytes are a real save
+    refusing = true;
+    return { st, second: createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: st }) };
+  })();
+  assert("reboot-probe-loaded-the-earlier-save-without-a-recovery",
+    savedThenReboot.second.storageRecovery() === null
+      && [...savedThenReboot.second.state.rooms.values()].some((r) => r.name === "Saved In Session One"),
+    [...savedThenReboot.second.state.rooms.values()].map((r) => r.name).slice(-3));
+  savedThenReboot.second.createRoom({ name: "First Write Of Session Two" });   // refused
+  assert("a-loaded-earlier-save-counts-even-before-this-session-writes",
+    savedThenReboot.second.storageWriteFailure()?.hasStoredData === true,
+    savedThenReboot.second.storageWriteFailure());
+
+  // And the negative rung: bytes that are NOT a save must never earn the reassurance. Byte
+  // presence was the old test, and the comment beside it already said presence is not
+  // provenance — an empty string, a foreign shape, and an empty records array all passed.
+  for (const [label, seed] of [["empty string", ""], ["foreign shape", '{"version":1,"items":[]}'],
+                               ["empty records", '{"version":2,"records":[]}']] as [string, string][]) {
+    const m = new Map<string, string>([["nestory-v2", seed]]);
+    const st: StorageLike = { getItem: (k) => m.get(k) ?? null,
+      setItem: () => { throw new DOMException("quota", "QuotaExceededError"); } };
+    const st2 = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: st });
+    st2.createRoom({ name: "Refused" });
+    assert(`bytes-that-are-not-a-save-earn-no-reassurance-${label.replace(/ /g, "-")}`,
+      st2.storageWriteFailure()?.hasStoredData === false,
+      { label, wf: st2.storageWriteFailure() });
+  }
+
+  // A LEFTOVER quarantine copy from an earlier boot also sets a recovery, but there the live
+  // key reads perfectly, the person's own records loaded, and writes can land this session.
+  // Disqualifying `hasStoredData` on "a recovery exists" told those people their data cannot
+  // be read while the recovery banner above said "Your current records loaded normally" - two
+  // banners contradicting each other about the same bytes. `seededThisBoot` discriminates.
+  const leftoverQuarantine = (): StorageLike & { allow: (v: boolean) => void } => {
+    const m = new Map<string, string>([["nestory-v2-unreadable", "{ an older original"]]);
+    let refusing = false;
+    return {
+      getItem: (k) => m.get(k) ?? null,
+      setItem: (k, v) => { if (refusing && k === "nestory-v2") throw new DOMException("quota", "QuotaExceededError"); m.set(k, v); },
+      allow: (v: boolean) => { refusing = !v; }
+    } as StorageLike & { allow: (v: boolean) => void };
+  };
+  const leftover = leftoverQuarantine();
+  const leftoverStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: leftover });
+  assert("leftover-quarantine-probe-reports-a-non-seeded-recovery",
+    leftoverStore.storageRecovery() !== null && leftoverStore.storageRecovery()?.seededThisBoot === false,
+    leftoverStore.storageRecovery());
+  leftoverStore.createRoom({ name: "Leftover Landed Room" });   // this write LANDS
+  const leftoverLanded = (leftover.getItem("nestory-v2") ?? "").includes("Leftover Landed Room");
+  leftover.allow(false);
+  leftoverStore.createRoom({ name: "Leftover Refused Room" });  // this one is refused
+  assert("a-readable-live-key-still-counts-as-a-successful-save",
+    leftoverLanded === true
+      && leftoverStore.storageWriteFailure() !== null
+      && leftoverStore.storageWriteFailure()?.hasStoredData === true,
+    { landed: leftoverLanded, wf: leftoverStore.storageWriteFailure() });
+
+  // A store with NO storage at all must not manufacture a failure — there is nothing to
+  // fail. `persist()` returns before the try block, and the accessor must stay null.
+  const noStorageStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: null });
+  noStorageStore.createRoom({ name: "No Storage Room" });
+  assert("no-storage-is-not-a-write-failure",
+    noStorageStore.storageWriteFailure() === null, noStorageStore.storageWriteFailure());
+
+  // A store that has refused EVERY write from the start has nothing saved, so the notice
+  // must not speak of a "last successful save". Found by probing, not by the mutants: the
+  // first version of the copy asserted a safety net that did not exist. `hasStoredData`
+  // carries the distinction, and both branches are locked — a single-branch lock would let
+  // the wrong sentence ship for whichever case it did not cover.
+  const neverSaved = (): StorageLike => {
+    const m = new Map<string, string>();
+    return { getItem: (k) => m.get(k) ?? null, setItem: () => { throw new DOMException("quota", "QuotaExceededError"); } };
+  };
+  const neverStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: neverSaved() });
+  neverStore.createRoom({ name: "Never Saved Room" });
+  assert("a-store-that-never-saved-reports-no-stored-data",
+    neverStore.storageWriteFailure()?.hasStoredData === false,
+    neverStore.storageWriteFailure());
+  // And the positive branch: once something HAS been saved, the flag says so.
+  const hadSave = healingStorage();
+  const hadSaveStore = createStore({ catalog, seedFactory: () => buildSeedRecords(NOW), now: () => NOW, storage: hadSave });
+  hadSaveStore.createRoom({ name: "Stored First" });
+  hadSave.allow(false);
+  hadSaveStore.createRoom({ name: "Refused After" });
+  assert("a-store-with-an-earlier-save-reports-stored-data",
+    hadSaveStore.storageWriteFailure()?.hasStoredData === true,
+    hadSaveStore.storageWriteFailure());
+
+
   // A dangling reference is shape-perfect, so only the semantics pass catches it.
   // This is the case that reproduced the fabricated "in the ." answer publicly.
   const danglingRaw = JSON.stringify({ version: 2, records: [
@@ -2710,6 +3061,912 @@ async function runBrowserSmoke(): Promise<void> {
     assert("recovery-probe-left-a-clean-own-store",
       await evalPage<boolean>(`window.nestory.store.storageRecovery() === null && window.nestory.mode === "own"`),
       "the probe must not leave a recovered store behind for later assertions");
+
+    // ------------------------------------------------ P5 in the DOM: a refused write must
+    // be DISCLOSED, not merely recorded. The store-level locks above prove the state is
+    // computed; they say nothing about whether the person is told. Five mutants survived
+    // the whole suite on state locks alone — the notice removed from the shell, the toast
+    // ignoring the failure, the heading replaced with the corruption heading, the
+    // "nothing earlier was lost" sentence replaced, and the count forced to singular.
+    // These run in the real browser against the real render path.
+    //
+    // Quota is filled for real, in the page, at progressively finer grains: a key
+    // REPLACEMENT only needs room for the size delta, so leaving even 500 bytes free lets
+    // the app's own write succeed and the probe would measure nothing.
+    const wfDom = await evalPage<{
+      quotaRefusesTinyWrite: boolean; failureRecorded: boolean; bannerPresent: boolean;
+      bannerText: string; toastWarned: boolean; toastDriverFound: boolean; storageUnchanged: boolean; hasStoredData: boolean;
+      role: string | null; sinceExpected: string | null;
+      recoveryBannerAbsent: boolean; itemInMemory: boolean; itemInStorage: boolean;
+    }>(`(() => {
+      const s = window.nestory.store;
+      // A healthy, readable store first, and one write that LANDS.
+      s.createRoom({ name: "P5 Dom Base" });
+      const lastGood = localStorage.getItem("nestory-v2-own") || "";
+      const grains = [1024*512, 1024*16, 1024, 64, 8];
+      for (let g = 0; g < grains.length; g++) {
+        try { for (let n = 0; n < 20000; n++) localStorage.setItem("quota-fill-dom-" + g + "-" + n, "x".repeat(grains[g])); } catch (e) {}
+      }
+      let tiny = false;
+      try { localStorage.setItem("quota-fill-dom-tiny", "12345678"); } catch (e) { tiny = true; }
+      try { localStorage.removeItem("quota-fill-dom-tiny"); } catch (e) {}
+      // Now a change that cannot be saved, made through the store the app renders from.
+      // The store notifies its subscriber, so THIS is the render that first discloses the
+      // failure - capture the live-region role here, before any further render. Reading it
+      // after another setView() would only ever see the downgraded value.
+      window.nestory.setView("home");
+      s.createRoom({ name: "P5 Dom Refused" });
+      const bFirst = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      const roleAtFirstDisclosure = bFirst ? bFirst.getAttribute("role") : null;
+      const b = bFirst;
+      const raw = localStorage.getItem("nestory-v2-own") || "";
+      const out = {
+        quotaRefusesTinyWrite: tiny,
+        failureRecorded: s.storageWriteFailure() !== null,
+        bannerPresent: Boolean(b && b.offsetParent !== null),
+        bannerText: b ? b.textContent.replace(/\\s+/g, " ").trim() : "",
+        role: roleAtFirstDisclosure,
+        sinceExpected: (() => {
+          const wf = s.storageWriteFailure();
+          if (!wf) return null;
+          const t = new Date(wf.since);
+          return Number.isNaN(t.getTime()) ? null : t.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+        })(),
+        toastWarned: false,
+        toastDriverFound: false,
+        hasStoredData: s.storageWriteFailure() ? s.storageWriteFailure().hasStoredData : false,
+        storageUnchanged: raw === lastGood,
+        recoveryBannerAbsent: !document.querySelector('[data-testid="storage-recovery-banner"]'),
+        itemInMemory: [...s.state.rooms.values()].some((r) => r.name === "P5 Dom Refused"),
+        itemInStorage: raw.indexOf("P5 Dom Refused") !== -1,
+      };
+      // A pure re-render with NOTHING changed must NOT re-announce - but only AFTER a frame
+      // has been painted. Within the same task the region deliberately stays assertive, so
+      // that a handler which renders twice (act() then close-the-modal) does not destroy the
+      // announcement before an AT can see it. Measured in the settled probe below.
+      // The toast is produced by act(), which only the apps own handlers call. Drive one.
+      // add-belonging is NOT usable here: verifys own-mode store has no container, so the
+      // handler bails at its "Add a container first." guard before act() is reached, and
+      // the probe would assert on a toast the app never had cause to produce. Confirming a
+      // container is a real write with no such precondition, so drive that instead.
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      const roomId2 = s.createRoom({ name: "P5 Toast Room" });
+      const contId = s.createContainer({ name: "P5 Toast Shelf", kind: "shelf", roomId: roomId2 });
+      window.nestory.setView("spaces");
+      window.nestory.openContainer(contId);
+      const confirmBtn = document.querySelector('[data-action="confirm-container"]');
+      out.toastDriverFound = Boolean(confirmBtn);
+      if (confirmBtn) confirmBtn.click();
+      // The toast is deferred to a microtask so its wording can be decided from the settled
+      // DOM; read it in the follow-up probe below, not here.
+      return out;
+    })()`);
+    await sleep(300);
+    const wfToast = await evalPage<{ toastWarned: boolean; toasts: string[] }>(`(() => ({
+      toasts: [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim()),
+      toastWarned: [...document.querySelectorAll(".toast")].some((t) => /NOT saved/i.test(t.textContent)),
+    }))()`);
+    // Now let a frame pass, then re-render with nothing changed: the region must downgrade.
+    await sleep(250);
+    const settledRole = await evalPage<{ afterFrame: string | null; afterPureRerender: string | null }>(`(() => {
+      const before = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      const afterFrame = before ? before.getAttribute("role") : null;
+      window.nestory.setView("home");
+      const b = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      return { afterFrame, afterPureRerender: b ? b.getAttribute("role") : null };
+    })()`);
+
+    // Honesty guard first: if the fill did not actually exhaust quota, everything below
+    // would go green while measuring nothing.
+    assert("dom-probe-really-reached-a-refused-write",
+      wfDom.quotaRefusesTinyWrite === true && wfDom.failureRecorded === true
+        && wfDom.itemInMemory === true && wfDom.itemInStorage === false && wfDom.storageUnchanged === true,
+      `the probe must reach a genuine refusal or the DOM locks prove nothing: ${JSON.stringify(wfDom).slice(0, 300)}`);
+    assert("write-failure-notice-is-rendered-in-the-shell", wfDom.bannerPresent === true,
+      "a refused write is recorded but never shown: the person is told nothing");
+    // Assertive on FIRST disclosure — that is news a screen-reader user must hear. But the
+    // banner is rebuilt by innerHTML on every render, so an unchanged state must NOT keep
+    // re-announcing: a reviewer showed it interrupting on every nav click and keystroke.
+    assert("write-failure-notice-is-announced-as-an-alert-when-it-is-news",
+      wfDom.role === "alert", wfDom.role);
+    assert("write-failure-notice-does-not-re-announce-an-unchanged-state",
+      settledRole.afterPureRerender === "status",
+      `after a painted frame, a pure re-render must downgrade the live region, got ${settledRole.afterPureRerender}`);
+    // And the announcement must SURVIVE the task it was made in. A handler that renders
+    // twice (act(), then again after closing the modal) used to consume the "is this news"
+    // mark on the first render, so the second rebuilt the banner as `status` and a genuinely
+    // new refusal was announced to nobody on the path most writes take.
+    //
+    // This MUST be measured through a DOUBLE-RENDERING handler. The earlier version read the
+    // role off a node whose last render was a single-render click — already news, already
+    // `alert`, with no intervening render — so synchronous marking passed it identically: a
+    // vacuous lock for the exact defect it named. `snapshot-submit` calls act() and then closes
+    // its modal and re-renders, which is the shape that broke.
+    const doubleRender = await evalPage<{ droveDoubleRender: boolean; countBefore: number | null; countAfter: number | null; roleAtEndOfTask: string | null }>(`(() => {
+      const s = window.nestory.store;
+      const c = s.containersView().find((x) => x.kind !== "box");
+      if (!c) return { droveDoubleRender: false, countBefore: null, countAfter: null, roleAtEndOfTask: null };
+      window.nestory.openContainer(c.id);
+      const wfBefore = s.storageWriteFailure();
+      const ta = document.getElementById("snapshot-text");
+      if (ta) ta.value = "double render probe";
+      const btn = document.querySelector('[data-action="snapshot-submit"]');
+      if (!btn) return { droveDoubleRender: false, countBefore: wfBefore ? wfBefore.unsavedChanges : null, countAfter: null, roleAtEndOfTask: null };
+      btn.click();   // act() renders, then the handler nulls ui.modal and renders AGAIN
+      const b = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      const wfAfter = s.storageWriteFailure();
+      return {
+        droveDoubleRender: true,
+        countBefore: wfBefore ? wfBefore.unsavedChanges : null,
+        countAfter: wfAfter ? wfAfter.unsavedChanges : null,
+        roleAtEndOfTask: b ? b.getAttribute("role") : null,
+      };
+    })()`);
+    assert("double-render-probe-really-advanced-the-count-through-a-two-render-handler",
+      doubleRender.droveDoubleRender === true
+        && doubleRender.countBefore !== null && doubleRender.countAfter !== null
+        && (doubleRender.countAfter as number) > (doubleRender.countBefore as number),
+      `the probe must make a NEW refusal via a handler that renders twice: ${JSON.stringify(doubleRender)}`);
+    assert("a-new-refusal-stays-assertive-for-the-whole-task-it-was-disclosed-in",
+      doubleRender.roleAtEndOfTask === "alert" && settledRole.afterFrame === "alert",
+      `the live region must still be assertive after a double-rendering handler, got ${doubleRender.roleAtEndOfTask}`);
+    assert("write-failure-notice-says-changes-are-not-being-saved",
+      /not being saved/i.test(wfDom.bannerText), wfDom.bannerText.slice(0, 160));
+    // The CAUSE must be named without implying the person did something. "saving is
+    // restricted in this window" is accurate but can be heard as an accusation - a reviewer
+    // flagged it - so private browsing is named plainly instead. Both halves locked: the
+    // browser is the subject, and the accusatory phrasing is gone.
+    assert("write-failure-notice-names-the-cause-without-blaming-the-person",
+      /Your browser refused to store them/i.test(wfDom.bannerText)
+        && /storage for this site is full/i.test(wfDom.bannerText)
+        && !/restricted in this window/i.test(wfDom.bannerText)
+        // Private browsing is NOT named: if setItem throws outright, chooseMode swallows it and
+        // reloads, so those people loop on the welcome screen and never see this banner. Naming
+        // a cause only the unreachable half of the audience has is a false explanation.
+        && !/private browsing/i.test(wfDom.bannerText),
+      wfDom.bannerText.slice(0, 300));
+    // `since` must be SHOWN, not merely computed. It was locked three times at store level
+    // while rendering nowhere — the computed-but-invisible failure this slice exists to cure,
+    // reproduced inside the slice itself. Asserted as a real clock time drawn from the state.
+    // Bound to the STATE's own value, not to a clock-shaped pattern: a hardcoded "09:99"
+    // satisfied the shape and passed the whole suite, which is the vacuous-lock failure this
+    // project keeps hitting. The expected string is derived in-page from `since` itself.
+    assert("write-failure-notice-shows-when-saving-stopped-working",
+      wfDom.sinceExpected !== null && (wfDom.sinceExpected as string).length > 0
+        && wfDom.bannerText.includes(`Saving stopped working at ${wfDom.sinceExpected}`)
+        && /anything you changed after that is affected/i.test(wfDom.bannerText),
+      `expected the notice to name ${wfDom.sinceExpected}: ${wfDom.bannerText.slice(0, 300)}`);
+    // The sentence that separates this from data loss. Replacing it passed the suite.
+    // Only correct because the probe above made a write that LANDED first, so there really
+    // is a last successful save to point at; asserted rather than assumed, because the
+    // other branch of this copy must not be tested by accident.
+    assert("dom-probe-has-an-earlier-successful-save-to-speak-of",
+      wfDom.hasStoredData === true,
+      "without a prior successful save the notice takes its other branch and this lock would test the wrong sentence");
+    assert("write-failure-notice-says-earlier-saved-data-is-intact",
+      /Nothing you saved earlier was lost or overwritten/i.test(wfDom.bannerText),
+      wfDom.bannerText.slice(0, 240));
+    assert("write-failure-notice-says-the-changes-go-on-reload",
+      /gone if you reload/i.test(wfDom.bannerText), wfDom.bannerText.slice(0, 240));
+    // A remedy that actually works without storage. Export needs no write.
+    assert("write-failure-notice-offers-a-remedy-that-needs-no-storage",
+      /Export JSON/i.test(wfDom.bannerText), wfDom.bannerText.slice(0, 240));
+    // And it must not PROMISE that the next write will succeed. `savingIsPossible()` already
+    // documents that a read-only probe cannot predict a throwing setItem, so "will save
+    // again" states as certain what the code concedes is unknowable — and the notice cannot
+    // re-check on its own, since persist() only runs on a mutation. Both halves asserted:
+    // conditional wording, and an honest admission that the notice stays up until then.
+    assert("write-failure-notice-does-not-promise-the-next-write-will-succeed",
+      !/will save again/i.test(wfDom.bannerText)
+        && /should save again/i.test(wfDom.bannerText)
+        && /cannot check on its own/i.test(wfDom.bannerText),
+      wfDom.bannerText.slice(0, 300));
+    // It must NOT borrow the other notice's heading: the saved data is readable here, and
+    // saying otherwise states a false cause — the exact defect P4 had to repair.
+    assert("write-failure-notice-does-not-claim-the-saved-data-is-unreadable",
+      !/could not be read/i.test(wfDom.bannerText) && wfDom.recoveryBannerAbsent === true,
+      wfDom.bannerText.slice(0, 240));
+    // The count is in the copy, and one refusal reads singular.
+    assert("write-failure-notice-counts-one-refusal-in-the-singular",
+      /The last change you made was not saved/i.test(wfDom.bannerText), wfDom.bannerText.slice(0, 160));
+    // And the immediate feedback at the moment of the action, not only the standing notice.
+    // Guarded: if the driving control was not found, the assertion below would pass or fail
+    // for the wrong reason, so the control's presence is asserted first.
+    assert("toast-probe-found-a-real-control-to-drive", wfDom.toastDriverFound === true,
+      "no confirm-container control was reachable, so the toast lock would prove nothing");
+    assert("a-refused-action-is-not-toasted-as-plain-success", wfToast.toastWarned === true,
+      `the toast confirmed the change while nothing was saved: ${JSON.stringify(wfToast.toasts)}`);
+
+    // Two refusals must read in the plural with the real number.
+    const wfPlural = await evalPage<{ count: number; text: string }>(`(() => {
+      window.nestory.store.createRoom({ name: "P5 Dom Refused 2" });
+      window.nestory.setView("home");
+      const b = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      const wf = window.nestory.store.storageWriteFailure();
+      return { count: wf ? wf.unsavedChanges : 0, text: b ? b.textContent.replace(/\\s+/g, " ").trim() : "" };
+    })()`);
+    assert("write-failure-notice-reports-the-real-number-of-unsaved-changes",
+      wfPlural.count >= 2 && new RegExp(`The last ${wfPlural.count} changes you made were not saved`, "i").test(wfPlural.text),
+      `count=${wfPlural.count}: ${wfPlural.text.slice(0, 200)}`);
+
+    // Freeing space and writing again must clear BOTH the state and the notice.
+    const wfCleared = await evalPage<{ failure: boolean; banner: boolean; backlogSaved: boolean }>(`(() => {
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill-dom-") === 0).forEach((k) => localStorage.removeItem(k));
+      window.nestory.store.createRoom({ name: "P5 Dom Retry" });
+      window.nestory.setView("home");
+      const raw = localStorage.getItem("nestory-v2-own") || "";
+      return {
+        failure: window.nestory.store.storageWriteFailure() !== null,
+        banner: Boolean(document.querySelector('[data-testid="storage-write-failure-banner"]')),
+        backlogSaved: raw.indexOf("P5 Dom Refused") !== -1 && raw.indexOf("P5 Dom Retry") !== -1,
+      };
+    })()`);
+    assert("write-failure-notice-clears-when-saving-works-again",
+      wfCleared.failure === false && wfCleared.banner === false && wfCleared.backlogSaved === true,
+      JSON.stringify(wfCleared));
+    // A healthy store must show no such notice at all: a false alarm is its own defect.
+    const wfHealthy = await evalPage<{ banner: boolean; failure: boolean }>(`(() => ({
+      banner: Boolean(document.querySelector('[data-testid="storage-write-failure-banner"]')),
+      failure: window.nestory.store.storageWriteFailure() !== null,
+    }))()`);
+    assert("healthy-store-shows-no-write-failure-notice",
+      wfHealthy.banner === false && wfHealthy.failure === false, JSON.stringify(wfHealthy));
+    // And no TOAST either. The lock above checks the banner and the store flag but never the
+    // toast, so a mutant that toasts "not saved" unconditionally passed it. A false alarm is
+    // its own defect: it teaches people to distrust a warning that is usually wrong.
+    const healthyToast = await evalPage<{ droveWrite: boolean; toasts: string[]; falseAlarm: boolean; landed: boolean }>(`(() => {
+      const s = window.nestory.store;
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      const before = (localStorage.getItem("nestory-v2-own") || "").length;
+      window.nestory.setView("setup");
+      const btn = document.querySelector('[data-action="setup-add-room"]');
+      if (!btn) return { droveWrite: false, toasts: [], falseAlarm: false, landed: false };
+      btn.click();
+      const after = (localStorage.getItem("nestory-v2-own") || "").length;
+      const toasts = [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim());
+      return {
+        droveWrite: true,
+        toasts,
+        falseAlarm: toasts.some((t) => /not saved|That change/i.test(t)),
+        landed: after !== before && s.storageWriteFailure() === null,
+      };
+    })()`);
+    await sleep(300);
+    const healthyToastSettled = await evalPage<{ toasts: string[]; falseAlarm: boolean }>(`(() => {
+      const toasts = [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim());
+      return { toasts, falseAlarm: toasts.some((t) => /not saved|That change/i.test(t)) };
+    })()`);
+    assert("healthy-toast-probe-really-landed-a-write",
+      healthyToast.droveWrite === true && healthyToast.landed === true,
+      `the probe must land a real write on a healthy store: ${JSON.stringify(healthyToast).slice(0, 240)}`);
+    assert("a-healthy-store-never-toasts-a-false-not-saved-alarm",
+      healthyToast.falseAlarm === false && healthyToastSettled.falseAlarm === false,
+      `a write that landed must not be reported as unsaved: ${JSON.stringify(healthyToastSettled.toasts)}`);
+
+    // THE OTHER COPY BRANCH, in the DOM. A store that never managed a save must not be
+    // told "what is already stored is exactly as it was at the last successful save" —
+    // there is no such save. Locking only the store flag left this vacuous: a mutant that
+    // made the notice ignore the flag passed the whole suite.
+    await evalPage(`(() => {
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill-dom-") === 0).forEach((k) => localStorage.removeItem(k));
+      localStorage.removeItem("nestory-v2-own");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const neverDom = await evalPage<{ hasStoredData: boolean | null; text: string; storedBytes: number; failure: boolean }>(`(() => {
+      const grains = [1024*512, 1024*16, 1024, 64, 8];
+      for (let g = 0; g < grains.length; g++) {
+        try { for (let n = 0; n < 20000; n++) localStorage.setItem("quota-fill-never-" + g + "-" + n, "x".repeat(grains[g])); } catch (e) {}
+      }
+      // The first write of this store's life, and it cannot land.
+      window.nestory.store.createRoom({ name: "Never Saved Dom Room" });
+      window.nestory.setView("home");
+      const b = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      const wf = window.nestory.store.storageWriteFailure();
+      return {
+        hasStoredData: wf ? wf.hasStoredData : null,
+        failure: wf !== null,
+        text: b ? b.textContent.replace(/\\s+/g, " ").trim() : "",
+        storedBytes: (localStorage.getItem("nestory-v2-own") || "").length,
+      };
+    })()`);
+    assert("never-saved-probe-really-has-nothing-stored",
+      neverDom.failure === true && neverDom.hasStoredData === false && neverDom.storedBytes === 0,
+      `the probe must reach a store with no save at all: ${JSON.stringify(neverDom).slice(0, 200)}`);
+    assert("never-saved-notice-does-not-promise-a-last-successful-save",
+      !/last successful save/i.test(neverDom.text) && !/Nothing you saved earlier/i.test(neverDom.text),
+      neverDom.text.slice(0, 240));
+    assert("never-saved-notice-says-nothing-has-been-saved-yet",
+      /Nothing has been saved to this browser yet/i.test(neverDom.text)
+        && /no earlier copy exists/i.test(neverDom.text),
+      neverDom.text.slice(0, 240));
+
+    // BOTH NOTICES, IN THE DOM. The store-level lock asserts both states can hold at once;
+    // it says nothing about whether both are SHOWN. A reviewer added
+    // `if (store.storageRecovery()) return "";` to the write-failure notice — suppressing it
+    // whenever a recovery is also disclosed — and the whole suite passed, while the source
+    // comment claimed "both can appear when both are true". Same DOM blindness that left
+    // five earlier UI mutants alive.
+    const bothDom = await evalPage<{
+      recoveryVisible: boolean; failureVisible: boolean; failureText: string; recoveryText: string;
+      hasStoredData: boolean | null; toastWarned: boolean; blockedOnly: boolean;
+    }>(`(() => {
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k));
+      // A corrupt live key with the FIRST quarantine slot FREE, so the writer can copy the
+      // original aside and persist() reaches its try block; the refusal then comes from
+      // quota rather than from the early return. With BOTH slots full the write never
+      // reaches the quota path at all - that state is savingBlocked only, probed above.
+      localStorage.setItem("nestory-v2-own", "{ this boot corruption");
+      return { recoveryVisible: false, failureVisible: false, failureText: "", recoveryText: "", hasStoredData: null, toastWarned: false, blockedOnly: false };
+    })()`);
+    void bothDom;
+    await evalPage(`location.reload()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    // FIRST, the savingBlocked-only state: `persist()` early-returns before its try block,
+    // so `savingBlocked` is true while `writeFailure` stays null. The toast must still warn.
+    // Dropping the savingBlocked leg of that check passed the suite for a reviewer.
+    await evalPage(`(() => {
+      // BOTH quarantine slots occupied by other originals, so the writer cannot secure the
+      // corrupt original anywhere and persist() takes its early return: savingBlocked true,
+      // writeFailure null. That is the leg being isolated here.
+      localStorage.setItem("nestory-v2-own-unreadable", "{ older original A");
+      localStorage.setItem("nestory-v2-own-unreadable-2", "{ older original B");
+      localStorage.setItem("nestory-v2-own", "{ this boot corruption");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const blockedOnly = await evalPage<{ savingBlocked: boolean | null; writeFailure: boolean; controlFound: boolean }>(`(() => {
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      const s = window.nestory.store;
+      const roomId = s.createRoom({ name: "Blocked Only Room" });
+      const contId = s.createContainer({ name: "Blocked Only Shelf", kind: "shelf", roomId });
+      window.nestory.openContainer(contId);
+      const btn = document.querySelector('[data-action="confirm-container"]');
+      if (btn) btn.click();
+      return {
+        savingBlocked: s.storageRecovery() ? s.storageRecovery().savingBlocked : null,
+        writeFailure: s.storageWriteFailure() !== null,
+        controlFound: Boolean(btn),
+      };
+    })()`);
+    await sleep(300);
+    const blockedToast = await evalPage<{ toastWarned: boolean; toasts: string[] }>(`(() => ({
+      toasts: [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim()),
+      toastWarned: [...document.querySelectorAll(".toast")].some((t) => /NOT saved/i.test(t.textContent)),
+    }))()`);
+    assert("blocked-only-probe-reached-saving-blocked-without-a-write-failure",
+      blockedOnly.savingBlocked === true && blockedOnly.writeFailure === false && blockedOnly.controlFound === true,
+      `the probe must isolate the savingBlocked leg or the toast lock below proves nothing: ${JSON.stringify(blockedOnly)}`);
+    assert("savingBlocked-alone-still-warns-in-the-toast", blockedToast.toastWarned === true,
+      `a write refused to protect the only copy was confirmed as plain success: ${JSON.stringify(blockedToast.toasts)}`);
+
+    // NOW add refused writes on top, so both states hold, and check both notices are shown.
+    // The blocked-only fixture above left BOTH slots full, which is exactly the state where
+    // persist() never reaches the quota path. Reset to one free slot before the compound case.
+    await evalPage(`(() => {
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k));
+      localStorage.removeItem("nestory-v2-own-unreadable");
+      localStorage.removeItem("nestory-v2-own-unreadable-2");
+      localStorage.setItem("nestory-v2-own", "{ this boot corruption");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const bothShown = await evalPage<{ recoveryVisible: boolean; failureVisible: boolean; failureText: string; hasStoredData: boolean | null }>(`(() => {
+      const grains = [1024*512, 1024*16, 1024, 64, 8];
+      for (let g = 0; g < grains.length; g++) {
+        try { for (let n = 0; n < 20000; n++) localStorage.setItem("quota-fill-both-" + g + "-" + n, "x".repeat(grains[g])); } catch (e) {}
+      }
+      window.nestory.store.createRoom({ name: "Both States Room" });
+      window.nestory.setView("home");
+      window.scrollTo(0, 0);
+      const rec = document.querySelector('[data-testid="storage-recovery-banner"]');
+      const fail = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      const wf = window.nestory.store.storageWriteFailure();
+      return {
+        recoveryVisible: Boolean(rec && rec.offsetParent !== null),
+        failureVisible: Boolean(fail && fail.offsetParent !== null),
+        failureText: fail ? fail.textContent.replace(/\\s+/g, " ").trim() : "",
+        hasStoredData: wf ? wf.hasStoredData : null,
+      };
+    })()`);
+    assert("both-notices-are-shown-when-both-states-hold",
+      bothShown.recoveryVisible === true && bothShown.failureVisible === true,
+      JSON.stringify(bothShown).slice(0, 200));
+    // And the write-failure copy must not contradict the recovery notice above it in EITHER
+    // direction: the stored bytes exist (so "nothing has been saved yet" is false) but are
+    // unreadable (so "exactly as it was at the last successful save" is false too).
+    assert("compound-state-copy-claims-neither-a-good-save-nor-an-empty-store",
+      bothShown.hasStoredData === false
+        && !/last successful save/i.test(bothShown.failureText)
+        && !/Nothing has been saved to this browser yet/i.test(bothShown.failureText)
+        && /cannot read it/i.test(bothShown.failureText),
+      bothShown.failureText.slice(0, 260));
+
+    // THE TOAST'S DIRECTION MUST BE TRUE, IN BOTH DIRECTIONS. The notice sits behind a fixed
+    // z-index-100 scrim while a modal is open, so "See the notice above" would point at
+    // something unreadable; the toast itself is at z-index 200 and stays legible.
+    //
+    // But `ui.modal` at act() time is the WRONG test, and a single-direction lock hid that.
+    // The form-submit handlers (`snapshot-submit`, `add-belonging-submit`) call act() with the
+    // modal open and then close it and re-render immediately, so the toast told the person to
+    // close something already gone while the notice was on screen and unoccluded. Only
+    // `confirm-container` genuinely leaves the modal open - which is exactly why a lock that
+    // drove only that control passed. Both arms are asserted here.
+    const modalKeeps = await evalPage<{ drove: boolean; modalStillOpen: boolean }>(`(() => {
+      const s = window.nestory.store;
+      const roomId = s.createRoom({ name: "Modal Keep Room" });
+      const contId = s.createContainer({ name: "Modal Keep Shelf", kind: "shelf", roomId });
+      window.nestory.openContainer(contId);
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      const btn = document.querySelector('.modal [data-action="confirm-container"]');
+      if (btn) btn.click();
+      return { drove: Boolean(btn), modalStillOpen: Boolean(document.querySelector(".modal-overlay")) };
+    })()`);
+    await sleep(300);
+    const modalKeepsToast = await evalPage<{ toasts: string[]; saysClose: boolean; saysAbove: boolean; overlay: boolean }>(`(() => ({
+      toasts: [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim()),
+      saysClose: [...document.querySelectorAll(".toast")].some((t) => /Close this to see why/i.test(t.textContent)),
+      saysAbove: [...document.querySelectorAll(".toast")].some((t) => /See the notice above/i.test(t.textContent)),
+      overlay: Boolean(document.querySelector(".modal-overlay")),
+    }))()`);
+    assert("modal-keep-probe-really-left-the-modal-open",
+      modalKeeps.drove === true && modalKeeps.modalStillOpen === true && modalKeepsToast.overlay === true,
+      `the probe must act with a modal that STAYS open: ${JSON.stringify({ ...modalKeeps, ...modalKeepsToast }).slice(0, 240)}`);
+    assert("toast-says-close-this-when-a-modal-really-is-covering-the-notice",
+      modalKeepsToast.saysClose === true && modalKeepsToast.saysAbove === false,
+      `with the modal still open the toast must not say "above": ${JSON.stringify(modalKeepsToast.toasts)}`);
+
+    // THE OTHER ARM: a handler that CLOSES the modal must not say "Close this".
+    const modalCloses = await evalPage<{ drove: boolean; modalOpenAtAct: boolean }>(`(() => {
+      const s = window.nestory.store;
+      const c = s.containersView().find((x) => x.kind !== "box");
+      window.nestory.openContainer(c.id);
+      const modalOpenAtAct = Boolean(window.nestory.ui.modal);
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      const ta = document.getElementById("snapshot-text");
+      if (ta) ta.value = "settled probe text";
+      const btn = document.querySelector('[data-action="snapshot-submit"]');
+      if (btn) btn.click();
+      return { drove: Boolean(btn), modalOpenAtAct };
+    })()`);
+    await sleep(300);
+    const modalClosesToast = await evalPage<{ toasts: string[]; saysClose: boolean; saysAbove: boolean; overlay: boolean; bannerVisible: boolean }>(`(() => ({
+      toasts: [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim()),
+      saysClose: [...document.querySelectorAll(".toast")].some((t) => /Close this to see why/i.test(t.textContent)),
+      saysAbove: [...document.querySelectorAll(".toast")].some((t) => /See the notice above/i.test(t.textContent)),
+      overlay: Boolean(document.querySelector(".modal-overlay")),
+      bannerVisible: (() => { const b = document.querySelector('[data-testid="storage-write-failure-banner"]'); return Boolean(b && b.offsetParent !== null); })(),
+    }))()`);
+    assert("modal-close-probe-really-closed-the-modal-after-acting",
+      modalCloses.drove === true && modalCloses.modalOpenAtAct === true
+        && modalClosesToast.overlay === false && modalClosesToast.bannerVisible === true,
+      `the probe must act inside a modal that then CLOSES, leaving the notice visible: ${JSON.stringify({ ...modalCloses, ...modalClosesToast }).slice(0, 260)}`);
+    assert("toast-does-not-say-close-this-when-no-modal-is-open",
+      modalClosesToast.saysAbove === true && modalClosesToast.saysClose === false,
+      `the modal closed and the notice is visible, so the toast must point at it: ${JSON.stringify(modalClosesToast.toasts)}`);
+
+    // EVERY FAILURE TOAST MUST BE AUDIBLE. `toast()` now derives its live-region urgency from
+    // the leading "⚠", so a failure message WITHOUT that prefix is announced politely and can
+    // be missed entirely by a screen-reader user. Two identical image-read failures differed
+    // only by the prefix — one audible, one not — and a DOM probe cannot reach either without a
+    // real file upload, so the invariant is asserted over the SOURCE instead. This is a static
+    // check by necessity, and it is stated as such rather than dressed up as a behavioural one.
+    const appSource = await readFile(new URL("./app.ts", import.meta.url), "utf8");
+    const unprefixedFailureToasts = [...appSource.matchAll(/toast\("([^"\u26a0][^"]*)"\)/g)]
+      .map((m) => m[1] ?? "")
+      // A failure is what the person could not do or must do first. Confirmations of work that
+      // actually happened legitimately stay polite.
+      .filter((t) => /^(Could not|Cannot|Add |Accept |Describe |Type |Product name)/.test(t));
+    assert("every-refusal-toast-carries-the-warning-prefix-that-makes-it-audible",
+      unprefixedFailureToasts.length === 0,
+      `these refusal messages would be announced politely and can be missed: ${JSON.stringify(unprefixedFailureToasts)}`);
+
+    // A READ MUST NOT REPORT A WRITE. `act()` also wraps `ask()`, whose locate /
+    // which-container / container-contents / attention / unpack branches never write. The
+    // first version of the silent-write disclosure used `okMsg === null` as its test for "a
+    // silent write", so it fired on questions — and because the failure only clears on a
+    // landed write, EVERY question for the rest of the session reported a change the person
+    // never made. Announcing a write that never happened is the same dishonesty as hiding one
+    // that did, and it went unnoticed because nothing in this suite drove `ask` under a
+    // standing failure. It does now, through the real control.
+    const askUnderFailure = await evalPage<{ failureStanding: boolean; askRan: boolean; toasts: string[]; claimsAChange: boolean; answered: boolean }>(`(() => {
+      const s = window.nestory.store;
+      // Establish a standing refusal first, via a real mutation.
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k));
+      const roomId = s.createRoom({ name: "Ask Probe Room" });
+      const contId = s.createContainer({ name: "Ask Probe Shelf", kind: "shelf", roomId });
+      // A belonging too: the control case below drives the item-state select, which only
+      // exists inside an item modal, which needs an item.
+      s.createBelonging({ name: "Ask Probe Passport", kinds: ["passport"], defaultHome: { type: "container", id: contId } });
+      const g = [1024*512, 1024*16, 1024, 64, 8];
+      for (let i = 0; i < g.length; i++) { try { for (let n = 0; n < 20000; n++) localStorage.setItem("quota-fill-ask-" + i + "-" + n, "x".repeat(g[i])); } catch (e) {} }
+      s.createRoom({ name: "Ask Probe Refused" });
+      const failureStanding = s.storageWriteFailure() !== null;
+      // Now ASK a question through the app's own control, and clear prior toasts first.
+      window.nestory.setView("ask");
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      const input = document.getElementById("ask-input");
+      const btn = document.querySelector('[data-action="ask-send"]');
+      if (!input || !btn) return { failureStanding, askRan: false, toasts: [], claimsAChange: false, answered: false };
+      input.value = "where is my passport";
+      btn.click();
+      const toasts = [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim());
+      return {
+        failureStanding,
+        askRan: true,
+        toasts,
+        // The defect signature: a read producing a "not saved" / "that change" claim.
+        claimsAChange: toasts.some((t) => /not saved|That change/i.test(t)),
+        answered: window.nestory.ui.askLog.length > 0,
+      };
+    })()`);
+    await sleep(400);
+    const askSettled = await evalPage<{ toasts: string[]; claimsAChange: boolean }>(`(() => {
+      const toasts = [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim());
+      return { toasts, claimsAChange: toasts.some((t) => /not saved|That change/i.test(t)) };
+    })()`);
+    assert("ask-probe-really-asked-under-a-standing-failure",
+      askUnderFailure.failureStanding === true && askUnderFailure.askRan === true && askUnderFailure.answered === true,
+      `the probe must ask a real question while a refusal stands: ${JSON.stringify(askUnderFailure).slice(0, 260)}`);
+    assert("a-read-does-not-report-a-write-that-never-happened",
+      askUnderFailure.claimsAChange === false && askSettled.claimsAChange === false,
+      `asking a question must not claim a change: ${JSON.stringify(askSettled.toasts)}`);
+    // THE KIT BRANCH IS A WRITE. `ask()` is not purely a read: its kit branch reaches
+    // `start_operation` -> `appendCommit()` -> `persist()`, a real commit to the Place Graph.
+    // A reviewer found the reply saying "Started the gym kit" in the past tense while the write
+    // had been refused and nothing said so — and found it against a comment of mine asserting
+    // ask() never writes. Hand-tagging mutating callers is what drifted; the trigger now
+    // measures the refusal count across the call, so this case needs no tag and cannot be
+    // missed by classification. Driven through the real Ask composer.
+    const kitAsk = await evalPage<{ asked: boolean; countBefore: number | null; countAfter: number | null; replyText: string }>(`(() => {
+      const s = window.nestory.store;
+      const before = s.storageWriteFailure();
+      window.nestory.setView("ask");
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      const input = document.getElementById("ask-input");
+      const btn = document.querySelector('[data-action="ask-send"]');
+      if (!input || !btn) return { asked: false, countBefore: null, countAfter: null, replyText: "" };
+      input.value = "get my gym kit ready";
+      btn.click();
+      const after = s.storageWriteFailure();
+      const log = window.nestory.ui.askLog;
+      return { asked: true,
+               countBefore: before ? before.unsavedChanges : 0,
+               countAfter: after ? after.unsavedChanges : 0,
+               replyText: log.length ? String(log[log.length - 1].text || "") : "" };
+    })()`);
+    await sleep(400);
+    const kitToast = await evalPage<{ warned: boolean; toasts: string[] }>(`(() => ({
+      toasts: [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim()),
+      warned: [...document.querySelectorAll(".toast")].some((t) => /not saved/i.test(t.textContent || "")),
+    }))()`);
+    assert("kit-ask-probe-really-attempted-a-write-that-was-refused",
+      kitAsk.asked === true && kitAsk.countAfter !== null && kitAsk.countBefore !== null
+        && (kitAsk.countAfter as number) > (kitAsk.countBefore as number),
+      `the kit branch must attempt a real write and be refused: ${JSON.stringify(kitAsk).slice(0, 240)}`);
+    assert("a-refused-write-inside-ask-is-not-reported-as-done",
+      kitToast.warned === true,
+      `the reply said the kit was started while the write was refused, and nothing said so: ${JSON.stringify(kitToast.toasts)}`);
+
+    // The control case, same session: a real silent WRITE still discloses.
+    const silentStillSpeaks = await evalPage<{ drove: boolean; why?: string; items?: number; failureStanding?: boolean }>(`(() => {
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      const item = window.nestory.store.searchBelongings("")[0];
+      if (!item) return { drove: false, why: "no belonging exists in this store" };
+      window.nestory.openItem(item.id);
+      const sel = document.querySelector('[data-action="item-state"]');
+      if (!sel) return { drove: false, why: "no item-state select in the item modal",
+        items: window.nestory.store.searchBelongings("").length,
+        failureStanding: window.nestory.store.storageWriteFailure() !== null };
+      const next = [...sel.options].map((o) => o.value).find((v) => v !== sel.value);
+      sel.value = next;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      return { drove: true };
+    })()`);
+    await sleep(400);
+    const silentSpoke = await evalPage<{ warned: boolean; toasts: string[] }>(`(() => ({
+      toasts: [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim()),
+      warned: [...document.querySelectorAll(".toast")].some((t) => /not saved/i.test(t.textContent || "")),
+    }))()`);
+    assert("silencing-reads-did-not-silence-refused-silent-writes",
+      silentStillSpeaks.drove === true && silentSpoke.warned === true,
+      `a refused select-driven write must still speak: ${JSON.stringify({ ...silentStillSpeaks, ...silentSpoke })}`);
+    await evalPage(`(() => { Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k)); })()`);
+
+    // THE LEFTOVER-RECOVERY STATE, IN THE DOM. A quarantine copy from an EARLIER boot sets a
+    // recovery while the live key reads perfectly and the person's records load. Keying the
+    // copy on "a recovery exists" told them their saved data cannot be read while the recovery
+    // banner directly above said "Your current records loaded normally" - two banners
+    // contradicting each other about the same bytes, and a false reason to reach for a
+    // destructive repair. The store-level flag was locked; the rendered COPY was not, which is
+    // the third time in this slice a state lock left a disclosure unchecked.
+    const leftoverDom = await evalPage<{ recoverySaysLoadedNormally: boolean; failureText: string; hasStoredData: boolean | null; liveKeyReadable: boolean; seeded: boolean | null }>(`(() => {
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k));
+      localStorage.removeItem("nestory-v2-own-unreadable-2");
+      // An earlier boot's quarantine copy, and a HEALTHY live key holding real records.
+      localStorage.setItem("nestory-v2-own-unreadable", "{ an older original");
+      localStorage.removeItem("nestory-v2-own");
+      location.reload();
+      return { pending: true };
+    })()`);
+    void leftoverDom;
+    await sleep(900);
+    await waitForApp();
+    const leftoverShown = await evalPage<{ recoverySaysLoadedNormally: boolean; failureText: string; hasStoredData: boolean | null; liveKeyReadable: boolean; seeded: boolean | null }>(`(() => {
+      const s = window.nestory.store;
+      // Land a write so the live key holds the person's own records and parses.
+      const roomId = s.createRoom({ name: "Leftover Dom Room" });
+      s.createContainer({ name: "Leftover Dom Shelf", kind: "shelf", roomId });
+      let readable = false;
+      try { readable = Boolean(JSON.parse(localStorage.getItem("nestory-v2-own") || "null")); } catch (e) { readable = false; }
+      const g = [1024*512, 1024*16, 1024, 64, 8];
+      for (let i = 0; i < g.length; i++) { try { for (let n = 0; n < 20000; n++) localStorage.setItem("quota-fill-leftover-" + i + "-" + n, "x".repeat(g[i])); } catch (e) {} }
+      s.createRoom({ name: "Leftover Dom Refused" });
+      window.nestory.setView("home");
+      const rec = document.querySelector('[data-testid="storage-recovery-banner"]');
+      const fail = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      const wf = s.storageWriteFailure();
+      return {
+        recoverySaysLoadedNormally: rec ? /loaded normally/i.test(rec.textContent) : false,
+        failureText: fail ? fail.textContent.replace(/\\s+/g, " ").trim() : "",
+        hasStoredData: wf ? wf.hasStoredData : null,
+        liveKeyReadable: readable,
+        seeded: s.storageRecovery() ? s.storageRecovery().seededThisBoot : null,
+      };
+    })()`);
+    assert("leftover-dom-probe-has-a-readable-live-key-and-a-non-seeded-recovery",
+      leftoverShown.liveKeyReadable === true && leftoverShown.seeded === false
+        && leftoverShown.recoverySaysLoadedNormally === true && leftoverShown.failureText.length > 0,
+      `the probe must reach a leftover recovery over readable data: ${JSON.stringify(leftoverShown).slice(0, 260)}`);
+    assert("leftover-recovery-notice-does-not-call-readable-saved-data-unreadable",
+      leftoverShown.hasStoredData === true
+        && !/cannot read it/i.test(leftoverShown.failureText)
+        && /last successful save/i.test(leftoverShown.failureText),
+      leftoverShown.failureText.slice(0, 300));
+
+    // THE SEVENTH STATE, IN THE DOM. A seeded boot whose write then LANDS must not be told the
+    // stored copy is unreadable or that everything will be gone: the landed work survives. The
+    // store flag is locked above, but a mutant that made the notice re-derive from
+    // `seededThisBoot` alone passed the whole suite — the store-only lock could not see the copy.
+    await evalPage(`(() => {
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k));
+      localStorage.removeItem("nestory-v2-own-unreadable");
+      localStorage.removeItem("nestory-v2-own-unreadable-2");
+      localStorage.setItem("nestory-v2-own", "{ this boot corruption");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const seededLandedDom = await evalPage<{ seeded: boolean | null; landedInStorage: boolean; hasStoredData: boolean | null; text: string }>(`(() => {
+      const s = window.nestory.store;
+      const seeded = s.storageRecovery() ? s.storageRecovery().seededThisBoot : null;
+      s.createRoom({ name: "Landed After Recovery" });        // LANDS: bytes are now ours
+      let landed = false;
+      try { landed = String(localStorage.getItem("nestory-v2-own") || "").indexOf("Landed After Recovery") !== -1; } catch (e) {}
+      const g = [1024*512, 1024*16, 1024, 64, 8];
+      for (let i = 0; i < g.length; i++) { try { for (let n = 0; n < 20000; n++) localStorage.setItem("quota-fill-seeded-" + i + "-" + n, "x".repeat(g[i])); } catch (e) {} }
+      s.createRoom({ name: "Refused After Landing" });        // refused
+      window.nestory.setView("home");
+      const b = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      const wf = s.storageWriteFailure();
+      return { seeded, landedInStorage: landed, hasStoredData: wf ? wf.hasStoredData : null,
+               text: b ? b.textContent.replace(/\\s+/g, " ").trim() : "" };
+    })()`);
+    assert("seeded-then-landed-dom-probe-really-landed-a-write-after-a-seeded-boot",
+      seededLandedDom.seeded === true && seededLandedDom.landedInStorage === true
+        && seededLandedDom.text.length > 0,
+      `the probe must land a write after a seeded boot: ${JSON.stringify(seededLandedDom).slice(0, 240)}`);
+    assert("after-a-landed-write-the-notice-does-not-call-the-stored-copy-unreadable",
+      seededLandedDom.hasStoredData === true
+        && !/cannot read it/i.test(seededLandedDom.text)
+        && !/Everything in this session/i.test(seededLandedDom.text)
+        && /last successful save/i.test(seededLandedDom.text),
+      seededLandedDom.text.slice(0, 320));
+    await evalPage(`(() => { Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k)); localStorage.removeItem("nestory-v2-own"); location.reload(); })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    await evalPage(`(() => { Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k)); localStorage.removeItem("nestory-v2-own-unreadable"); localStorage.removeItem("nestory-v2-own"); location.reload(); })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+
+    // THE TOAST IS ITS OWN ANNOUNCEMENT CHANNEL. A review measured it carrying no ARIA at
+    // all - plain generic/StaticText in the a11y tree - so wherever the banner's assertive
+    // moment was missed, nothing told a screen-reader user anything. A warning interrupts;
+    // an ordinary confirmation stays polite.
+    const writeFailureToastAria = await evalPage<{ warnRole: string | null; warnLive: string | null; plainRole: string | null; plainLive: string | null; warnText: string; plainText: string }>(`(() => {
+      const s = window.nestory.store;
+      const read = () => {
+        const t = document.querySelector(".toast");
+        return { role: t ? t.getAttribute("role") : null, live: t ? t.getAttribute("aria-live") : null, text: t ? t.textContent.trim() : "" };
+      };
+      // Do not inherit quota state from earlier probes: establish it here. A landed write
+      // first (so a store exists at all), then fill, then a refusal.
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k));
+      const roomId = s.createRoom({ name: "Aria Base Room" });
+      const contId = s.createContainer({ name: "Aria Shelf", kind: "shelf", roomId });
+      s.createBelonging({ name: "Aria Item", kinds: ["misc"], defaultHome: { type: "container", id: contId } });
+      const g = [1024*512, 1024*16, 1024, 64, 8];
+      for (let i = 0; i < g.length; i++) { try { for (let n = 0; n < 20000; n++) localStorage.setItem("quota-fill-aria-" + i + "-" + n, "x".repeat(g[i])); } catch (e) {} }
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      // Drive a real control: calling s.createRoom() directly bypasses act(), which is what
+      // produces the toast, so the probe would read an empty toast and blame the product.
+      window.nestory.setView("setup");
+      const btn = document.querySelector('[data-action="setup-add-room"]');
+      if (btn) btn.click();
+      return { pending: true, droveControl: Boolean(btn) };
+    })()`);
+    void writeFailureToastAria;
+    await sleep(300);
+    const writeFailureToastAriaWarn = await evalPage<{ role: string | null; live: string | null; text: string }>(`(() => {
+      const t = document.querySelector(".toast");
+      return { role: t ? t.getAttribute("role") : null, live: t ? t.getAttribute("aria-live") : null, text: t ? t.textContent.trim() : "" };
+    })()`);
+    assert("aria-probe-drove-a-real-control-and-got-a-toast",
+      writeFailureToastAriaWarn.text.length > 0,
+      `the probe must produce a real toast via act(), got: ${JSON.stringify(writeFailureToastAriaWarn)}`);
+    assert("a-not-saved-toast-is-an-assertive-live-region",
+      writeFailureToastAriaWarn.role === "alert" && writeFailureToastAriaWarn.live === "assertive" && /not saved/i.test(writeFailureToastAriaWarn.text),
+      JSON.stringify(writeFailureToastAriaWarn));
+    // And a SILENT write - the select-driven changes that pass okMsg === null - must still
+    // speak when refused. The select shows the new value; without a toast nothing says it
+    // will not survive a reload. Driven through the REAL select and a real change event, not
+    // by calling the store method, which would bypass act() and prove nothing.
+    const silentWrite = await evalPage<{ droveSelect: boolean; itemOpened: boolean }>(`(() => {
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      const s = window.nestory.store;
+      const item = s.searchBelongings("")[0];
+      if (!item) return { droveSelect: false, itemOpened: false };
+      window.nestory.openItem(item.id);
+      const sel = document.querySelector('[data-action="item-state"]');
+      if (!sel) return { droveSelect: false, itemOpened: true };
+      const next = [...sel.options].map((o) => o.value).find((v) => v !== sel.value);
+      sel.value = next;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      return { droveSelect: true, itemOpened: true };
+    })()`);
+    await sleep(300);
+    const silentToast = await evalPage<{ toasts: string[]; warned: boolean; role: string | null }>(`(() => {
+      const t = document.querySelector(".toast");
+      return {
+        toasts: [...document.querySelectorAll(".toast")].map((x) => x.textContent.trim()),
+        warned: [...document.querySelectorAll(".toast")].some((x) => /not saved/i.test(x.textContent)),
+        role: t ? t.getAttribute("role") : null,
+      };
+    })()`);
+    assert("silent-write-probe-drove-the-real-select",
+      silentWrite.droveSelect === true,
+      `the probe must drive the real item-state select: ${JSON.stringify(silentWrite)}`);
+    assert("a-refused-silent-write-still-says-it-was-not-saved",
+      silentToast.warned === true && silentToast.role === "alert",
+      `a select-driven change that was refused must not pass in silence: ${JSON.stringify(silentToast)}`);
+
+    // A SECOND EPISODE MUST BE ANNOUNCED AGAIN. fail -> heal -> fail: the new refusal is
+    // genuinely new disclosure even when its count coincides with the previous episode's.
+    // Deleting the `announcedUnsavedChanges = 0` reset is type-clean and passed the whole
+    // suite, while behaviourally rendering the second episode as `status` - so a
+    // screen-reader user is told about the first loss and never about the second.
+    const secondEpisode = await evalPage<{ firstRole: string | null; firstCount: number | null; healed: boolean; secondCount: number | null; secondRole: string | null }>(`(() => {
+      const s = window.nestory.store;
+      const fill = () => { const g = [1024*512, 1024*16, 1024, 64, 8];
+        for (let i = 0; i < g.length; i++) { try { for (let n = 0; n < 20000; n++) localStorage.setItem("quota-fill-episode-" + i + "-" + n, "x".repeat(g[i])); } catch (e) {} } };
+      const free = () => Object.keys(localStorage).filter((k) => k.indexOf("quota-fill-episode-") === 0).forEach((k) => localStorage.removeItem(k));
+      // Earlier probes in this section leave a standing failure and their own filler keys.
+      // Clear EVERYTHING quota-fill-prefixed and land a write first, so this probe genuinely starts
+      // from "saving works" - otherwise the heal below cannot happen and the counts carry
+      // over from a previous episode (measured: secondCount 9 instead of 1).
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k));
+      free();
+      s.createRoom({ name: "Episode Base" });
+      fill();
+      s.createRoom({ name: "Episode One Refused" });
+      window.nestory.setView("home");
+      const b1 = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      const firstRole = b1 ? b1.getAttribute("role") : null;
+      const wf1 = window.nestory.store.storageWriteFailure();
+      return { firstRole, firstCount: wf1 ? wf1.unsavedChanges : null, healed: false, secondCount: null, secondRole: null };
+    })()`);
+    await sleep(250);
+    const secondEpisodeOut = await evalPage<{ healed: boolean; secondCount: number | null; secondRole: string | null }>(`(() => {
+      const s = window.nestory.store;
+      // HEAL: free the space and let a write land, which must clear the notice entirely.
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill-episode-") === 0).forEach((k) => localStorage.removeItem(k));
+      s.createRoom({ name: "Episode Healed" });
+      window.nestory.setView("home");
+      const healed = window.nestory.store.storageWriteFailure() === null
+        && !document.querySelector('[data-testid="storage-write-failure-banner"]');
+      // FAIL AGAIN: a brand-new episode, whose count restarts at 1 just like the first.
+      const g = [1024*512, 1024*16, 1024, 64, 8];
+      for (let i = 0; i < g.length; i++) { try { for (let n = 0; n < 20000; n++) localStorage.setItem("quota-fill-episode-" + i + "-" + n, "x".repeat(g[i])); } catch (e) {} }
+      s.createRoom({ name: "Episode Two Refused" });
+      window.nestory.setView("home");
+      const b = document.querySelector('[data-testid="storage-write-failure-banner"]');
+      const wf = window.nestory.store.storageWriteFailure();
+      return { healed, secondCount: wf ? wf.unsavedChanges : null, secondRole: b ? b.getAttribute("role") : null };
+    })()`);
+    assert("second-episode-probe-really-healed-in-between",
+      secondEpisode.firstRole === "alert" && secondEpisode.firstCount === 1
+        && secondEpisodeOut.healed === true && secondEpisodeOut.secondCount === 1,
+      `the probe must go fail -> heal -> fail with the count restarting: ${JSON.stringify({ ...secondEpisode, ...secondEpisodeOut })}`);
+    assert("a-second-failure-episode-is-announced-again",
+      secondEpisodeOut.secondRole === "alert",
+      `a new episode must re-announce even when its count matches the previous one, got ${secondEpisodeOut.secondRole}`);
+    await evalPage(`(() => { Object.keys(localStorage).filter((k) => k.indexOf("quota-fill-episode-") === 0).forEach((k) => localStorage.removeItem(k)); })()`);
+
+    // IMPORT, the one user-facing write that used to bypass act(). It replaces the WHOLE
+    // ledger, so it is both the write most likely to exceed quota and the one whose silent
+    // failure costs most - and it alone still toasted a plain "Imported." while nothing had
+    // reached storage. Driven through the real handler, not by calling importJson directly.
+    await evalPage(`(() => {
+      Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k));
+      localStorage.removeItem("nestory-v2-own-unreadable");
+      localStorage.removeItem("nestory-v2-own-unreadable-2");
+      localStorage.removeItem("nestory-v2-own");
+      location.reload();
+    })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
+    const importDom = await evalPage<{ pending: boolean; before: string; dumpReady: boolean }>(`(() => {
+      const s = window.nestory.store;
+      s.createRoom({ name: "Import Base Room" });
+      // The dump must be BIGGER than what is stored. Importing a byte-identical dump needs
+      // no extra quota, so it succeeds and the probe would measure nothing: an earlier
+      // version of this probe read beforeBytes === afterBytes === 315 and mistook "nothing
+      // changed" for "the write was refused". Add rooms AFTER snapshotting the baseline.
+      // Build the bigger dump FIRST (these writes land), then shrink the store back to the
+      // small baseline, then fill quota. Only now is the pending import genuinely larger
+      // than what is stored AND unable to fit.
+      for (let i = 0; i < 40; i++) s.createRoom({ name: "Import Filler Room " + i });
+      const dump = s.exportJson();
+      s.reset();
+      s.createRoom({ name: "Import Base Room" });
+      const before = localStorage.getItem("nestory-v2-own") || "";
+      window.__p5ImportBefore = before;
+      const grains = [1024*512, 1024*16, 1024, 64, 8];
+      for (let g = 0; g < grains.length; g++) {
+        try { for (let n = 0; n < 20000; n++) localStorage.setItem("quota-fill-import-" + g + "-" + n, "x".repeat(grains[g])); } catch (e) {}
+      }
+      document.querySelectorAll(".toast").forEach((t) => t.remove());
+      // Drive the REAL control: build a File, put it on the actual #import-file input, and
+      // dispatch a change event so the app's own handler and FileReader run. No test-only
+      // hook is added to the product for this - the lock must exercise the shipped path.
+      // The file input lives on the Ledger view only; navigate there through the app first.
+      window.nestory.setView("ledger");
+      const input = document.getElementById("import-file");
+      if (!input) return { pending: false, before: before, dumpReady: false, why: "no #import-file on the ledger view" };
+      const file = new File([JSON.stringify(dump)], "dump.json", { type: "application/json" });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      return { pending: true, before: before, dumpReady: Boolean(dump && dump.records && dump.records.length) };
+    })()`);
+    // FileReader is async: let the real onload fire before reading the outcome.
+    await sleep(700);
+    const importDom2 = await evalPage<{ toastWarned: boolean; toastSaid: string[]; storageUnchanged: boolean; failure: boolean; afterBytes: number; beforeBytes: number }>(`(() => {
+      const after = localStorage.getItem("nestory-v2-own") || "";
+      return {
+        toastSaid: [...document.querySelectorAll(".toast")].map((t) => t.textContent.trim()),
+        toastWarned: [...document.querySelectorAll(".toast")].some((t) => /NOT saved/i.test(t.textContent)),
+        storageUnchanged: window.__p5ImportBefore === after,
+        failure: window.nestory.store.storageWriteFailure() !== null,
+        afterBytes: after.length,
+        beforeBytes: (window.__p5ImportBefore || "").length,
+      };
+    })()`);
+    assert("import-probe-really-refused-the-write",
+      importDom.dumpReady === true && importDom2.failure === true && importDom2.storageUnchanged === true,
+      `the import probe must reach a refused write: ${JSON.stringify({ dumpReady: importDom.dumpReady, failure: importDom2.failure, storageUnchanged: importDom2.storageUnchanged, beforeBytes: importDom2.beforeBytes, afterBytes: importDom2.afterBytes })}`);
+    assert("a-refused-import-is-not-toasted-as-plain-success", importDom2.toastWarned === true,
+      `import replaced the whole ledger in memory and said it was saved: ${JSON.stringify(importDom2.toastSaid)}`);
+
+    // Leave own mode clean for the assertions that follow.
+    await evalPage(`(() => { Object.keys(localStorage).filter((k) => k.indexOf("quota-fill") === 0).forEach((k) => localStorage.removeItem(k)); localStorage.removeItem("nestory-v2-own"); localStorage.removeItem("nestory-v2-own-unreadable"); localStorage.removeItem("nestory-v2-own-unreadable-2"); location.reload(); })()`).catch(() => null);
+    await sleep(900);
+    await waitForApp();
 
     // Drive a minimal onboarding through the public hooks and watch the checklist complete.
     await evalPage(`(() => {

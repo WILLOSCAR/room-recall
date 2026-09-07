@@ -112,6 +112,13 @@ interface UIState {
   scanMedia: PhotoMedia | null;
 }
 
+// How many refusals the write-failure notice has already announced assertively. The banner
+// is rebuilt by `innerHTML` on every render, so without this a live region re-announces on
+// every nav click and keystroke with nothing having changed.
+let announcedUnsavedChanges = 0;
+// The count whose announcement is in flight this task, committed on the next painted frame.
+let pendingAnnouncement: number | null = null;
+
 const ui: UIState = {
   view: mode === "own" && store.state.rooms.size === 0 ? "setup" : "home",
   lastAnswer: null,
@@ -270,11 +277,56 @@ function toast(msg: string): void {
 
 function act<T>(fn: () => T, okMsg: string | null): T | null {
   try {
+    // How many refusals stood BEFORE this call, counted by the store on BOTH refusal paths.
+    // Comparing after is exact: it discloses when and only when THIS change was refused.
+    const refusalsBefore = store.writeRefusalCount();
     const out = fn();
-    // A write that could not be saved must not be confirmed as if it had been. While
-    // saving is blocked the store keeps changes in memory only — real for this session,
-    // then gone — so the toast says that instead of "Room added".
-    if (okMsg) toast(store.storageRecovery()?.savingBlocked ? `⚠ ${okMsg} — but NOT saved. See the notice above.` : okMsg);
+    // A write that could not be saved must not be confirmed as if it had been. While saving is
+    // refused the store keeps changes in memory only — real for this session, then gone — so
+    // the toast says that instead of "Room added".
+    const notSaved = store.storageRecovery()?.savingBlocked === true || store.storageWriteFailure() !== null;
+    if (okMsg && !notSaved) toast(okMsg);
+    // MEASURED, and now measuring the right thing. Three earlier attempts got this wrong.
+    // (1) `okMsg === null` as the test for "a silent write" made every pure READ announce a
+    // change that never happened. (2) Hand-tagging mutating callers missed one — `ask()`'s kit
+    // branch reaches `start_operation` -> `appendCommit()` -> `persist()`, so the reply said
+    // "Started the gym kit" in the past tense while the write was refused. (3) Counting
+    // `writeFailure.unsavedChanges` saw only the quota path, so under a standing
+    // protect-the-only-copy block every silent write went unannounced again — the same defect,
+    // one state over, and wider. A reviewer reproduced all five.
+    //
+    // The store now counts refusals wherever they happen, so this is a single question with no
+    // caller declaring anything and no path privileged: did the refusal count move across this
+    // call? A read cannot move it; a refused write always does.
+    const disclosableWrite = store.writeRefusalCount() > refusalsBefore;
+    if (disclosableWrite) {
+      const lead = okMsg ?? "That change was not saved.";
+      // Where to look must be decided from the DOM AFTER the handler settles, never from
+      // `ui.modal` during act(). The form-submit handlers (`snapshot-submit`,
+      // `add-belonging-submit`) call act() while the modal is open and then close it and
+      // re-render immediately, so reading `ui.modal` here said "a modal is open" about a
+      // modal that is gone microseconds later — the toast then told the person to close
+      // something absent while the notice was on screen and unoccluded. Deferring to a
+      // microtask lets the handler finish, then asks the page what is actually covering
+      // the notice.
+      void Promise.resolve().then(() => {
+        // Asked AFTER the handler settles, which is the load-bearing part: the form-submit
+        // handlers call act() with their modal open and then close it and re-render
+        // immediately, so reading `ui.modal` synchronously said "a modal is open" about one
+        // that is gone microseconds later, and the toast told the person to close something
+        // absent while the notice sat in plain view.
+        //
+        // A plain overlay check, not a hit-test. An earlier version measured occlusion with
+        // `getBoundingClientRect` + `elementFromPoint` and justified it as "occluded is the
+        // real question" — but `.modal-overlay` is `position: fixed; inset: 0` at z-index 100,
+        // so an overlay always covers the notice and the hit-test could never disagree with
+        // this. A reviewer showed deleting the whole refinement passed the entire suite. Ten
+        // lines and a forced layout per refused write, defending nothing; the honest version
+        // is the question the CSS actually makes decidable.
+        const covered = Boolean(document.querySelector(".modal-overlay"));
+        toast(`⚠ ${lead}${okMsg ? " — but NOT saved." : ""} ${covered ? "Close this to see why." : "See the notice above."}`);
+      });
+    }
     return out;
   } catch (err) {
     toast(`⚠ ${err instanceof Error ? err.message : String(err)}`);
@@ -330,7 +382,7 @@ function render(): void {
   // so the app opens on `setup` and would otherwise invite the person to build a home
   // from scratch while their real record sits unread in storage. Rendering it here means
   // no view can be reached without the disclosure.
-  must<HTMLElement>("view").innerHTML = renderRecoveryNotice() + renderer[ui.view]() + renderModal();
+  must<HTMLElement>("view").innerHTML = renderRecoveryNotice() + renderWriteFailureNotice() + renderer[ui.view]() + renderModal();
   decorateUi();
 }
 
@@ -712,6 +764,91 @@ function renderAnswerCard(a: LocateAnswer | null): string {
 // storage, and the notice names exactly where the unreadable copy was kept. It offers no
 // "clear my data" button on purpose — destroying the evidence is the one repair this
 // slice refuses to make easy.
+// Writes are being refused on a store whose saved data reads fine. This is NOT the
+// unreadable-ledger notice: nothing is corrupted, the saved records are intact, and the
+// exposure is only that changes made since the failure are in memory and will go on
+// reload. It renders in the same shell slot as the recovery notice — one status surface,
+// no parallel input — and both can appear when both are true.
+function renderWriteFailureNotice(): string {
+  const failure = store.storageWriteFailure();
+  if (!failure) {
+    // Saving works again, so the NEXT refusal starts a fresh episode and must be announced
+    // even if its count coincides with the previous one. Without this reset a fail -> heal ->
+    // fail sequence renders the second episode as `status` and tells a screen-reader user
+    // nothing. The in-flight mark is dropped too: it belongs to an episode that is over.
+    announcedUnsavedChanges = 0;
+    pendingAnnouncement = null;
+    return "";
+  }
+  const n = failure.unsavedChanges;
+  // `role="alert"` is assertive: a screen reader interrupts whatever the person is doing.
+  // Correct for the FIRST disclosure and for each new refusal — that is news. Wrong on
+  // every unrelated render: the banner is rebuilt by `innerHTML` on each `render()`, so a
+  // re-inserted live region re-announces on every nav click and every keystroke in a search
+  // box, with nothing having changed. Assertive only when the count has moved.
+  //
+  // The "announced" mark is committed only after a frame has actually been painted, NOT
+  // synchronously here. The modal form-submit handlers render twice in one task — once via
+  // act() -> notify(), then again after closing the modal — and marking it on the first call
+  // meant the second call saw "already announced" and rebuilt the banner as `status`. Both
+  // renders complete before the AT sees anything, so a genuinely new refusal was announced
+  // to nobody: the disclosure this whole slice exists for, dropped on the path most writes
+  // take. Deferring the mark to a rAF means the last render of the task still carries
+  // `alert`, and only a LATER, unrelated render downgrades it.
+  const isNews = n !== announcedUnsavedChanges;
+  if (isNews) {
+    pendingAnnouncement = n;
+    requestAnimationFrame(() => {
+      if (pendingAnnouncement !== null) {
+        announcedUnsavedChanges = pendingAnnouncement;
+        pendingAnnouncement = null;
+      }
+    });
+  }
+  // Three states, and the notice must not tell the wrong one. When something WAS saved
+  // before, the reassurance is that it is untouched. When nothing ever was — a first run
+  // already out of quota, or private mode — "exactly as it was at the last successful save"
+  // describes a save that never happened and implies a safety net that is not there.
+  //
+  // And when THIS boot fell back to the seed, both of those are wrong: bytes are stored, so
+  // "nothing has been saved to this browser yet" is false, but they are the bytes this build
+  // could not read, so they are no fallback either. The recovery banner directly above has
+  // already said where they are kept; this one must not contradict it in either direction.
+  //
+  // `seededThisBoot`, not merely "a recovery exists": a LEFTOVER quarantine copy from an
+  // earlier boot also sets a recovery, and there the live key reads perfectly and the
+  // person's own records loaded. Telling them their data cannot be read would contradict the
+  // banner above, which says exactly the opposite.
+  // Follow the STORE's own judgement, do not re-derive it. `seededThisBoot` alone was wrong
+  // once this build landed a write: the stored bytes are then ours and re-readable, and the
+  // landed work does survive a reload. `hasStoredData` already encodes that (it holds the
+  // disqualifier only until a write of ours lands), so the unreadable-copy branch is the one
+  // where a seeded boot has produced NO landed save yet.
+  const seeded = store.storageRecovery()?.seededThisBoot === true && failure.hasStoredData === false;
+  const whatIsSafe = seeded
+    ? `The saved copy described above is still untouched, but this build cannot read it, so it is not something these changes can fall back on. Everything in this session is being kept in this page's memory only, so it will be gone if you reload or close it.`
+    : failure.hasStoredData
+      ? `Nothing you saved earlier was lost or overwritten: what is already stored is exactly as it was at the last successful save. These newer changes are being kept in this page's memory only, so they will be gone if you reload or close it.`
+      : `Nothing has been saved to this browser yet — no earlier copy exists to fall back on. Everything in this session is being kept in this page's memory only, so it will all be gone if you reload or close it.`;
+  // `since` marks the first unresolved refusal. It was computed, documented and locked three
+  // times at store level while being rendered NOWHERE — the project's own
+  // computed-but-invisible failure, sitting inside the slice built to cure it. It earns its
+  // place by telling the person WHICH work is at risk: "everything since 14:32" is actionable
+  // in a way that a bare count is not. Clock time, not "N minutes ago", because a notice that
+  // cannot re-check itself must not print a staleness that silently drifts.
+  const sinceClock = (() => {
+    const t = new Date(failure.since);
+    return Number.isNaN(t.getTime()) ? null : t.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  })();
+  const sinceSentence = sinceClock ? ` Saving stopped working at ${esc(sinceClock)}; anything you changed after that is affected.` : "";
+  return `<div class="card" style="border-left:4px solid var(--amber);margin-bottom:14px" data-testid="storage-write-failure-banner" role="${isNews ? "alert" : "status"}">
+    <div class="op-head"><h3>Your changes are not being saved</h3></div>
+    <p class="muted" style="margin:6px 0"><strong>${n === 1 ? "The last change you made was not saved." : `The last ${n} changes you made were not saved.`}</strong> Your browser refused to store them, most often because its storage for this site is full.${sinceSentence}</p>
+    <p class="muted" style="margin:6px 0">${whatIsSafe}</p>
+    <p class="muted" style="margin:6px 0">Export JSON from the Ledger view to keep a copy — that works without saving to the browser. If you free up space, the next change you make should save again; this notice clears itself when a save succeeds. It cannot check on its own, so it stays up until then.</p>
+  </div>`;
+}
+
 function renderRecoveryNotice(): string {
   const recovery = store.storageRecovery();
   if (!recovery) return "";
