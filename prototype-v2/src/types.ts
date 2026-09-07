@@ -488,6 +488,30 @@ export interface StorageLike {
   setItem(key: string, value: string): void;
 }
 
+/** A write to storage was REJECTED, on a store whose saved data is perfectly readable —
+ *  quota exhausted, private browsing, a full disk. Distinct from `StorageRecovery`, which
+ *  reports a saved ledger that could not be READ: here the saved data is fine, and what
+ *  failed is keeping up with new changes. Conflating the two would tell the person their
+ *  home memory is corrupted when it is not, and point them at the wrong remedy.
+ *
+ *  What this asserts is narrow and checkable: changes made since `since` exist in memory
+ *  only. Storage still holds exactly what the last successful write left there — nothing
+ *  was overwritten and nothing already saved was lost. The exposure is that the unsaved
+ *  changes disappear on reload, which is why the interface must say so before then.
+ *  Reported by `Store.storageWriteFailure()`. */
+export interface StorageWriteFailure {
+  /** When the first still-unresolved rejection happened. */
+  since: string;
+  /** How many writes have been refused since then. Each is a change the person made and
+   *  was, before this existed, told had been saved. */
+  unsavedChanges: number;
+  /** Whether anything was EVER successfully saved under this key. False on a store that
+   *  has refused every write from the start — a first-run browser already out of quota, or
+   *  private mode. The interface must not then say "what is already stored is exactly as
+   *  it was at the last successful save": there is no such save, and nothing is stored. */
+  hasStoredData: boolean;
+}
+
 /** Why a boot fell back to the seed instead of the saved ledger, and where the
  *  unreadable bytes were preserved. Reported by `Store.storageRecovery()`. */
 export interface StorageRecovery {
@@ -587,6 +611,17 @@ export interface Store {
    *  the unreadable bytes were copied aside (`preservedAt`) and the original key was
    *  left untouched, so nothing was destroyed to make the app usable again. */
   storageRecovery(): StorageRecovery | null;
+
+  /** Non-null when this session's changes are NOT reaching storage because writes are
+   *  being refused, on a store whose saved data reads fine. Independent of
+   *  `storageRecovery()`: either, both, or neither can be set. */
+  storageWriteFailure(): StorageWriteFailure | null;
+
+  /** How many writes have been REFUSED this session, counted on both refusal paths — the
+   *  storage rejection and the protect-the-only-copy refusal that returns before attempting.
+   *  Monotonic. Exists so the interface can ask whether one particular change was refused,
+   *  without every caller having to declare whether it writes. */
+  writeRefusalCount(): number;
 
   // write
   createRoom(input: CreateRoomInput): string;
